@@ -37,6 +37,9 @@ const DEVICES_KEY = "medsafe_devices";
 const DOCS_KEY = "medsafe_docs";
 const AUDIT_KEY = "medsafe_audit";
 
+// 🔐 einfacher Admin-PIN (nur für diesen Browser, kein echter Security-Mechanismus)
+const ADMIN_PIN = "4837";
+
 // feste Kategorien für MDR-Dokumente
 const DOC_CATEGORIES = [
   "Konformität / Declaration of Conformity",
@@ -314,12 +317,21 @@ export default function MedSafePage() {
     }
   };
 
-  // 🧨 ALLES LÖSCHEN – Geräte, Dokumente, Audit
+  // 🧨 ALLES LÖSCHEN – Geräte, Dokumente, Audit (mit Admin-PIN geschützt)
   const handleResetAll = () => {
     if (typeof window === "undefined") return;
 
+    const pin = window.prompt(
+      "Admin-PIN eingeben, um ALLE lokalen Daten (Geräte, Dokumente, Audit) zu löschen:"
+    );
+    if (pin === null) return;
+    if (pin !== ADMIN_PIN) {
+      setMessage("Admin-PIN falsch. Es wurden keine Daten gelöscht.");
+      return;
+    }
+
     const ok = window.confirm(
-      "Alle lokalen Daten (Geräte, Dokumente, Audit-Log) löschen? Dies kann nicht rückgängig gemacht werden."
+      "Wirklich ALLE lokalen Daten (Geräte, Dokumente, Audit-Log) löschen? Dies kann nicht rückgängig gemacht werden."
     );
     if (!ok) return;
 
@@ -336,6 +348,61 @@ export default function MedSafePage() {
     setAudit([]);
     setSelectedDeviceId(null);
     setMessage("Alle lokalen Daten wurden gelöscht.");
+
+    addAuditEntry(
+      null,
+      "full_reset",
+      "Alle lokalen Daten (Geräte, Dokumente, Audit) wurden per Admin-Reset gelöscht."
+    );
+  };
+
+  // 🔐 EINZELNES GERÄT LÖSCHEN – nur mit Admin-PIN
+  const handleDeleteDevice = (deviceId: string) => {
+    if (typeof window === "undefined") return;
+
+    const device = devices.find((d) => d.id === deviceId);
+    if (!device) {
+      setMessage("Gerät wurde nicht gefunden.");
+      return;
+    }
+
+    const pin = window.prompt(
+      `Admin-PIN eingeben, um das Gerät "${device.name}" zu löschen:`
+    );
+    if (pin === null) return;
+    if (pin !== ADMIN_PIN) {
+      setMessage("Admin-PIN falsch. Gerät wurde nicht gelöscht.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Gerät "${device.name}" wirklich löschen? Alle zugehörigen lokalen Dokument-Verknüpfungen werden entfernt (Pinata-Dateien bleiben bestehen).`
+    );
+    if (!ok) return;
+
+    // Audit-Eintrag VOR dem Löschen
+    addAuditEntry(
+      device.id,
+      "device_deleted",
+      `Gerät gelöscht: ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial})`
+    );
+
+    // Gerät entfernen
+    const updatedDevices = devices.filter((d) => d.id !== deviceId);
+    setDevices(updatedDevices);
+    window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updatedDevices));
+
+    // zugehörige Dokumente entfernen
+    const updatedDocs = docs.filter((doc) => doc.deviceId !== deviceId);
+    setDocs(updatedDocs);
+    window.localStorage.setItem(DOCS_KEY, JSON.stringify(updatedDocs));
+
+    // Auswahl zurücksetzen, falls das gelöschte Gerät ausgewählt war
+    if (selectedDeviceId === deviceId) {
+      setSelectedDeviceId(null);
+    }
+
+    setMessage(`Gerät "${device.name}" wurde gelöscht (lokal).`);
   };
 
   // 🔄 Export JSON
@@ -438,7 +505,7 @@ export default function MedSafePage() {
             >
               Alle lokalen Daten
               <br />
-              löschen
+              löschen (Admin)
             </button>
           </div>
 
@@ -578,7 +645,17 @@ export default function MedSafePage() {
 
         {/* Geräteakte – Detailansicht */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
-          <h2 className="text-lg font-semibold">Geräteakte – Detailansicht</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">Geräteakte – Detailansicht</h2>
+            {selectedDevice && (
+              <button
+                onClick={() => handleDeleteDevice(selectedDevice.id)}
+                className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/60 hover:bg-red-800"
+              >
+                Gerät löschen (Admin-PIN)
+              </button>
+            )}
+          </div>
 
           {!selectedDevice ? (
             <p className="text-sm text-amber-400">
@@ -621,9 +698,7 @@ export default function MedSafePage() {
 
                   <div className="text-slate-400 text-xs mt-3">Angelegt am</div>
                   <div>
-                    {new Date(
-                      selectedDevice.createdAt
-                    ).toLocaleString()}
+                    {new Date(selectedDevice.createdAt).toLocaleString()}
                   </div>
                 </div>
               </div>
