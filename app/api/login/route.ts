@@ -1,29 +1,29 @@
-import { NextResponse } from "next/serve
+import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const rawPassword = body?.password ?? "";
+    const { password } = await req.json();
 
-    const userPassword = String(rawPassword).trim();
-    const envPassword = (process.env.ADMIN_PASSWORD ?? "").trim();
-    if (!envPassword) {
-      console.error("ADMIN_PASSWORD ist nicht gesetzt!");
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!adminPassword) {
+      console.error("ADMIN_PASSWORD fehlt!");
       return NextResponse.json({ ok: false }, { status: 500 });
     }
 
-    if (userPassword !== envPassword) {
+    if (password !== adminPassword) {
       return NextResponse.json({ ok: false }, { status: 401 });
     }
 
     const res = NextResponse.json({ ok: true });
+
     const isProd = process.env.NODE_ENV === "production";
 
     res.cookies.set("medsafe_session", "ok", {
       httpOnly: true,
       secure: isProd,
       sameSite: "lax",
-      maxAge: 60 * 60 * 8,
+      maxAge: 60 * 60 * 8, // 8 Stunden
       path: "/",
     });
 

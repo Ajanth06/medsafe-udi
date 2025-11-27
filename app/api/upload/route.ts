@@ -1,38 +1,71 @@
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+
 export async function POST(req: Request) {
   try {
-    const { password } = await req.json();
+    const formData = await req.formData();
 
-    // Passwort aus ENV lesen
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    const file = formData.get("file") as File | null;
+    const documentName = (formData.get("documentName") as string | null) ?? "";
+    const deviceId = (formData.get("deviceId") as string | null) ?? "";
 
-    if (!adminPassword) {
-      console.error("ADMIN_PASSWORD ist nicht gesetzt!");
-      return NextResponse.json({ ok: false }, { status: 500 });
+    if (!file) {
+      return NextResponse.json(
+        { error: "Keine Datei erhalten" },
+        { status: 400 }
+      );
     }
 
-    // Falsches Passwort
-    if (password !== adminPassword) {
-      return NextResponse.json({ ok: false }, { status: 401 });
+    const uploadForm = new FormData();
+    uploadForm.append("file", file, file.name);
+
+    uploadForm.append(
+      "pinataMetadata",
+      JSON.stringify({
+        name: documentName || file.name,
+        keyvalues: { deviceId },
+      })
+    );
+
+    const pinataRes = await fetch(
+      "https://api.pinata.cloud/pinning/pinFileToIPFS",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.PINATA_JWT!}`,
+        },
+        body: uploadForm,
+      }
+    );
+
+    if (!pinataRes.ok) {
+      const errText = await pinataRes.text();
+      console.error("Pinata Fehler:", errText);
+      return NextResponse.json(
+        { error: "Upload zu Pinata fehlgeschlagen" },
+        { status: 500 }
+      );
     }
 
-    // Richtiges Passwort → Session-Cookie setzen
-    const res = NextResponse.json({ ok: true });
+    const pinataJson = await pinataRes.json();
+    const cid = pinataJson.IpfsHash;
+    const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
 
-    const isProd = process.env.NODE_ENV === "production";
-
-    res.cookies.set("medsafe_session", "ok", {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: "lax",
-      maxAge: 60 * 60 * 8, // 8 Stunden
-      path: "/",
-    });
-
-    return res;
-  } catch (e) {
-    console.error("Login error", e);
-    return NextResponse.json({ ok: false }, { status: 500 });
+    return NextResponse.json(
+      {
+        cid,
+        url,
+        name: documentName || file.name,
+        deviceId,
+      },
+      { status: 200 }
+    );
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      { error: "Interner Serverfehler" },
+      { status: 500 }
+    );
   }
 }
