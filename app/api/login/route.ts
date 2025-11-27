@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "next/serve
 
 export async function POST(req: Request) {
   try {
@@ -7,7 +7,6 @@ export async function POST(req: Request) {
 
     const userPassword = String(rawPassword).trim();
     const envPassword = (process.env.ADMIN_PASSWORD ?? "").trim();
-
     if (!envPassword) {
       console.error("ADMIN_PASSWORD ist nicht gesetzt!");
       return NextResponse.json({ ok: false }, { status: 500 });
