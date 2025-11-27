@@ -12,8 +12,7 @@ type Device = {
 
   batch?: string;          // z.B. 251127-01
   productionDate?: string; // YYMMDD
-  expiryDate?: string;     // YYMMDD
-  udiPi?: string;          // kompletter GS1-UDI-PI-String
+  udiPi?: string;          // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
 };
 
 type Doc = {
@@ -143,11 +142,6 @@ export default function MedSafePage() {
     const now = new Date();
     const productionDate = formatDateYYMMDD(now);
 
-    // Verfallsdatum: +5 Jahre (kannst du später anpassen)
-    const expiry = new Date(now);
-    expiry.setFullYear(expiry.getFullYear() + 5);
-    const expiryDate = formatDateYYMMDD(expiry);
-
     // Batch-Nummer: YYMMDD-XX (XX = Laufnummer an diesem Tag)
     const devicesSameDay = devices.filter(
       (d) => d.productionDate === productionDate
@@ -172,9 +166,9 @@ export default function MedSafePage() {
     // UDI-Hash
     const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
 
-    // UDI-PI String nach GS1-Logik:
-    // (11) = Herstellungsdatum, (17) = Verfallsdatum, (21) = Seriennummer, (10) = Batch
-    const udiPi = `(11)${productionDate}(17)${expiryDate}(21)${generatedSerial}(10)${batch}`;
+    // UDI-PI ohne Verfallsdatum:
+    // (11) = Herstellungsdatum, (21) = Seriennummer, (10) = Batch
+    const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
 
     const newDevice: Device = {
       id: crypto.randomUUID(),
@@ -185,7 +179,6 @@ export default function MedSafePage() {
       createdAt: new Date().toISOString(),
       batch,
       productionDate,
-      expiryDate,
       udiPi,
     };
 
@@ -197,7 +190,9 @@ export default function MedSafePage() {
 
     setNewProductName("");
     setSelectedDeviceId(newDevice.id);
-    setMessage("Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt).");
+    setMessage(
+      "Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum)."
+    );
 
     addAuditEntry(
       newDevice.id,
@@ -324,8 +319,8 @@ export default function MedSafePage() {
             </h1>
             <p className="text-slate-400 text-sm mt-1">
               Nur Produktnamen eingeben – UDI-DI, Seriennummer, Batch &amp; UDI-PI
-              werden automatisch generiert. Daten bleiben im Browser
-              (localStorage), Dateien zusätzlich bei Pinata.
+              (ohne Verfallsdatum) werden automatisch generiert. Daten bleiben im
+              Browser (localStorage), Dateien zusätzlich bei Pinata.
             </p>
           </div>
 
