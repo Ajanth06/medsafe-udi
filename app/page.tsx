@@ -5,12 +5,11 @@ import React, { useEffect, useState } from "react";
 type Device = {
   id: string;
   name: string;       // Produktname
-  udiDi: string;      // UDI-DI
-  serial: string;     // Seriennummer
+  udiDi: string;      // automatisch generierte UDI-DI
+  serial: string;     // automatisch generierte Seriennummer
   udiHash: string;    // SHA-256 Hash aus UDI-DI + Seriennummer
   createdAt: string;
 
-  // 🔥 NEU: UDI-PI / Batch / Datums-Codes
   batch?: string;          // z.B. 251127-01
   productionDate?: string; // YYMMDD
   expiryDate?: string;     // YYMMDD
@@ -66,7 +65,7 @@ async function hashUdi(udiDi: string, serial: string): Promise<string> {
   return hashHex;
 }
 
-// 🔥 NEU: Datums-Codes im GS1-Format (YYMMDD)
+// Datums-Codes im GS1-Format (YYMMDD)
 function formatDateYYMMDD(date: Date): string {
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -81,8 +80,6 @@ export default function MedSafePage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
 
   const [newProductName, setNewProductName] = useState("");
-  const [newUdi, setNewUdi] = useState("");
-  const [newSerial, setNewSerial] = useState("");
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -136,25 +133,22 @@ export default function MedSafePage() {
     });
   };
 
-  // 💾 Gerät speichern (inkl. UDI-Hash + UDI-PI + Audit-Eintrag)
+  // 💾 Gerät speichern – UDI-DI, Seriennummer, Batch, UDI-PI werden automatisch generiert
   const handleSaveDevice = async () => {
-    if (!newProductName || !newUdi || !newSerial) {
-      setMessage("Bitte Produktname, UDI-DI und Seriennummer eingeben.");
+    if (!newProductName.trim()) {
+      setMessage("Bitte einen Produktnamen eingeben.");
       return;
     }
 
-    // 1) UDI-Hash
-    const udiHash = await hashUdi(newUdi, newSerial);
-
-    // 2) Produktionsdatum (heute) & Verfallsdatum (z.B. +5 Jahre)
     const now = new Date();
     const productionDate = formatDateYYMMDD(now);
 
+    // Verfallsdatum: +5 Jahre (kannst du später anpassen)
     const expiry = new Date(now);
-    expiry.setFullYear(expiry.getFullYear() + 5); // 5 Jahre Gültigkeit, nach Bedarf anpassen
+    expiry.setFullYear(expiry.getFullYear() + 5);
     const expiryDate = formatDateYYMMDD(expiry);
 
-    // 3) Batch-Nummer: YYMMDD-XX (XX = Laufnummer an diesem Tag)
+    // Batch-Nummer: YYMMDD-XX (XX = Laufnummer an diesem Tag)
     const devicesSameDay = devices.filter(
       (d) => d.productionDate === productionDate
     );
@@ -164,15 +158,29 @@ export default function MedSafePage() {
     );
     const batch = `${productionDate}-${batchRunningNumber}`;
 
-    // 4) UDI-PI String nach GS1-Logik:
+    // Globale laufende Nummer für UDI-DI/Serial
+    const deviceIndex = devices.length + 1;
+
+    // 🔢 automatisch generierte UDI-DI (interne Struktur, z.B. für Thalheimer)
+    const generatedUdiDi = `TH-DI-${deviceIndex
+      .toString()
+      .padStart(6, "0")}`;
+
+    // 🔢 automatisch generierte Seriennummer (inkl. Datum + Laufnummer)
+    const generatedSerial = `TH-SN-${productionDate}-${batchRunningNumber}`;
+
+    // UDI-Hash
+    const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
+
+    // UDI-PI String nach GS1-Logik:
     // (11) = Herstellungsdatum, (17) = Verfallsdatum, (21) = Seriennummer, (10) = Batch
-    const udiPi = `(11)${productionDate}(17)${expiryDate}(21)${newSerial}(10)${batch}`;
+    const udiPi = `(11)${productionDate}(17)${expiryDate}(21)${generatedSerial}(10)${batch}`;
 
     const newDevice: Device = {
       id: crypto.randomUUID(),
-      name: newProductName,
-      udiDi: newUdi,
-      serial: newSerial,
+      name: newProductName.trim(),
+      udiDi: generatedUdiDi,
+      serial: generatedSerial,
       udiHash,
       createdAt: new Date().toISOString(),
       batch,
@@ -188,15 +196,13 @@ export default function MedSafePage() {
     }
 
     setNewProductName("");
-    setNewUdi("");
-    setNewSerial("");
     setSelectedDeviceId(newDevice.id);
-    setMessage("Gerät wurde gespeichert.");
+    setMessage("Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt).");
 
     addAuditEntry(
       newDevice.id,
       "device_created",
-      `Gerät angelegt: ${newDevice.name} (SN: ${newDevice.serial}, Batch: ${batch})`
+      `Gerät angelegt: ${newDevice.name} (UDI-DI: ${generatedUdiDi}, SN: ${generatedSerial}, Batch: ${batch})`
     );
   };
 
@@ -230,7 +236,6 @@ export default function MedSafePage() {
       const formData = new FormData();
       formData.append("file", file);
 
-      // WICHTIG: Endpoint muss zu deiner route.ts passen
       const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
@@ -318,12 +323,12 @@ export default function MedSafePage() {
               MedSafe-UDI – Geräteübersicht
             </h1>
             <p className="text-slate-400 text-sm mt-1">
-              Geräte &amp; Dokumente werden im Browser gespeichert
-              (localStorage) und Dateien zusätzlich bei Pinata.
+              Nur Produktnamen eingeben – UDI-DI, Seriennummer, Batch &amp; UDI-PI
+              werden automatisch generiert. Daten bleiben im Browser
+              (localStorage), Dateien zusätzlich bei Pinata.
             </p>
           </div>
 
-          {/* 🔴 Alles löschen Button */}
           <button
             onClick={handleResetAll}
             className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/40 hover:bg-red-800/60"
@@ -343,25 +348,16 @@ export default function MedSafePage() {
         {/* Neues Gerät */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neues Gerät anlegen</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Produktname"
+              placeholder="Produktname (z.B. FREEZO FZ-380)"
               value={newProductName}
               onChange={(e) => setNewProductName(e.target.value)}
             />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="UDI-DI"
-              value={newUdi}
-              onChange={(e) => setNewUdi(e.target.value)}
-            />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Seriennummer"
-              value={newSerial}
-              onChange={(e) => setNewSerial(e.target.value)}
-            />
+            <p className="text-xs text-slate-400">
+              UDI-DI &amp; Seriennummer werden automatisch erzeugt.
+            </p>
           </div>
           <button
             onClick={handleSaveDevice}
@@ -412,8 +408,6 @@ export default function MedSafePage() {
                           ? device.udiHash.slice(0, 20) + "…"
                           : "noch kein Hash (altes Gerät)"}
                       </div>
-
-                      {/* 🔥 NEU: Batch + UDI-PI anzeigen */}
                       {device.batch && (
                         <div className="text-xs text-emerald-400 mt-1">
                           Charge: {device.batch}
@@ -480,7 +474,6 @@ export default function MedSafePage() {
             {isUploading ? "Upload läuft …" : "Dokument speichern (Pinata)"}
           </button>
 
-          {/* Liste der Dokumente für das aktuell gewählte Gerät */}
           {selectedDeviceId && (
             <div className="mt-4 space-y-2">
               <h3 className="text-sm font-semibold">
