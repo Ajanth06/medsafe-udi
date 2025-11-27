@@ -2,8 +2,8 @@
 
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";        // sichert, dass wir Node-Runtime haben
-export const dynamic = "force-dynamic"; // kein Caching der Route
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
@@ -16,7 +16,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // FormData aus der Anfrage lesen
     const formData = await req.formData();
     const file = formData.get("file");
 
@@ -27,11 +26,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // Neues FormData für Pinata bauen
     const pinataFormData = new FormData();
     pinataFormData.append("file", file);
 
-    // Upload zu Pinata
     const res = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
       method: "POST",
       headers: {
@@ -50,12 +47,15 @@ export async function POST(req: Request) {
 
     const data = await res.json();
 
-    // Typische Pinata-Antwort zurückgeben
+    // Pinata liefert normalerweise: data.IpfsHash
+    const cid = data.IpfsHash;
+    const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
+
+    // GENAU das erwartet dein Frontend:
     return NextResponse.json(
       {
-        ipfsHash: data.IpfsHash,
-        pinSize: data.PinSize,
-        timestamp: data.Timestamp,
+        cid,
+        url,
       },
       { status: 200 }
     );
