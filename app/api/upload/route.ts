@@ -1,79 +1,29 @@
-// app/api/upload/route.ts
 import { NextResponse } from "next/server";
-
-export const runtime = "nodejs"; // wichtig, damit File/FormData unter Node funktionieren
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
+    const { password } = await req.json();
 
-    const file = formData.get("file") as File | null;
-    const documentName =
-      (formData.get("documentName") as string | null) ?? "";
-    const deviceId = (formData.get("deviceId") as string | null) ?? "";
-
-    if (!file) {
-      return NextResponse.json(
-        { error: "Keine Datei erhalten" },
-        { status: 400 }
-      );
+    if (!password || password !== process.env.ADMIN_PASSWORD) {
+      return NextResponse.json({ ok: false }, { status: 401 });
     }
 
-    // ==== Upload zu Pinata ====================================
-    const uploadForm = new FormData();
-    uploadForm.append("file", file, file.name);
+    const res = NextResponse.json({ ok: true });
 
-    uploadForm.append(
-      "pinataMetadata",
-      JSON.stringify({
-        name: documentName || file.name,
-        keyvalues: {
-          deviceId,
-        },
-      })
-    );
+    // Cookie setzen: in Prod secure, in Dev nicht
+    const isProd = process.env.NODE_ENV === "production";
 
-    const pinataRes = await fetch(
-      "https://api.pinata.cloud/pinning/pinFileToIPFS",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.PINATA_JWT!}`, // in .env.local setzen!
-        },
-        body: uploadForm,
-      }
-    );
+    res.cookies.set("medsafe_session", "ok", {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 8, // 8 Stunden
+      path: "/",
+    });
 
-    if (!pinataRes.ok) {
-      const errText = await pinataRes.text();
-      console.error("Pinata Fehler:", errText);
-      return NextResponse.json(
-        { error: "Upload zu Pinata fehlgeschlagen" },
-        { status: 500 }
-      );
-    }
-
-    const pinataJson = (await pinataRes.json()) as any;
-    const cid: string = pinataJson.IpfsHash;
-
-    const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
-
-    // Hier könntest du zusätzlich in deiner JSON / DB speichern
-
-    return NextResponse.json(
-      {
-        cid,
-        url,
-        name: documentName || file.name,
-        deviceId,
-      },
-      { status: 200 }
-    );
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json(
-      { error: "Interner Serverfehler" },
-      { status: 500 }
-    );
+    return res;
+  } catch (e) {
+    console.error("Login error", e);
+    return NextResponse.json({ ok: false }, { status: 500 });
   }
 }
