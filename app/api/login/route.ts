@@ -1,3 +1,4 @@
+// app/api/login/route.ts
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -7,7 +8,7 @@ export async function POST(req: Request) {
     const adminPassword = process.env.ADMIN_PASSWORD;
 
     if (!adminPassword) {
-      console.error("ADMIN_PASSWORD fehlt!");
+      console.error("ADMIN_PASSWORD ist nicht gesetzt!");
       return NextResponse.json({ ok: false }, { status: 500 });
     }
 
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
       httpOnly: true,
       secure: isProd,
       sameSite: "lax",
-      maxAge: 60 * 60 * 8, // 8 Stunden
+      maxAge: 60 * 60 * 8,
       path: "/",
     });
 
