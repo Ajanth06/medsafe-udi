@@ -38,7 +38,7 @@ const DOCS_KEY = "medsafe_docs";
 const AUDIT_KEY = "medsafe_audit";
 
 // 🔐 einfacher Admin-PIN (nur für diesen Browser, kein echter Security-Mechanismus)
-const ADMIN_PIN = "4837";
+const ADMIN_PIN = "2727";
 
 // feste Kategorien für MDR-Dokumente
 const DOC_CATEGORIES = [
