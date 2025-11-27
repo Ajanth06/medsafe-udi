@@ -87,6 +87,9 @@ export default function MedSafePage() {
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  // 🔍 Suchfeld für Geräte
+  const [searchTerm, setSearchTerm] = useState("");
+
   // 🔁 Beim Laden: Geräte, Dokumente & Audit-Log aus localStorage holen
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -155,7 +158,7 @@ export default function MedSafePage() {
     // Globale laufende Nummer für UDI-DI/Serial
     const deviceIndex = devices.length + 1;
 
-    // 🔢 automatisch generierte UDI-DI (interne Struktur, z.B. für Thalheimer)
+    // 🔢 automatisch generierte UDI-DI (interne Struktur)
     const generatedUdiDi = `TH-DI-${deviceIndex
       .toString()
       .padStart(6, "0")}`;
@@ -182,7 +185,8 @@ export default function MedSafePage() {
       udiPi,
     };
 
-    const updated = [...devices, newDevice];
+    // NEUE GERÄTE OBEN
+    const updated = [newDevice, ...devices];
     setDevices(updated);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
@@ -309,6 +313,27 @@ export default function MedSafePage() {
     ? audit.filter((a) => a.deviceId === selectedDeviceId)
     : audit;
 
+  // 🔍 Geräte nach Suchbegriff filtern
+  const filteredDevices = devices.filter((device) => {
+    if (!searchTerm.trim()) return true;
+    const needle = searchTerm.toLowerCase();
+
+    const haystack =
+      [
+        device.name,
+        device.serial,
+        device.udiDi,
+        device.batch,
+        device.udiPi,
+        device.udiHash,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+    return haystack.includes(needle);
+  });
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
@@ -362,16 +387,31 @@ export default function MedSafePage() {
           </button>
         </section>
 
-        {/* Geräte-Liste */}
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
-          <h2 className="text-lg font-semibold">Angelegte Geräte</h2>
+        {/* Geräte-Liste mit Suche */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <h2 className="text-lg font-semibold">Angelegte Geräte</h2>
+            <div className="w-full md:w-1/2 flex items-center gap-2">
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Suche nach Name, SN, UDI, Batch, UDI-PI…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+
           {devices.length === 0 ? (
             <p className="text-sm text-slate-400">
               Noch keine Geräte angelegt.
             </p>
+          ) : filteredDevices.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Keine Geräte passend zur Suche gefunden.
+            </p>
           ) : (
             <ul className="space-y-2">
-              {devices.map((device) => {
+              {filteredDevices.map((device) => {
                 const count = docs.filter(
                   (d) => d.deviceId === device.id
                 ).length;
