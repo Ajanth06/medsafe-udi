@@ -9,6 +9,12 @@ type Device = {
   serial: string;     // Seriennummer
   udiHash: string;    // SHA-256 Hash aus UDI-DI + Seriennummer
   createdAt: string;
+
+  // 🔥 NEU: UDI-PI / Batch / Datums-Codes
+  batch?: string;          // z.B. 251127-01
+  productionDate?: string; // YYMMDD
+  expiryDate?: string;     // YYMMDD
+  udiPi?: string;          // kompletter GS1-UDI-PI-String
 };
 
 type Doc = {
@@ -58,6 +64,14 @@ async function hashUdi(udiDi: string, serial: string): Promise<string> {
     .join("");
 
   return hashHex;
+}
+
+// 🔥 NEU: Datums-Codes im GS1-Format (YYMMDD)
+function formatDateYYMMDD(date: Date): string {
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yy}${mm}${dd}`;
 }
 
 export default function MedSafePage() {
@@ -122,14 +136,37 @@ export default function MedSafePage() {
     });
   };
 
-  // 💾 Gerät speichern (inkl. UDI-Hash + Audit-Eintrag)
+  // 💾 Gerät speichern (inkl. UDI-Hash + UDI-PI + Audit-Eintrag)
   const handleSaveDevice = async () => {
     if (!newProductName || !newUdi || !newSerial) {
       setMessage("Bitte Produktname, UDI-DI und Seriennummer eingeben.");
       return;
     }
 
+    // 1) UDI-Hash
     const udiHash = await hashUdi(newUdi, newSerial);
+
+    // 2) Produktionsdatum (heute) & Verfallsdatum (z.B. +5 Jahre)
+    const now = new Date();
+    const productionDate = formatDateYYMMDD(now);
+
+    const expiry = new Date(now);
+    expiry.setFullYear(expiry.getFullYear() + 5); // 5 Jahre Gültigkeit, nach Bedarf anpassen
+    const expiryDate = formatDateYYMMDD(expiry);
+
+    // 3) Batch-Nummer: YYMMDD-XX (XX = Laufnummer an diesem Tag)
+    const devicesSameDay = devices.filter(
+      (d) => d.productionDate === productionDate
+    );
+    const batchRunningNumber = String(devicesSameDay.length + 1).padStart(
+      2,
+      "0"
+    );
+    const batch = `${productionDate}-${batchRunningNumber}`;
+
+    // 4) UDI-PI String nach GS1-Logik:
+    // (11) = Herstellungsdatum, (17) = Verfallsdatum, (21) = Seriennummer, (10) = Batch
+    const udiPi = `(11)${productionDate}(17)${expiryDate}(21)${newSerial}(10)${batch}`;
 
     const newDevice: Device = {
       id: crypto.randomUUID(),
@@ -138,6 +175,10 @@ export default function MedSafePage() {
       serial: newSerial,
       udiHash,
       createdAt: new Date().toISOString(),
+      batch,
+      productionDate,
+      expiryDate,
+      udiPi,
     };
 
     const updated = [...devices, newDevice];
@@ -155,7 +196,7 @@ export default function MedSafePage() {
     addAuditEntry(
       newDevice.id,
       "device_created",
-      `Gerät angelegt: ${newDevice.name} (SN: ${newDevice.serial})`
+      `Gerät angelegt: ${newDevice.name} (SN: ${newDevice.serial}, Batch: ${batch})`
     );
   };
 
@@ -287,7 +328,9 @@ export default function MedSafePage() {
             onClick={handleResetAll}
             className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/40 hover:bg-red-800/60"
           >
-            Alle lokalen Daten<br />löschen
+            Alle lokalen Daten
+            <br />
+            löschen
           </button>
         </header>
 
@@ -369,6 +412,18 @@ export default function MedSafePage() {
                           ? device.udiHash.slice(0, 20) + "…"
                           : "noch kein Hash (altes Gerät)"}
                       </div>
+
+                      {/* 🔥 NEU: Batch + UDI-PI anzeigen */}
+                      {device.batch && (
+                        <div className="text-xs text-emerald-400 mt-1">
+                          Charge: {device.batch}
+                        </div>
+                      )}
+                      {device.udiPi && (
+                        <div className="text-xs text-slate-300 mt-1 break-all">
+                          UDI-PI: {device.udiPi}
+                        </div>
+                      )}
                     </button>
                   </li>
                 );
@@ -422,9 +477,7 @@ export default function MedSafePage() {
             disabled={isUploading}
             className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
           >
-            {isUploading
-              ? "Upload läuft …"
-              : "Dokument speichern (Pinata)"}
+            {isUploading ? "Upload läuft …" : "Dokument speichern (Pinata)"}
           </button>
 
           {/* Liste der Dokumente für das aktuell gewählte Gerät */}
@@ -448,9 +501,7 @@ export default function MedSafePage() {
                         {doc.name}
                         <span className="text-xs text-slate-400 ml-2">
                           (
-                          {doc.category
-                            ? doc.category
-                            : "ohne Kategorie"}
+                          {doc.category ? doc.category : "ohne Kategorie"}
                           )
                         </span>
                       </div>
@@ -475,9 +526,7 @@ export default function MedSafePage() {
 
         {/* Audit-Log */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
-          <h2 className="text-lg font-semibold">
-            Aktivitäten (Audit-Log)
-          </h2>
+          <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
           <p className="text-xs text-slate-400">
             {selectedDeviceId
               ? "Es werden nur Aktivitäten für das ausgewählte Gerät angezeigt."
@@ -498,9 +547,7 @@ export default function MedSafePage() {
                   <div className="text-xs text-slate-400">
                     {new Date(entry.timestamp).toLocaleString()}
                   </div>
-                  <div className="font-medium mt-1">
-                    {entry.message}
-                  </div>
+                  <div className="font-medium mt-1">{entry.message}</div>
                   <div className="text-xs text-slate-500">
                     Aktion: {entry.action}
                   </div>
@@ -513,4 +560,3 @@ export default function MedSafePage() {
     </main>
   );
 }
-
