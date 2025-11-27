@@ -21,8 +21,15 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
 
+      // nur zum Debuggen: Status anzeigen
+      console.log("Login response status:", res.status);
+
       if (!res.ok) {
-        setError("Falsches Passwort.");
+        if (res.status === 401) {
+          setError("Falsches Passwort.");
+        } else {
+          setError("Login fehlgeschlagen (Serverfehler).");
+        }
         setLoading(false);
         return;
       }
@@ -32,7 +39,7 @@ export default function LoginPage() {
       router.refresh();
     } catch (err) {
       console.error(err);
-      setError("Login fehlgeschlagen.");
+      setError("Login fehlgeschlagen (Netzwerkfehler).");
       setLoading(false);
     }
   }
