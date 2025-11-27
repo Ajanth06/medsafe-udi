@@ -1,261 +1,516 @@
-// app/page.tsx
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import React, { useEffect, useState } from "react";
 
-type DeviceEntry = {
+type Device = {
   id: string;
-  name: string;
-  udiDi: string;
-  serial: string;
-  hash: string;
-  ipfsHash?: string;
+  name: string;       // Produktname
+  udiDi: string;      // UDI-DI
+  serial: string;     // Seriennummer
+  udiHash: string;    // SHA-256 Hash aus UDI-DI + Seriennummer
   createdAt: string;
 };
 
-const STORAGE_KEY = "medsafe-udi-devices-v1";
+type Doc = {
+  id: string;
+  deviceId: string;
+  name: string;
+  cid: string;
+  url: string;
+  createdAt: string;
+  category?: string;  // Kategorie für MDR-Dokumente
+};
 
-// Hilfsfunktion für SHA-256 im Browser
-async function sha256(input: string): Promise<string> {
+type AuditEntry = {
+  id: string;
+  deviceId: string | null;
+  action: string;
+  message: string;
+  timestamp: string;
+};
+
+const DEVICES_KEY = "medsafe_devices";
+const DOCS_KEY = "medsafe_docs";
+const AUDIT_KEY = "medsafe_audit";
+
+// feste Kategorien für MDR-Dokumente
+const DOC_CATEGORIES = [
+  "Konformität / Declaration of Conformity",
+  "Risikoanalyse",
+  "Gebrauchsanweisung / IFU",
+  "Servicebericht",
+  "Wartungsprotokoll",
+  "IQ/OQ/PQ",
+  "Firmware / Software",
+  "Sonstiges",
+];
+
+// 🔐 UDI-Hash berechnen (läuft im Browser)
+async function hashUdi(udiDi: string, serial: string): Promise<string> {
+  const input = `${udiDi}|${serial}`;
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
+
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hashHex = hashArray
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  return hashHex;
 }
 
-export default function HomePage() {
-  const [devices, setDevices] = useState<DeviceEntry[]>([]);
-  const [name, setName] = useState("");
-  const [udiDi, setUdiDi] = useState("");
-  const [serial, setSerial] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default function MedSafePage() {
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
 
-  // Geräte aus localStorage laden
+  const [newProductName, setNewProductName] = useState("");
+  const [newUdi, setNewUdi] = useState("");
+  const [newSerial, setNewSerial] = useState("");
+
+  const [docName, setDocName] = useState("");
+  const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
+  const [file, setFile] = useState<File | null>(null);
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  // 🔁 Beim Laden: Geräte, Dokumente & Audit-Log aus localStorage holen
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        setDevices(JSON.parse(raw));
+      const storedDevices = window.localStorage.getItem(DEVICES_KEY);
+      const storedDocs = window.localStorage.getItem(DOCS_KEY);
+      const storedAudit = window.localStorage.getItem(AUDIT_KEY);
+
+      if (storedDevices) {
+        setDevices(JSON.parse(storedDevices));
       }
-    } catch (e) {
-      console.error("Fehler beim Laden aus localStorage", e);
+      if (storedDocs) {
+        setDocs(JSON.parse(storedDocs));
+      }
+      if (storedAudit) {
+        setAudit(JSON.parse(storedAudit));
+      }
+    } catch (err) {
+      console.error("Fehler beim Laden aus localStorage:", err);
     }
   }, []);
 
-  // Geräte in localStorage speichern
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
-    } catch (e) {
-      console.error("Fehler beim Speichern in localStorage", e);
+  // 📜 Helfer: neuen Audit-Eintrag hinzufügen
+  const addAuditEntry = (
+    deviceId: string | null,
+    action: string,
+    message: string
+  ) => {
+    setAudit((prev) => {
+      const entry: AuditEntry = {
+        id: crypto.randomUUID(),
+        deviceId,
+        action,
+        message,
+        timestamp: new Date().toISOString(),
+      };
+      const updated = [entry, ...prev]; // neueste zuerst
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(AUDIT_KEY, JSON.stringify(updated));
+      }
+      return updated;
+    });
+  };
+
+  // 💾 Gerät speichern (inkl. UDI-Hash + Audit-Eintrag)
+  const handleSaveDevice = async () => {
+    if (!newProductName || !newUdi || !newSerial) {
+      setMessage("Bitte Produktname, UDI-DI und Seriennummer eingeben.");
+      return;
     }
-  }, [devices]);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
+    const udiHash = await hashUdi(newUdi, newSerial);
 
-    if (!udiDi || !serial) {
-      setError("Bitte mindestens UDI-DI und Seriennummer eingeben.");
+    const newDevice: Device = {
+      id: crypto.randomUUID(),
+      name: newProductName,
+      udiDi: newUdi,
+      serial: newSerial,
+      udiHash,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updated = [...devices, newDevice];
+    setDevices(updated);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
+    }
+
+    setNewProductName("");
+    setNewUdi("");
+    setNewSerial("");
+    setSelectedDeviceId(newDevice.id);
+    setMessage("Gerät wurde gespeichert.");
+
+    addAuditEntry(
+      newDevice.id,
+      "device_created",
+      `Gerät angelegt: ${newDevice.name} (SN: ${newDevice.serial})`
+    );
+  };
+
+  // Gerät in der Liste auswählen
+  const handleSelectDevice = (id: string) => {
+    setSelectedDeviceId(id);
+    setMessage(null);
+  };
+
+  // 📄 Datei auswählen
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+  };
+
+  // 📤 Dokument zu Pinata hochladen (inkl. Audit-Eintrag)
+  const handleUploadDoc = async () => {
+    if (!selectedDeviceId) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
+    }
+    if (!file) {
+      setMessage("Bitte eine Datei auswählen.");
       return;
     }
 
     setIsUploading(true);
+    setMessage("Upload läuft …");
+
     try {
-      let ipfsHash: string | undefined;
+      const formData = new FormData();
+      formData.append("file", file);
 
-      if (file) {
-        const formData = new FormData();
-        formData.append("file", file);
+      // WICHTIG: Endpoint muss zu deiner route.ts passen
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
 
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
+      const data = await res.json();
 
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || "Upload fehlgeschlagen");
-        }
-
-        const data = await res.json();
-        ipfsHash = data.ipfsHash;
+      if (!res.ok) {
+        throw new Error(data.error || "Upload fehlgeschlagen");
       }
 
-      const hash = await sha256(`${udiDi}|${serial}`);
-      const newEntry: DeviceEntry = {
+      const newDoc: Doc = {
         id: crypto.randomUUID(),
-        name: name || "Unbenanntes Gerät",
-        udiDi,
-        serial,
-        hash,
-        ipfsHash,
+        deviceId: selectedDeviceId,
+        name: docName || file.name,
+        cid: data.cid,
+        url: data.url,
         createdAt: new Date().toISOString(),
+        category: docCategory,
       };
 
-      setDevices((prev) => [newEntry, ...prev]);
+      const updatedDocs = [...docs, newDoc];
+      setDocs(updatedDocs);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DOCS_KEY, JSON.stringify(updatedDocs));
+      }
 
-      // Formular zurücksetzen
-      setName("");
-      setUdiDi("");
-      setSerial("");
+      setDocName("");
       setFile(null);
+      setMessage("Dokument erfolgreich gespeichert.");
+
+      addAuditEntry(
+        selectedDeviceId,
+        "document_uploaded",
+        `Dokument "${newDoc.name}" (${newDoc.category}) hochgeladen (CID: ${String(
+          newDoc.cid
+        ).slice(0, 10)}…)`
+      );
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Unbekannter Fehler");
+      setMessage(err.message || "Fehler beim Upload.");
     } finally {
       setIsUploading(false);
     }
-  }
+  };
 
-  function handleDelete(id: string) {
-    setDevices((prev) => prev.filter((d) => d.id !== id));
-  }
+  // 🧨 ALLES LÖSCHEN – Geräte, Dokumente, Audit
+  const handleResetAll = () => {
+    if (typeof window === "undefined") return;
+
+    const ok = window.confirm(
+      "Alle lokalen Daten (Geräte, Dokumente, Audit-Log) löschen? Dies kann nicht rückgängig gemacht werden."
+    );
+    if (!ok) return;
+
+    try {
+      window.localStorage.removeItem(DEVICES_KEY);
+      window.localStorage.removeItem(DOCS_KEY);
+      window.localStorage.removeItem(AUDIT_KEY);
+    } catch (err) {
+      console.error("Fehler beim Löschen aus localStorage:", err);
+    }
+
+    setDevices([]);
+    setDocs([]);
+    setAudit([]);
+    setSelectedDeviceId(null);
+    setMessage("Alle lokalen Daten wurden gelöscht.");
+  };
+
+  const docsForDevice = selectedDeviceId
+    ? docs.filter((d) => d.deviceId === selectedDeviceId)
+    : [];
+
+  const auditForView = selectedDeviceId
+    ? audit.filter((a) => a.deviceId === selectedDeviceId)
+    : audit;
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center py-10 px-4">
-      <div className="w-full max-w-5xl space-y-8">
-        <header className="space-y-2">
-          <h1 className="text-3xl font-bold">MedSafe-UDI Dashboard</h1>
-          <p className="text-slate-300 text-sm">
-            Offline-Verwaltung deiner Medizinprodukte im Browser + Upload der
-            Dokumente zu Pinata (IPFS). Kein Login, keine Passwörter – volle
-            Kontrolle.
-          </p>
+    <main className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+        <header className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold">
+              MedSafe-UDI – Geräteübersicht
+            </h1>
+            <p className="text-slate-400 text-sm mt-1">
+              Geräte &amp; Dokumente werden im Browser gespeichert
+              (localStorage) und Dateien zusätzlich bei Pinata.
+            </p>
+          </div>
+
+          {/* 🔴 Alles löschen Button */}
+          <button
+            onClick={handleResetAll}
+            className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/40 hover:bg-red-800/60"
+          >
+            Alle lokalen Daten<br />löschen
+          </button>
         </header>
 
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
-          <h2 className="text-xl font-semibold">Neues Gerät erfassen</h2>
-          {error && (
-            <div className="text-sm text-red-400 bg-red-950/40 border border-red-700/60 rounded-lg px-3 py-2">
-              {error}
-            </div>
-          )}
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">
-                  Gerätename / Typ
-                </label>
-                <input
-                  className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-emerald-400"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="z.B. Freezo FZ-380"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">UDI-DI *</label>
-                <input
-                  className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-emerald-400"
-                  value={udiDi}
-                  onChange={(e) => setUdiDi(e.target.value)}
-                  placeholder="Basis-UDI-DI"
-                  required
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">
-                  Seriennummer *
-                </label>
-                <input
-                  className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-emerald-400"
-                  value={serial}
-                  onChange={(e) => setSerial(e.target.value)}
-                  placeholder="Seriennummer"
-                  required
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">
-                  Datei für Pinata (optional)
-                </label>
-                <input
-                  type="file"
-                  className="w-full text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-emerald-500 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-900 hover:file:bg-emerald-400"
-                  onChange={(e) =>
-                    setFile(e.target.files ? e.target.files[0] : null)
-                  }
-                />
-              </div>
-            </div>
+        {message && (
+          <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
+            {message}
+          </div>
+        )}
 
-            <button
-              type="submit"
-              disabled={isUploading}
-              className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {isUploading ? "Wird hochgeladen..." : "Gerät speichern"}
-            </button>
-          </form>
+        {/* Neues Gerät */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Neues Gerät anlegen</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Produktname"
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="UDI-DI"
+              value={newUdi}
+              onChange={(e) => setNewUdi(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Seriennummer"
+              value={newSerial}
+              onChange={(e) => setNewSerial(e.target.value)}
+            />
+          </div>
+          <button
+            onClick={handleSaveDevice}
+            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+          >
+            Gerät speichern
+          </button>
         </section>
 
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
-          <h2 className="text-xl font-semibold">Gespeicherte Geräte</h2>
+        {/* Geräte-Liste */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+          <h2 className="text-lg font-semibold">Angelegte Geräte</h2>
           {devices.length === 0 ? (
             <p className="text-sm text-slate-400">
-              Noch keine Einträge. Erfasse oben dein erstes Gerät.
+              Noch keine Geräte angelegt.
             </p>
           ) : (
-            <div className="overflow-auto rounded-xl border border-slate-800">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-900">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">UDI-DI</th>
-                    <th className="px-3 py-2 text-left">Serien-Nr.</th>
-                    <th className="px-3 py-2 text-left">UDI-Hash</th>
-                    <th className="px-3 py-2 text-left">IPFS / Pinata</th>
-                    <th className="px-3 py-2 text-left">Aktion</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {devices.map((d) => (
-                    <tr
-                      key={d.id}
-                      className="border-t border-slate-800 odd:bg-slate-950/40"
+            <ul className="space-y-2">
+              {devices.map((device) => {
+                const count = docs.filter(
+                  (d) => d.deviceId === device.id
+                ).length;
+
+                const isSelected = device.id === selectedDeviceId;
+
+                return (
+                  <li key={device.id}>
+                    <button
+                      onClick={() => handleSelectDevice(device.id)}
+                      className={`w-full text-left px-4 py-3 rounded-xl border text-sm ${
+                        isSelected
+                          ? "bg-emerald-900/50 border-emerald-600"
+                          : "bg-slate-900 border-slate-700 hover:border-emerald-500/60"
+                      }`}
                     >
-                      <td className="px-3 py-2">{d.name}</td>
-                      <td className="px-3 py-2">{d.udiDi}</td>
-                      <td className="px-3 py-2">{d.serial}</td>
-                      <td className="px-3 py-2 max-w-xs truncate">
-                        <code className="text-xs">{d.hash}</code>
-                      </td>
-                      <td className="px-3 py-2">
-                        {d.ipfsHash ? (
-                          <a
-                            href={`https://gateway.pinata.cloud/ipfs/${d.ipfsHash}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-emerald-400 underline"
-                          >
-                            {d.ipfsHash.slice(0, 8)}…
-                          </a>
-                        ) : (
-                          <span className="text-slate-400 text-xs">
-                            keine Datei
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <button
-                          onClick={() => handleDelete(d.id)}
-                          className="text-xs text-red-400 hover:text-red-300"
-                        >
-                          Löschen
-                        </button>
-                      </td>
-                    </tr>
+                      <div className="font-medium">
+                        {device.name} – SN: {device.serial}{" "}
+                        <span className="text-slate-400">
+                          ({count} Dateien)
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1 break-all">
+                        UDI-DI: {device.udiDi}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1 break-all">
+                        UDI-Hash:{" "}
+                        {device.udiHash
+                          ? device.udiHash.slice(0, 20) + "…"
+                          : "noch kein Hash (altes Gerät)"}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {/* Dokumente zum Gerät */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Dokumente zum Gerät</h2>
+
+          {selectedDeviceId ? (
+            <p className="text-sm text-slate-400">
+              Aktuelles Gerät:{" "}
+              {devices.find((d) => d.id === selectedDeviceId)?.name}
+            </p>
+          ) : (
+            <p className="text-sm text-amber-400">
+              Bitte oben ein Gerät auswählen.
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Dokumentenname"
+              value={docName}
+              onChange={(e) => setDocName(e.target.value)}
+            />
+            <select
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              value={docCategory}
+              onChange={(e) => setDocCategory(e.target.value)}
+            >
+              {DOC_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+            <input
+              type="file"
+              onChange={handleFileChange}
+              className="text-sm text-slate-200"
+            />
+          </div>
+
+          <button
+            onClick={handleUploadDoc}
+            disabled={isUploading}
+            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
+          >
+            {isUploading
+              ? "Upload läuft …"
+              : "Dokument speichern (Pinata)"}
+          </button>
+
+          {/* Liste der Dokumente für das aktuell gewählte Gerät */}
+          {selectedDeviceId && (
+            <div className="mt-4 space-y-2">
+              <h3 className="text-sm font-semibold">
+                Dokumente für dieses Gerät
+              </h3>
+              {docsForDevice.length === 0 ? (
+                <p className="text-sm text-slate-400">
+                  Noch keine Dokumente gespeichert.
+                </p>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {docsForDevice.map((doc) => (
+                    <li
+                      key={doc.id}
+                      className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
+                    >
+                      <div className="font-medium">
+                        {doc.name}
+                        <span className="text-xs text-slate-400 ml-2">
+                          (
+                          {doc.category
+                            ? doc.category
+                            : "ohne Kategorie"}
+                          )
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 break-all">
+                        CID: {doc.cid}
+                      </div>
+                      <a
+                        href={doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-emerald-400 underline mt-1 inline-block"
+                      >
+                        Öffnen
+                      </a>
+                    </li>
                   ))}
-                </tbody>
-              </table>
+                </ul>
+              )}
             </div>
+          )}
+        </section>
+
+        {/* Audit-Log */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+          <h2 className="text-lg font-semibold">
+            Aktivitäten (Audit-Log)
+          </h2>
+          <p className="text-xs text-slate-400">
+            {selectedDeviceId
+              ? "Es werden nur Aktivitäten für das ausgewählte Gerät angezeigt."
+              : "Es werden Aktivitäten für alle Geräte angezeigt."}
+          </p>
+
+          {auditForView.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Noch keine Aktivitäten aufgezeichnet.
+            </p>
+          ) : (
+            <ul className="space-y-2 text-sm max-h-60 overflow-y-auto">
+              {auditForView.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
+                >
+                  <div className="text-xs text-slate-400">
+                    {new Date(entry.timestamp).toLocaleString()}
+                  </div>
+                  <div className="font-medium mt-1">
+                    {entry.message}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Aktion: {entry.action}
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
       </div>
     </main>
   );
 }
+
