@@ -4,15 +4,15 @@ import React, { useEffect, useState } from "react";
 
 type Device = {
   id: string;
-  name: string;       // Produktname
-  udiDi: string;      // automatisch generierte UDI-DI
-  serial: string;     // automatisch generierte Seriennummer
-  udiHash: string;    // SHA-256 Hash aus UDI-DI + Seriennummer
+  name: string; // Produktname
+  udiDi: string; // automatisch generierte UDI-DI
+  serial: string; // automatisch generierte Seriennummer
+  udiHash: string; // SHA-256 Hash aus UDI-DI + Seriennummer
   createdAt: string;
 
-  batch?: string;          // z.B. 251127-01
+  batch?: string; // z.B. 251127-01
   productionDate?: string; // YYMMDD
-  udiPi?: string;          // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
+  udiPi?: string; // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
 };
 
 type Doc = {
@@ -22,7 +22,7 @@ type Doc = {
   cid: string;
   url: string;
   createdAt: string;
-  category?: string;  // Kategorie für MDR-Dokumente
+  category?: string; // Kategorie für MDR-Dokumente
 };
 
 type AuditEntry = {
@@ -54,13 +54,11 @@ async function hashUdi(udiDi: string, serial: string): Promise<string> {
   const input = `${udiDi}|${serial}`;
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
-
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-
   return hashHex;
 }
 
@@ -72,12 +70,46 @@ function formatDateYYMMDD(date: Date): string {
   return `${yy}${mm}${dd}`;
 }
 
+// Helfer: CSV für Geräte bauen
+function devicesToCSV(devices: Device[]): string {
+  const header = [
+    "Name",
+    "UDI-DI",
+    "Serial",
+    "Batch",
+    "ProductionDate(YYMMDD)",
+    "UDI-PI",
+    "UDI-Hash",
+    "CreatedAt",
+  ].join(";");
+
+  const rows = devices.map((d) => {
+    const cols = [
+      d.name || "",
+      d.udiDi || "",
+      d.serial || "",
+      d.batch || "",
+      d.productionDate || "",
+      d.udiPi || "",
+      d.udiHash || "",
+      d.createdAt || "",
+    ].map((val) => {
+      const safe = String(val ?? "").replace(/"/g, '""');
+      return `"${safe}"`;
+    });
+
+    return cols.join(";");
+  });
+
+  return [header, ...rows].join("\n");
+}
+
 export default function MedSafePage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
 
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [newProductName, setNewProductName] = useState("");
 
   const [docName, setDocName] = useState("");
@@ -93,7 +125,6 @@ export default function MedSafePage() {
   // 🔁 Beim Laden: Geräte, Dokumente & Audit-Log aus localStorage holen
   useEffect(() => {
     if (typeof window === "undefined") return;
-
     try {
       const storedDevices = window.localStorage.getItem(DEVICES_KEY);
       const storedDocs = window.localStorage.getItem(DOCS_KEY);
@@ -117,20 +148,22 @@ export default function MedSafePage() {
   const addAuditEntry = (
     deviceId: string | null,
     action: string,
-    message: string
+    msg: string
   ) => {
     setAudit((prev) => {
       const entry: AuditEntry = {
         id: crypto.randomUUID(),
         deviceId,
         action,
-        message,
+        message: msg,
         timestamp: new Date().toISOString(),
       };
       const updated = [entry, ...prev]; // neueste zuerst
+
       if (typeof window !== "undefined") {
         window.localStorage.setItem(AUDIT_KEY, JSON.stringify(updated));
       }
+
       return updated;
     });
   };
@@ -159,9 +192,7 @@ export default function MedSafePage() {
     const deviceIndex = devices.length + 1;
 
     // 🔢 automatisch generierte UDI-DI (interne Struktur)
-    const generatedUdiDi = `TH-DI-${deviceIndex
-      .toString()
-      .padStart(6, "0")}`;
+    const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
 
     // 🔢 automatisch generierte Seriennummer (inkl. Datum + Laufnummer)
     const generatedSerial = `TH-SN-${productionDate}-${batchRunningNumber}`;
@@ -188,6 +219,7 @@ export default function MedSafePage() {
     // NEUE GERÄTE OBEN
     const updated = [newDevice, ...devices];
     setDevices(updated);
+
     if (typeof window !== "undefined") {
       window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
     }
@@ -258,6 +290,7 @@ export default function MedSafePage() {
 
       const updatedDocs = [...docs, newDoc];
       setDocs(updatedDocs);
+
       if (typeof window !== "undefined") {
         window.localStorage.setItem(DOCS_KEY, JSON.stringify(updatedDocs));
       }
@@ -269,9 +302,9 @@ export default function MedSafePage() {
       addAuditEntry(
         selectedDeviceId,
         "document_uploaded",
-        `Dokument "${newDoc.name}" (${newDoc.category}) hochgeladen (CID: ${String(
-          newDoc.cid
-        ).slice(0, 10)}…)`
+        `Dokument "${newDoc.name}" (${
+          newDoc.category || "ohne Kategorie"
+        }) hochgeladen (CID: ${String(newDoc.cid).slice(0, 10)}…)`
       );
     } catch (err: any) {
       console.error(err);
@@ -305,6 +338,48 @@ export default function MedSafePage() {
     setMessage("Alle lokalen Daten wurden gelöscht.");
   };
 
+  // 🔄 Export JSON
+  const handleExportJSON = () => {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const json = JSON.stringify(devices, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als JSON exportiert.");
+  };
+
+  // 🔄 Export CSV
+  const handleExportCSV = () => {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const csv = devicesToCSV(devices);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.csv";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als CSV exportiert.");
+  };
+
   const docsForDevice = selectedDeviceId
     ? docs.filter((d) => d.deviceId === selectedDeviceId)
     : [];
@@ -317,46 +392,83 @@ export default function MedSafePage() {
   const filteredDevices = devices.filter((device) => {
     if (!searchTerm.trim()) return true;
     const needle = searchTerm.toLowerCase();
-
-    const haystack =
-      [
-        device.name,
-        device.serial,
-        device.udiDi,
-        device.batch,
-        device.udiPi,
-        device.udiHash,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+    const haystack = [
+      device.name,
+      device.serial,
+      device.udiDi,
+      device.batch,
+      device.udiPi,
+      device.udiHash,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
 
     return haystack.includes(needle);
   });
 
+  const selectedDevice = selectedDeviceId
+    ? devices.find((d) => d.id === selectedDeviceId) || null
+    : null;
+
+  const totalDevices = devices.length;
+  const totalDocs = docs.length;
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">
-              MedSafe-UDI – Geräteübersicht
-            </h1>
-            <p className="text-slate-400 text-sm mt-1">
-              Nur Produktnamen eingeben – UDI-DI, Seriennummer, Batch &amp; UDI-PI
-              (ohne Verfallsdatum) werden automatisch generiert. Daten bleiben im
-              Browser (localStorage), Dateien zusätzlich bei Pinata.
-            </p>
+        {/* HEADER + Export + KPIs */}
+        <header className="space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold">
+                MedSafe-UDI – Geräteübersicht
+              </h1>
+              <p className="text-slate-400 text-sm mt-1">
+                Nur Produktnamen eingeben – UDI-DI, Seriennummer, Batch &amp;
+                UDI-PI (ohne Verfallsdatum) werden automatisch generiert. Daten
+                bleiben im Browser (localStorage), Dateien zusätzlich bei
+                Pinata.
+              </p>
+            </div>
+
+            <button
+              onClick={handleResetAll}
+              className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/40 hover:bg-red-800/60"
+            >
+              Alle lokalen Daten
+              <br />
+              löschen
+            </button>
           </div>
 
-          <button
-            onClick={handleResetAll}
-            className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/40 hover:bg-red-800/60"
-          >
-            Alle lokalen Daten
-            <br />
-            löschen
-          </button>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex gap-3 text-xs md:text-sm">
+              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
+                <div className="text-slate-400">Geräte</div>
+                <div className="text-lg font-semibold">{totalDevices}</div>
+              </div>
+              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
+                <div className="text-slate-400">Dokumente</div>
+                <div className="text-lg font-semibold">{totalDocs}</div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleExportJSON}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Export JSON
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
         </header>
 
         {message && (
@@ -368,6 +480,7 @@ export default function MedSafePage() {
         {/* Neues Gerät */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neues Gerät anlegen</h2>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
@@ -379,6 +492,7 @@ export default function MedSafePage() {
               UDI-DI &amp; Seriennummer werden automatisch erzeugt.
             </p>
           </div>
+
           <button
             onClick={handleSaveDevice}
             className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
@@ -391,6 +505,7 @@ export default function MedSafePage() {
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <h2 className="text-lg font-semibold">Angelegte Geräte</h2>
+
             <div className="w-full md:w-1/2 flex items-center gap-2">
               <input
                 className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
@@ -415,18 +530,18 @@ export default function MedSafePage() {
                 const count = docs.filter(
                   (d) => d.deviceId === device.id
                 ).length;
-
                 const isSelected = device.id === selectedDeviceId;
 
                 return (
                   <li key={device.id}>
                     <button
                       onClick={() => handleSelectDevice(device.id)}
-                      className={`w-full text-left px-4 py-3 rounded-xl border text-sm ${
-                        isSelected
+                      className={
+                        "w-full text-left px-4 py-3 rounded-xl border text-sm " +
+                        (isSelected
                           ? "bg-emerald-900/50 border-emerald-600"
-                          : "bg-slate-900 border-slate-700 hover:border-emerald-500/60"
-                      }`}
+                          : "bg-slate-900 border-slate-700 hover:border-emerald-500/60")
+                      }
                     >
                       <div className="font-medium">
                         {device.name} – SN: {device.serial}{" "}
@@ -461,6 +576,82 @@ export default function MedSafePage() {
           )}
         </section>
 
+        {/* Geräteakte – Detailansicht */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Geräteakte – Detailansicht</h2>
+
+          {!selectedDevice ? (
+            <p className="text-sm text-amber-400">
+              Bitte oben ein Gerät auswählen, um die Geräteakte zu sehen.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
+                  <div className="text-slate-400 text-xs">Produktname</div>
+                  <div className="font-semibold">{selectedDevice.name}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">UDI-DI</div>
+                  <div className="break-all">{selectedDevice.udiDi}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">Seriennummer</div>
+                  <div className="break-all">{selectedDevice.serial}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    UDI-PI (ohne Verfallsdatum)
+                  </div>
+                  <div className="break-all">
+                    {selectedDevice.udiPi || "–"}
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
+                  <div className="text-slate-400 text-xs">Charge</div>
+                  <div>{selectedDevice.batch || "–"}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Produktionsdatum (YYMMDD)
+                  </div>
+                  <div>{selectedDevice.productionDate || "–"}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">UDI-Hash</div>
+                  <div className="break-all text-xs">
+                    {selectedDevice.udiHash}
+                  </div>
+
+                  <div className="text-slate-400 text-xs mt-3">Angelegt am</div>
+                  <div>
+                    {new Date(
+                      selectedDevice.createdAt
+                    ).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                  <div className="text-slate-400 mb-1">Verknüpfte Dokumente</div>
+                  <div className="font-semibold text-lg">
+                    {
+                      docs.filter((d) => d.deviceId === selectedDevice.id)
+                        .length
+                    }
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                  <div className="text-slate-400 mb-1">Aktivitäten (Audit)</div>
+                  <div className="font-semibold text-lg">
+                    {
+                      audit.filter((a) => a.deviceId === selectedDevice.id)
+                        .length
+                    }
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* Dokumente zum Gerät */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Dokumente zum Gerät</h2>
@@ -483,6 +674,7 @@ export default function MedSafePage() {
               value={docName}
               onChange={(e) => setDocName(e.target.value)}
             />
+
             <select
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
               value={docCategory}
@@ -494,6 +686,7 @@ export default function MedSafePage() {
                 </option>
               ))}
             </select>
+
             <input
               type="file"
               onChange={handleFileChange}
@@ -514,6 +707,7 @@ export default function MedSafePage() {
               <h3 className="text-sm font-semibold">
                 Dokumente für dieses Gerät
               </h3>
+
               {docsForDevice.length === 0 ? (
                 <p className="text-sm text-slate-400">
                   Noch keine Dokumente gespeichert.
@@ -528,9 +722,7 @@ export default function MedSafePage() {
                       <div className="font-medium">
                         {doc.name}
                         <span className="text-xs text-slate-400 ml-2">
-                          (
-                          {doc.category ? doc.category : "ohne Kategorie"}
-                          )
+                          ({doc.category ? doc.category : "ohne Kategorie"})
                         </span>
                       </div>
                       <div className="text-xs text-slate-400 break-all">
