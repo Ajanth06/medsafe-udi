@@ -353,45 +353,6 @@ export default function MedSafePage() {
     }
   };
 
-  // 🧨 ALLES LÖSCHEN – Geräte, Dokumente, Audit (mit Admin-PIN geschützt)
-  const handleResetAll = () => {
-    if (typeof window === "undefined") return;
-
-    const pin = window.prompt(
-      "Admin-PIN eingeben, um ALLE lokalen Daten (Geräte, Dokumente, Audit) zu löschen:"
-    );
-    if (pin === null) return;
-    if (pin !== ADMIN_PIN) {
-      setMessage("Admin-PIN falsch. Es wurden keine Daten gelöscht.");
-      return;
-    }
-
-    const ok = window.confirm(
-      "Wirklich ALLE lokalen Daten (Geräte, Dokumente, Audit-Log) löschen? Dies kann nicht rückgängig gemacht werden."
-    );
-    if (!ok) return;
-
-    try {
-      window.localStorage.removeItem(DEVICES_KEY);
-      window.localStorage.removeItem(DOCS_KEY);
-      window.localStorage.removeItem(AUDIT_KEY);
-    } catch (err) {
-      console.error("Fehler beim Löschen aus localStorage:", err);
-    }
-
-    setDevices([]);
-    setDocs([]);
-    setAudit([]);
-    setSelectedDeviceId(null);
-    setMessage("Alle lokalen Daten wurden gelöscht.");
-
-    addAuditEntry(
-      null,
-      "full_reset",
-      "Alle lokalen Daten (Geräte, Dokumente, Audit) wurden per Admin-Reset gelöscht."
-    );
-  };
-
   // 🔐 EINZELNES GERÄT LÖSCHEN – nur mit Admin-PIN
   const handleDeleteDevice = (deviceId: string) => {
     if (typeof window === "undefined") return;
@@ -563,15 +524,6 @@ export default function MedSafePage() {
                 Produkt/Charge, Details zeigen alle Geräte dieser Gruppe.
               </p>
             </div>
-
-            <button
-              onClick={handleResetAll}
-              className="text-xs md:text-sm rounded-lg border border-red-500/70 px-3 py-2 bg-red-900/40 hover:bg-red-800/60"
-            >
-              Alle lokalen Daten
-              <br />
-              löschen (Admin)
-            </button>
           </div>
 
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -628,9 +580,7 @@ export default function MedSafePage() {
               placeholder="Anzahl"
               value={quantity}
               onChange={(e) =>
-                setQuantity(
-                  Math.max(1, Number(e.target.value || "1") || 1)
-                )
+                setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
               }
             />
             <p className="text-xs text-slate-400">
