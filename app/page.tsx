@@ -491,7 +491,7 @@ export default function MedSafePage() {
     ? audit.filter((a) => a.deviceId === selectedDeviceId)
     : audit;
 
-  // 🔍 Geräte nach Suchbegriff filtern
+  // 🔍 Geräte nach Suchbegriff filtern (erstmal auf Einzel-Geräte-Ebene)
   const filteredDevices = devices.filter((device) => {
     if (!searchTerm.trim()) return true;
     const needle = searchTerm.toLowerCase();
@@ -517,15 +517,34 @@ export default function MedSafePage() {
   const totalDevices = devices.length;
   const totalDocs = docs.length;
 
-  // 🔢 Batch-Counts: wie viele Geräte pro Charge?
-  const batchCounts: Record<string, number> = devices.reduce(
-    (acc, d) => {
-      if (!d.batch) return acc;
-      acc[d.batch] = (acc[d.batch] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>
-  );
+  // 🔢 Gruppenbildung: ein Eintrag pro (Name + Batch)
+  type DeviceGroup = {
+    key: string;
+    representative: Device;
+    count: number;
+  };
+
+  const groupsMap: Record<string, DeviceGroup> = {};
+  for (const d of filteredDevices) {
+    const key = `${d.name}__${d.batch ?? ""}`;
+    if (!groupsMap[key]) {
+      groupsMap[key] = {
+        key,
+        representative: d,
+        count: 0,
+      };
+    }
+    groupsMap[key].count += 1;
+  }
+  const groupedDevices: DeviceGroup[] = Object.values(groupsMap);
+
+  // Alle Geräte, die zur gleichen Gruppe (Name+Batch) gehören wie das ausgewählte Gerät
+  const devicesInSameGroup: Device[] = selectedDevice
+    ? devices.filter(
+        (d) =>
+          d.name === selectedDevice.name && d.batch === selectedDevice.batch
+      )
+    : [];
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
@@ -538,10 +557,10 @@ export default function MedSafePage() {
                 MedSafe-UDI – Geräteübersicht
               </h1>
               <p className="text-slate-400 text-sm mt-1">
-                Nur Produktnamen &amp; Anzahl eingeben – UDI-DI,
-                Seriennummern, Charge &amp; UDI-PI (ohne Verfallsdatum) werden
-                automatisch generiert. Daten bleiben im Browser (localStorage),
-                Dateien zusätzlich bei Pinata.
+                Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern,
+                Charge &amp; UDI-PI (ohne Verfallsdatum) werden automatisch
+                generiert. In der Liste siehst du je eine Zeile pro
+                Produkt/Charge, Details zeigen alle Geräte dieser Gruppe.
               </p>
             </div>
 
@@ -592,7 +611,7 @@ export default function MedSafePage() {
 
         {/* Neues Gerät */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
-          <h2 className="text-lg font-semibold">Neues Gerät anlegen</h2>
+          <h2 className="text-lg font-semibold">Neue Geräte anlegen</h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
             <input
@@ -628,10 +647,12 @@ export default function MedSafePage() {
           </button>
         </section>
 
-        {/* Geräte-Liste mit Suche */}
+        {/* Geräte-Liste mit Suche (Gruppenansicht) */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <h2 className="text-lg font-semibold">Angelegte Geräte</h2>
+            <h2 className="text-lg font-semibold">
+              Angelegte Geräte-Gruppen (Produkt / Charge)
+            </h2>
 
             <div className="w-full md:w-1/2 flex items-center gap-2">
               <input
@@ -647,24 +668,29 @@ export default function MedSafePage() {
             <p className="text-sm text-slate-400">
               Noch keine Geräte angelegt.
             </p>
-          ) : filteredDevices.length === 0 ? (
+          ) : groupedDevices.length === 0 ? (
             <p className="text-sm text-slate-400">
               Keine Geräte passend zur Suche gefunden.
             </p>
           ) : (
             <ul className="space-y-2">
-              {filteredDevices.map((device) => {
-                const count = docs.filter(
-                  (d) => d.deviceId === device.id
-                ).length;
-                const isSelected = device.id === selectedDeviceId;
+              {groupedDevices.map((group) => {
+                const device = group.representative;
+                const isSelected = selectedDeviceId === device.id;
 
-                const batchCount = device.batch
-                  ? batchCounts[device.batch] ?? 1
-                  : 0;
+                // Summe aller Dokumente für alle Geräte dieser Gruppe
+                const devicesOfGroup = devices.filter(
+                  (d) => d.name === device.name && d.batch === device.batch
+                );
+                const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
+                  return (
+                    sum +
+                    docs.filter((doc) => doc.deviceId === d.id).length
+                  );
+                }, 0);
 
                 return (
-                  <li key={device.id}>
+                  <li key={group.key}>
                     <button
                       onClick={() => handleSelectDevice(device.id)}
                       className={
@@ -675,30 +701,23 @@ export default function MedSafePage() {
                       }
                     >
                       <div className="font-medium">
-                        {device.name} – SN: {device.serial}{" "}
+                        {device.name} – Charge: {device.batch ?? "–"}{" "}
                         <span className="text-slate-400">
-                          ({count} Dateien)
+                          ({group.count} Gerät
+                          {group.count !== 1 ? "e" : ""},{" "}
+                          {docCountForGroup} Dokument
+                          {docCountForGroup !== 1 ? "e" : ""})
                         </span>
                       </div>
                       <div className="text-xs text-slate-400 mt-1 break-all">
-                        UDI-DI: {device.udiDi}
+                        Beispiel-SN: {device.serial}
                       </div>
                       <div className="text-xs text-slate-500 mt-1 break-all">
-                        UDI-Hash:{" "}
-                        {device.udiHash
-                          ? device.udiHash.slice(0, 20) + "…"
-                          : "noch kein Hash (altes Gerät)"}
+                        UDI-DI: {device.udiDi}
                       </div>
-                      {device.batch && (
-                        <div className="text-xs text-emerald-400 mt-1">
-                          Charge: {device.batch} (
-                          {batchCount} Gerät
-                          {batchCount !== 1 ? "e" : ""})
-                        </div>
-                      )}
                       {device.udiPi && (
                         <div className="text-xs text-slate-300 mt-1 break-all">
-                          UDI-PI: {device.udiPi}
+                          UDI-PI (Beispiel): {device.udiPi}
                         </div>
                       )}
                     </button>
@@ -709,10 +728,12 @@ export default function MedSafePage() {
           )}
         </section>
 
-        {/* Geräteakte – Detailansicht */}
+        {/* Geräteakte – Detailansicht (inkl. alle Geräte der Gruppe) */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold">Geräteakte – Detailansicht</h2>
+            <h2 className="text-lg font-semibold">
+              Geräteakte – Detailansicht
+            </h2>
             {selectedDevice && (
               <button
                 onClick={() => handleDeleteDevice(selectedDevice.id)}
@@ -725,25 +746,29 @@ export default function MedSafePage() {
 
           {!selectedDevice ? (
             <p className="text-sm text-amber-400">
-              Bitte oben ein Gerät auswählen, um die Geräteakte zu sehen.
+              Bitte oben eine Geräte-Gruppe auswählen, um die Geräteakte zu
+              sehen.
             </p>
           ) : (
             <div className="space-y-4">
+              {/* Basisdaten zur Gruppe / Beispielgerät */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
                   <div className="text-slate-400 text-xs">Produktname</div>
                   <div className="font-semibold">{selectedDevice.name}</div>
 
-                  <div className="text-slate-400 text-xs mt-3">UDI-DI</div>
+                  <div className="text-slate-400 text-xs mt-3">
+                    UDI-DI (Beispielgerät)
+                  </div>
                   <div className="break-all">{selectedDevice.udiDi}</div>
 
                   <div className="text-slate-400 text-xs mt-3">
-                    Seriennummer
+                    Seriennummer (Beispielgerät)
                   </div>
                   <div className="break-all">{selectedDevice.serial}</div>
 
                   <div className="text-slate-400 text-xs mt-3">
-                    UDI-PI (ohne Verfallsdatum)
+                    UDI-PI (Beispielgerät, ohne Verfallsdatum)
                   </div>
                   <div className="break-all">
                     {selectedDevice.udiPi || "–"}
@@ -753,13 +778,9 @@ export default function MedSafePage() {
                 <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
                   <div className="text-slate-400 text-xs">Charge</div>
                   <div>
-                    {selectedDevice.batch || "–"}
-                    {selectedDevice.batch &&
-                      ` (${batchCounts[selectedDevice.batch] ?? 1} Gerät${
-                        (batchCounts[selectedDevice.batch] ?? 1) !== 1
-                          ? "e"
-                          : ""
-                      })`}
+                    {selectedDevice.batch || "–"} (
+                    {devicesInSameGroup.length} Gerät
+                    {devicesInSameGroup.length !== 1 ? "e" : ""})
                   </div>
 
                   <div className="text-slate-400 text-xs mt-3">
@@ -767,7 +788,9 @@ export default function MedSafePage() {
                   </div>
                   <div>{selectedDevice.productionDate || "–"}</div>
 
-                  <div className="text-slate-400 text-xs mt-3">UDI-Hash</div>
+                  <div className="text-slate-400 text-xs mt-3">
+                    UDI-Hash (Beispielgerät)
+                  </div>
                   <div className="break-all text-xs">
                     {selectedDevice.udiHash}
                   </div>
@@ -779,6 +802,52 @@ export default function MedSafePage() {
                 </div>
               </div>
 
+              {/* Übersicht aller Geräte in der Gruppe */}
+              {devicesInSameGroup.length > 0 && (
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs space-y-2">
+                  <div className="font-semibold mb-1">
+                    Geräte in dieser Produkt/Charge-Gruppe
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-[11px]">
+                      <thead>
+                        <tr className="border-b border-slate-700">
+                          <th className="text-left py-1 pr-2">
+                            Seriennummer
+                          </th>
+                          <th className="text-left py-1 pr-2">UDI-PI</th>
+                          <th className="text-left py-1 pr-2">UDI-Hash</th>
+                          <th className="text-left py-1 pr-2">
+                            Angelegt am
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {devicesInSameGroup.map((d) => (
+                          <tr
+                            key={d.id}
+                            className="border-b border-slate-800 last:border-b-0"
+                          >
+                            <td className="py-1 pr-2 break-all">
+                              {d.serial}
+                            </td>
+                            <td className="py-1 pr-2 break-all">
+                              {d.udiPi}
+                            </td>
+                            <td className="py-1 pr-2 break-all">
+                              {d.udiHash.slice(0, 16)}…
+                            </td>
+                            <td className="py-1 pr-2">
+                              {new Date(d.createdAt).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
                   <div className="text-slate-400 mb-1">Verknüpfte Dokumente</div>
@@ -787,6 +856,9 @@ export default function MedSafePage() {
                       docs.filter((d) => d.deviceId === selectedDevice.id)
                         .length
                     }
+                    <span className="text-xs text-slate-400 ml-1">
+                      (bezogen auf das ausgewählte Gerät)
+                    </span>
                   </div>
                 </div>
                 <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
@@ -809,12 +881,14 @@ export default function MedSafePage() {
 
           {selectedDeviceId ? (
             <p className="text-sm text-slate-400">
-              Aktuelles Gerät:{" "}
-              {devices.find((d) => d.id === selectedDeviceId)?.name}
+              Aktuelles Gerät (für Dokument-Verknüpfung):{" "}
+              {devices.find((d) => d.id === selectedDeviceId)?.name} – SN:{" "}
+              {devices.find((d) => d.id === selectedDeviceId)?.serial}
             </p>
           ) : (
             <p className="text-sm text-amber-400">
-              Bitte oben ein Gerät auswählen.
+              Bitte oben eine Geräte-Gruppe anklicken, dann ein Gerät im Detail
+              auswählen (Standard ist das erste Gerät der Gruppe).
             </p>
           )}
 
@@ -900,8 +974,8 @@ export default function MedSafePage() {
           <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
           <p className="text-xs text-slate-400">
             {selectedDeviceId
-              ? "Es werden nur Aktivitäten für das ausgewählte Gerät angezeigt."
-              : "Es werden Aktivitäten für alle Geräte angezeigt."}
+              ? "Es werden nur Aktivitäten angezeigt, die das ausgewählte Gerät direkt betreffen."
+              : "Es werden Aktivitäten für alle Geräte / Bulk-Aktionen angezeigt."}
           </p>
 
           {auditForView.length === 0 ? (
