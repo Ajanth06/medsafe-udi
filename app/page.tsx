@@ -10,7 +10,7 @@ type Device = {
   udiHash: string; // SHA-256 Hash aus UDI-DI + Seriennummer
   createdAt: string;
 
-  batch?: string; // z.B. 251127-01
+  batch?: string; // Charge, z.B. 251128
   productionDate?: string; // YYMMDD
   udiPi?: string; // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
 };
@@ -38,7 +38,7 @@ const DOCS_KEY = "medsafe_docs";
 const AUDIT_KEY = "medsafe_audit";
 
 // 🔐 einfacher Admin-PIN (nur für diesen Browser, kein echter Security-Mechanismus)
-const ADMIN_PIN = "2727";
+const ADMIN_PIN = "4837";
 
 // feste Kategorien für MDR-Dokumente
 const DOC_CATEGORIES = [
@@ -181,24 +181,24 @@ export default function MedSafePage() {
     const now = new Date();
     const productionDate = formatDateYYMMDD(now);
 
-    // Batch-Nummer: YYMMDD-XX (XX = Laufnummer an diesem Tag)
-    const devicesSameDay = devices.filter(
-      (d) => d.productionDate === productionDate
-    );
-    const batchRunningNumber = String(devicesSameDay.length + 1).padStart(
-      2,
+    // Charge = Produktionsdatum (YYMMDD), mehrere Geräte können gleiche Charge haben
+    const batch = productionDate;
+
+    // Geräte mit gleicher Charge zählen, um eine laufende Nummer pro Charge zu haben
+    const devicesSameBatch = devices.filter((d) => d.batch === batch);
+    const serialRunningNumber = String(devicesSameBatch.length + 1).padStart(
+      3,
       "0"
     );
-    const batch = `${productionDate}-${batchRunningNumber}`;
 
-    // Globale laufende Nummer für UDI-DI/Serial
+    // Globale laufende Nummer für UDI-DI
     const deviceIndex = devices.length + 1;
 
     // 🔢 automatisch generierte UDI-DI (interne Struktur)
     const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
 
-    // 🔢 automatisch generierte Seriennummer (inkl. Datum + Laufnummer)
-    const generatedSerial = `TH-SN-${productionDate}-${batchRunningNumber}`;
+    // 🔢 automatisch generierte Seriennummer (Charge + laufende Nummer)
+    const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
 
     // UDI-Hash
     const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
@@ -481,6 +481,16 @@ export default function MedSafePage() {
   const totalDevices = devices.length;
   const totalDocs = docs.length;
 
+  // 🔢 Batch-Counts: wie viele Geräte pro Charge?
+  const batchCounts: Record<string, number> = devices.reduce(
+    (acc, d) => {
+      if (!d.batch) return acc;
+      acc[d.batch] = (acc[d.batch] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
@@ -492,7 +502,7 @@ export default function MedSafePage() {
                 MedSafe-UDI – Geräteübersicht
               </h1>
               <p className="text-slate-400 text-sm mt-1">
-                Nur Produktnamen eingeben – UDI-DI, Seriennummer, Batch &amp;
+                Nur Produktnamen eingeben – UDI-DI, Seriennummer, Charge &amp;
                 UDI-PI (ohne Verfallsdatum) werden automatisch generiert. Daten
                 bleiben im Browser (localStorage), Dateien zusätzlich bei
                 Pinata.
@@ -599,6 +609,10 @@ export default function MedSafePage() {
                 ).length;
                 const isSelected = device.id === selectedDeviceId;
 
+                const batchCount = device.batch
+                  ? batchCounts[device.batch] ?? 1
+                  : 0;
+
                 return (
                   <li key={device.id}>
                     <button
@@ -627,7 +641,9 @@ export default function MedSafePage() {
                       </div>
                       {device.batch && (
                         <div className="text-xs text-emerald-400 mt-1">
-                          Charge: {device.batch}
+                          Charge: {device.batch} (
+                          {batchCount} Gerät
+                          {batchCount !== 1 ? "e" : ""})
                         </div>
                       )}
                       {device.udiPi && (
@@ -671,7 +687,9 @@ export default function MedSafePage() {
                   <div className="text-slate-400 text-xs mt-3">UDI-DI</div>
                   <div className="break-all">{selectedDevice.udiDi}</div>
 
-                  <div className="text-slate-400 text-xs mt-3">Seriennummer</div>
+                  <div className="text-slate-400 text-xs mt-3">
+                    Seriennummer
+                  </div>
                   <div className="break-all">{selectedDevice.serial}</div>
 
                   <div className="text-slate-400 text-xs mt-3">
@@ -684,7 +702,15 @@ export default function MedSafePage() {
 
                 <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
                   <div className="text-slate-400 text-xs">Charge</div>
-                  <div>{selectedDevice.batch || "–"}</div>
+                  <div>
+                    {selectedDevice.batch || "–"}
+                    {selectedDevice.batch &&
+                      ` (${batchCounts[selectedDevice.batch] ?? 1} Gerät${
+                        (batchCounts[selectedDevice.batch] ?? 1) !== 1
+                          ? "e"
+                          : ""
+                      })`}
+                  </div>
 
                   <div className="text-slate-400 text-xs mt-3">
                     Produktionsdatum (YYMMDD)
