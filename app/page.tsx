@@ -1,233 +1,483 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabaseClient";
 
-// --- Supabase Client (Browser) ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// --- Typen ---
 type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
 
 type Device = {
   id: string;
-  name: string;
-  udiDi: string;
-  serial: string;
-  udiHash: string;
+  name: string; // Produktname
+  udiDi: string; // automatisch generierte UDI-DI
+  serial: string; // automatisch generierte Seriennummer
+  udiHash: string; // SHA-256 Hash aus UDI-DI + Seriennummer
   createdAt: string;
-  batch?: string;
-  productionDate?: string;
-  udiPi?: string;
-  status?: DeviceStatus;
-  riskClass?: string;
+
+  batch?: string; // Charge, z.B. 251128
+  productionDate?: string; // YYMMDD
+  udiPi?: string; // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
+
+  status: DeviceStatus; // Gerätestatus (MDR-/ISO-Logik)
+  riskClass?: string; // z.B. IIa, IIb, I (optional)
+  blockComment?: string; // Kommentar / Sperrgrund / Besonderheiten
+
+  // Archiv / DMR / DHR
+  isArchived?: boolean; // Gerät stillgelegt / archiviert
+  dmrId?: string; // Device Master Record ID (Produkt/Charge)
+  dhrId?: string; // Device History Record ID (Einzelgerät)
+  validationStatus?: string; // z.B. IQ/OQ/PQ-Status
+  archivedAt?: string; // ISO-Datum/Uhrzeit der Stilllegung
+  archiveReason?: string; // Grund der Archivierung / Stilllegung
+
+  // Abweichung / Quarantäne (Nonconformity)
+  nonconformityCategory?: string; // mechanisch, elektrisch, Software, ...
+  nonconformitySeverity?: string; // kritisch / nicht kritisch
+  nonconformityAction?: string; // Sofortmaßnahmen
+  nonconformityResponsible?: string; // Verantwortliche Person
+  nonconformityId?: string; // NC-ID, z.B. NC-2025-001
+
+  // Service / Wartung
+  lastServiceDate?: string; // ISO-Datum
+  nextServiceDate?: string; // ISO-Datum
+  serviceNotes?: string;
+
+  // PMS / Feedback
+  pmsNotes?: string;
 };
 
+type DocStatus = "Draft" | "Controlled" | "Final";
+
 type Doc = {
-  id: string; // lokale ID
+  id: string;
   deviceId: string;
   name: string;
   cid: string;
   url: string;
   createdAt: string;
+  category?: string; // Kategorie für MDR-Dokumente
+
+  // Dokumentenlenkung
+  version?: string;
+  revision?: string;
+  docStatus?: DocStatus;
+  approvedBy?: string;
 };
 
-function generateSerial(base: string, index: number): string {
-  // einfache Seriennummer: BASIS-001, BASIS-002, ...
-  const num = (index + 1).toString().padStart(3, "0");
-  return `${base}-${num}`;
-}
+type AuditEntry = {
+  id: string;
+  deviceId: string | null;
+  action: string;
+  message: string;
+  timestamp: string;
+};
 
-function generateUdiHash(udiDi: string, serial: string): string {
-  // kleiner SHA-256 Wrapper über Web Crypto
-  const text = `${udiDi}|${serial}`;
+const DEVICES_KEY = "medsafe_devices";
+const DOCS_KEY = "medsafe_docs";
+const AUDIT_KEY = "medsafe_audit";
+
+// 🔐 einfacher Admin-PIN (nur für diesen Browser, kein echter Security-Mechanismus)
+const ADMIN_PIN = "4837";
+
+// feste Kategorien für MDR-Dokumente
+const DOC_CATEGORIES = [
+  "Konformität / Declaration of Conformity",
+  "Risikoanalyse",
+  "Gebrauchsanweisung / IFU",
+  "Servicebericht",
+  "Wartungsprotokoll",
+  "IQ/OQ/PQ",
+  "Firmware / Software",
+  "Sonstiges",
+];
+
+const DOC_STATUS_OPTIONS: DocStatus[] = ["Draft", "Controlled", "Final"];
+
+// MDR-/13485-nahe Status-Bezeichnungen
+const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
+  released: "Freigegeben (Inverkehrbringen)",
+  blocked: "Gesperrt / Quarantäne",
+  in_production: "In Herstellung",
+  recall: "Recall (Rückruf)",
+};
+
+// 🔐 UDI-Hash berechnen (läuft im Browser)
+async function hashUdi(udiDi: string, serial: string): Promise<string> {
+  const input = `${udiDi}|${serial}`;
   const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  // Web Crypto gibt Promise<ArrayBuffer> zurück
-  // Wir brauchen hier nur eine einfache Hex-Repräsentation
-  // Achtung: das ist async – Funktion wird nur in async Kontext genutzt
-  // (z.B. beim Speichern)
-  throw new Error("generateUdiHash sollte nur in async Kontext verwendet werden");
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return hashHex;
 }
 
-async function createUdiHash(udiDi: string, serial: string): Promise<string> {
-  const text = `${udiDi}|${serial}`;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(digest));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+// Datums-Codes im GS1-Format (YYMMDD)
+function formatDateYYMMDD(date: Date): string {
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yy}${mm}${dd}`;
 }
 
-export default function Page() {
-  // --- State: Geräte & Docs ---
+// Helfer: simple Slug
+function slugifyName(name: string): string {
+  return name.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
+}
+
+// Helfer: Nonconformity-ID generieren (NC-YYYY-XYZ)
+function generateNonconformityId(): string {
+  const year = new Date().getFullYear();
+  const random = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, "0");
+  return `NC-${year}-${random}`;
+}
+
+// Helfer: CSV für Geräte bauen
+function devicesToCSV(devices: Device[]): string {
+  const header = [
+    "Name",
+    "UDI-DI",
+    "Serial",
+    "Batch",
+    "ProductionDate(YYMMDD)",
+    "UDI-PI",
+    "UDI-Hash",
+    "Status",
+    "RiskClass",
+    "BlockComment",
+    "NonconformityCategory",
+    "NonconformitySeverity",
+    "NonconformityAction",
+    "NonconformityResponsible",
+    "NonconformityId",
+    "LastServiceDate",
+    "NextServiceDate",
+    "ServiceNotes",
+    "PMSNotes",
+    "ValidationStatus",
+    "DMR-ID",
+    "DHR-ID",
+    "Archived",
+    "ArchivedAt",
+    "ArchiveReason",
+    "CreatedAt",
+  ].join(";");
+
+  const rows = devices.map((d) => {
+    const cols = [
+      d.name || "",
+      d.udiDi || "",
+      d.serial || "",
+      d.batch || "",
+      d.productionDate || "",
+      d.udiPi || "",
+      d.udiHash || "",
+      DEVICE_STATUS_LABELS[d.status] || d.status || "",
+      d.riskClass || "",
+      d.blockComment || "",
+      d.nonconformityCategory || "",
+      d.nonconformitySeverity || "",
+      d.nonconformityAction || "",
+      d.nonconformityResponsible || "",
+      d.nonconformityId || "",
+      d.lastServiceDate || "",
+      d.nextServiceDate || "",
+      d.serviceNotes || "",
+      d.pmsNotes || "",
+      d.validationStatus || "",
+      d.dmrId || "",
+      d.dhrId || "",
+      d.isArchived ? "true" : "false",
+      d.archivedAt || "",
+      d.archiveReason || "",
+      d.createdAt || "",
+    ].map((val) => {
+      const safe = String(val ?? "").replace(/"/g, '""');
+      return `"${safe}"`;
+    });
+
+    return cols.join(";");
+  });
+
+  return [header, ...rows].join("\n");
+}
+
+export default function MedSafePage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
 
-  // Formular für neue Geräte
-  const [newName, setNewName] = useState("");
-  const [newBatch, setNewBatch] = useState("");
-  const [newCount, setNewCount] = useState(1);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [newProductName, setNewProductName] = useState("");
+  const [quantity, setQuantity] = useState<number>(1); // 🔢 Anzahl Geräte pro Klick
 
-  const [isSavingDevices, setIsSavingDevices] = useState(false);
+  // Dokument-Felder inkl. Dokumentenlenkung
+  const [docName, setDocName] = useState("");
+  const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
+  const [docVersion, setDocVersion] = useState("");
+  const [docRevision, setDocRevision] = useState("");
+  const [docStatus, setDocStatus] = useState<DocStatus>("Controlled");
+  const [docApprovedBy, setDocApprovedBy] = useState("");
+  const [file, setFile] = useState<File | null>(null);
 
-  // --- Initial: Geräte aus Supabase, Docs aus localStorage ---
+  const [isUploading, setIsUploading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  // 🔍 Suchfeld für Geräte
+  const [searchTerm, setSearchTerm] = useState("");
+
+  // 🔁 Beim Laden: Geräte, Dokumente & Audit-Log aus localStorage holen
   useEffect(() => {
-    const loadDevices = async () => {
-      const { data, error } = await supabase
-        .from("devices")
-        .select("*")
-        .order("created_at", { ascending: false });
+    if (typeof window === "undefined") return;
+    try {
+      const storedDevices = window.localStorage.getItem(DEVICES_KEY);
+      const storedDocs = window.localStorage.getItem(DOCS_KEY);
+      const storedAudit = window.localStorage.getItem(AUDIT_KEY);
 
-      if (error) {
-        console.error("Fehler beim Laden der Geräte aus Supabase:", error);
-        return;
+      if (storedDevices) {
+        const parsed = JSON.parse(storedDevices) as any[];
+        const normalized: Device[] = parsed.map((d) => ({
+          ...d,
+          status: (d.status ?? "released") as DeviceStatus, // Standard: freigegeben
+          riskClass: d.riskClass ?? "",
+          blockComment: d.blockComment ?? "",
+          isArchived: d.isArchived ?? false,
+          dmrId: d.dmrId ?? "",
+          dhrId: d.dhrId ?? "",
+          validationStatus: d.validationStatus ?? "",
+          nonconformityCategory: d.nonconformityCategory ?? "",
+          nonconformitySeverity: d.nonconformitySeverity ?? "",
+          nonconformityAction: d.nonconformityAction ?? "",
+          nonconformityResponsible: d.nonconformityResponsible ?? "",
+          lastServiceDate: d.lastServiceDate ?? "",
+          nextServiceDate: d.nextServiceDate ?? "",
+          serviceNotes: d.serviceNotes ?? "",
+          pmsNotes: d.pmsNotes ?? "",
+          archivedAt: d.archivedAt ?? "",
+          archiveReason: d.archiveReason ?? "",
+          nonconformityId: d.nonconformityId ?? "",
+        }));
+        setDevices(normalized);
       }
-
-      if (!data) return;
-
-      const mapped: Device[] = data.map((row: any) => ({
-        id: row.id,
-        name: row.name,
-        udiDi: row.udi_di ?? "",
-        serial: row.serial ?? "",
-        udiHash: row.udi_hash ?? "",
-        createdAt: row.created_at ?? "",
-        batch: row.batch ?? undefined,
-        productionDate: row.production_date ?? undefined,
-        udiPi: row.udi_pi ?? undefined,
-      }));
-
-      setDevices(mapped);
-    };
-
-    const loadDocs = () => {
-      try {
-        const raw = localStorage.getItem("medsafe_docs");
-        if (raw) {
-          const parsed: Doc[] = JSON.parse(raw);
-          setDocs(parsed);
-        }
-      } catch (e) {
-        console.warn("Konnte medsafe_docs nicht laden:", e);
+      if (storedDocs) {
+        const parsedDocs = JSON.parse(storedDocs) as any[];
+        const normalizedDocs: Doc[] = parsedDocs.map((doc) => ({
+          ...doc,
+          version: doc.version ?? "",
+          revision: doc.revision ?? "",
+          docStatus: (doc.docStatus ?? "Controlled") as DocStatus,
+          approvedBy: doc.approvedBy ?? "",
+        }));
+        setDocs(normalizedDocs);
       }
-    };
-
-    loadDevices();
-    loadDocs();
+      if (storedAudit) {
+        setAudit(JSON.parse(storedAudit));
+      }
+    } catch (err) {
+      console.error("Fehler beim Laden aus localStorage:", err);
+    }
   }, []);
 
-  // --- Helper: Docs in localStorage spiegeln ---
-  const updateDocsState = (updater: (prev: Doc[]) => Doc[]) => {
-    setDocs((prev) => {
-      const updated = updater(prev);
-      try {
-        localStorage.setItem("medsafe_docs", JSON.stringify(updated));
-      } catch (e) {
-        console.warn("Konnte medsafe_docs nicht speichern:", e);
+  // 📜 Helfer: neuen Audit-Eintrag hinzufügen
+  const addAuditEntry = (
+    deviceId: string | null,
+    action: string,
+    msg: string
+  ) => {
+    setAudit((prev) => {
+      const entry: AuditEntry = {
+        id: crypto.randomUUID(),
+        deviceId,
+        action,
+        message: msg,
+        timestamp: new Date().toISOString(),
+      };
+      const updated = [entry, ...prev]; // neueste zuerst
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(AUDIT_KEY, JSON.stringify(updated));
       }
+
       return updated;
     });
   };
 
-  // --- Geräte speichern (mit Anzahl) ---
-  const handleSaveDevices = async () => {
-    if (!newName.trim()) {
-      alert("Bitte einen Produktnamen eingeben.");
-      return;
-    }
-    if (newCount < 1) {
-      alert("Anzahl muss mindestens 1 sein.");
+  // 💾 Geräte speichern – mit "Anzahl" (Bulk-Erstellung)
+  const handleSaveDevice = async () => {
+    if (!newProductName.trim()) {
+      setMessage("Bitte einen Produktnamen eingeben.");
       return;
     }
 
-    setIsSavingDevices(true);
+    const qty = Number.isFinite(quantity)
+      ? Math.max(1, Math.floor(quantity))
+      : 1;
+
+    if (qty < 1) {
+      setMessage("Anzahl muss mindestens 1 sein.");
+      return;
+    }
+
+    const now = new Date();
+    const productionDate = formatDateYYMMDD(now);
+
+    // Charge = Produktionsdatum (YYMMDD)
+    const batch = productionDate;
+
+    // Geräte mit gleicher Charge zählen, um eine laufende Nummer pro Charge zu haben
+    const devicesSameBatch = devices.filter((d) => d.batch === batch);
+    const existingInBatch = devicesSameBatch.length;
+
+    // Globale laufende Nummern-Basis für UDI-DI
+    const startDeviceIndex = devices.length;
+
+    const newDevices: Device[] = [];
+    const nameSlug = slugifyName(newProductName);
+    const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
+
+    for (let i = 0; i < qty; i++) {
+      const serialRunningNumber = String(existingInBatch + i + 1).padStart(
+        3,
+        "0"
+      );
+
+      const deviceIndex = startDeviceIndex + i + 1;
+
+      // 🔢 automatisch generierte UDI-DI (interne Struktur)
+      const generatedUdiDi = `TH-DI-${deviceIndex
+        .toString()
+        .padStart(6, "0")}`;
+
+      // 🔢 automatisch generierte Seriennummer (Charge + laufende Nummer)
+      const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
+
+      // UDI-Hash
+      const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
+
+      // UDI-PI ohne Verfallsdatum:
+      // (11) = Herstellungsdatum, (21) = Seriennummer, (10) = Batch
+      const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
+
+      const dhrId = `DHR-${productionDate}-${serialRunningNumber}`;
+
+      const newDevice: Device = {
+        id: crypto.randomUUID(),
+        name: newProductName.trim(),
+        udiDi: generatedUdiDi,
+        serial: generatedSerial,
+        udiHash,
+        createdAt: new Date().toISOString(),
+        batch,
+        productionDate,
+        udiPi,
+        status: "released", // Standard: Gerät ist freigegeben, solange nichts passiert
+        riskClass: "",
+        blockComment: "",
+        isArchived: false,
+        dmrId: dmrIdForBatch,
+        dhrId,
+        validationStatus: "",
+        nonconformityCategory: "",
+        nonconformitySeverity: "",
+        nonconformityAction: "",
+        nonconformityResponsible: "",
+        lastServiceDate: "",
+        nextServiceDate: "",
+        serviceNotes: "",
+        pmsNotes: "",
+        archivedAt: "",
+        archiveReason: "",
+        nonconformityId: "",
+      };
+
+      newDevices.push(newDevice);
+    }
+
+    // 🟣 Supabase: Geräte auch in die Cloud-Datenbank speichern (Minimal-Version)
     try {
-      const today = new Date();
-      const yy = today.getFullYear().toString().slice(-2);
-      const mm = (today.getMonth() + 1).toString().padStart(2, "0");
-      const dd = today.getDate().toString().padStart(2, "0");
-      const productionDate = `${yy}${mm}${dd}`;
-
-      const batch = newBatch.trim() || `${yy}${mm}${dd}`; // z.B. 251128
-
-      // Dummy UDI-DI Basis – hier könnt ihr später euren echten GS1-Präfix einsetzen
-      const udiBase = `UDI-${yy}${mm}${dd}`;
-
-      // Seriennummer Basis
-      const serialBase = `${yy}${mm}${dd}`;
-
-      // Erst Supabase Insert vorbereiten
-      const rowsToInsert: any[] = [];
-      for (let i = 0; i < newCount; i++) {
-        const serial = generateSerial(serialBase, i);
-        const udiDi = `${udiBase}-${i + 1}`;
-
-        rowsToInsert.push({
-          name: newName.trim(),
-          udi_di: udiDi,
-          serial,
-          udi_hash: "", // füllen wir gleich nach Hash-Berechnung
-          batch,
-          production_date: productionDate,
-          udi_pi: null,
-        });
-      }
-
-      // Hashes berechnen
-      for (let i = 0; i < rowsToInsert.length; i++) {
-        const row = rowsToInsert[i];
-        row.udi_hash = await createUdiHash(row.udi_di, row.serial);
-      }
-
-      const { data, error } = await supabase
-        .from("devices")
-        .insert(rowsToInsert)
-        .select("*");
-
-      if (error) {
-        console.error("Supabase Insert Fehler (devices):", error);
-        alert("Fehler beim Speichern der Geräte in Supabase.");
-        return;
-      }
-
-      if (!data) {
-        alert("Keine Daten von Supabase zurückbekommen.");
-        return;
-      }
-
-      const mapped: Device[] = data.map((row: any) => ({
-        id: row.id,
-        name: row.name,
-        udiDi: row.udi_di ?? "",
-        serial: row.serial ?? "",
-        udiHash: row.udi_hash ?? "",
-        createdAt: row.created_at ?? "",
-        batch: row.batch ?? undefined,
-        productionDate: row.production_date ?? undefined,
-        udiPi: row.udi_pi ?? undefined,
+      const payload = newDevices.map((d) => ({
+        name: d.name,
+        udi_di: d.udiDi,
+        serial: d.serial,
+        udi_hash: d.udiHash,
       }));
 
-      setDevices((prev) => [...mapped, ...prev]);
+      const { error } = await supabase.from("devices").insert(payload);
 
-      alert(`${mapped.length} Gerät(e) wurden gespeichert.`);
-      setNewName("");
-      setNewBatch("");
-      setNewCount(1);
+      if (error) {
+        console.error("❌ Supabase Insert Fehler:", error);
+      } else {
+        console.log("✅ Geräte erfolgreich in Supabase gespeichert");
+      }
     } catch (err) {
-      console.error("Unerwarteter Fehler beim Speichern der Geräte:", err);
-      alert("Unerwarteter Fehler beim Speichern.");
-    } finally {
-      setIsSavingDevices(false);
+      console.error("❌ Supabase Fehler:", err);
     }
+
+    // NEUE GERÄTE OBEN (lokal)
+    const updated = [...newDevices, ...devices];
+    setDevices(updated);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
+    }
+
+    setNewProductName("");
+    setQuantity(1);
+    setSelectedDeviceId(newDevices[0]?.id ?? null);
+
+    if (qty === 1) {
+      setMessage(
+        `1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).`
+      );
+    } else {
+      setMessage(
+        `${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).`
+      );
+    }
+
+    // Sammel-Audit-Eintrag
+    const firstSerial = newDevices[0]?.serial;
+    const lastSerial = newDevices[newDevices.length - 1]?.serial;
+
+    addAuditEntry(
+      null,
+      "devices_bulk_created",
+      qty === 1
+        ? `1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForBatch}).`
+        : `${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForBatch}).`
+    );
   };
 
-  // --- Dokument-Upload: Pinata + Supabase docs + localStorage ---
-  async function handleUploadDoc(device: Device, file: File) {
+  // Gerät in der Gruppenliste auswählen
+  const handleSelectDevice = (id: string) => {
+    setSelectedDeviceId(id);
+    setMessage(null);
+  };
+
+  // 📄 Datei auswählen
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+  };
+
+  // 📤 Dokument zu Pinata hochladen (inkl. Audit-Eintrag + Dokumentenlenkung)
+  const handleUploadDoc = async () => {
+    if (!selectedDeviceId) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
+    }
+    if (!file) {
+      setMessage("Bitte eine Datei auswählen.");
+      return;
+    }
+
+    setIsUploading(true);
+    setMessage("Upload läuft …");
+
     try {
-      // 1. Datei an API-Route (Pinata) schicken
       const formData = new FormData();
       formData.append("file", file);
 
@@ -236,235 +486,1385 @@ export default function Page() {
         body: formData,
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        console.error("Upload API Fehler", await res.text());
-        alert("Upload fehlgeschlagen.");
-        return;
+        throw new Error(data.error || "Upload fehlgeschlagen");
       }
 
-      const data = await res.json();
-      const { cid, url } = data;
-
-      // 2. lokales Doc bauen
       const newDoc: Doc = {
         id: crypto.randomUUID(),
-        deviceId: device.id,
-        name: file.name,
-        cid,
-        url,
+        deviceId: selectedDeviceId,
+        name: docName || file.name,
+        cid: data.cid,
+        url: data.url,
         createdAt: new Date().toISOString(),
+        category: docCategory,
+        version: docVersion || "",
+        revision: docRevision || "",
+        docStatus: docStatus || "Controlled",
+        approvedBy: docApprovedBy || "",
       };
 
-      // 3. in React-State + localStorage
-      updateDocsState((prev) => [newDoc, ...prev]);
+      const updatedDocs = [...docs, newDoc];
+      setDocs(updatedDocs);
 
-      // 4. in Supabase docs schreiben
-      const { error } = await supabase.from("docs").insert([
-        {
-          device_id: device.id,
-          name: file.name,
-          cid,
-          url,
-        },
-      ]);
-
-      if (error) {
-        console.error("Supabase docs Insert Fehler:", error);
-        alert(
-          "Dokument wurde hochgeladen, aber der Eintrag in Supabase (docs) ist fehlgeschlagen."
-        );
-        return;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DOCS_KEY, JSON.stringify(updatedDocs));
       }
 
-      alert("Dokument erfolgreich hochgeladen und in Supabase gespeichert.");
-    } catch (err) {
-      console.error("handleUploadDoc Fehler:", err);
-      alert("Unerwarteter Fehler beim Dokument-Upload.");
+      setDocName("");
+      setDocVersion("");
+      setDocRevision("");
+      setDocApprovedBy("");
+      setFile(null);
+      setMessage("Dokument erfolgreich gespeichert.");
+
+      const shortCid = String(newDoc.cid).slice(0, 10);
+
+      addAuditEntry(
+        selectedDeviceId,
+        "document_uploaded",
+        `Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
+          newDoc.version || "-"
+        }, Revision: ${newDoc.revision || "-"}, Status: ${
+          newDoc.docStatus
+        }) hochgeladen (CID: ${shortCid}…).`
+      );
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err.message || "Fehler beim Upload.");
+    } finally {
+      setIsUploading(false);
     }
+  };
+
+  // 🔐 GERÄT ARCHIVIEREN / AUS ARCHIV HOLEN – nur mit Admin-PIN
+  const handleToggleArchiveDevice = (deviceId: string) => {
+    if (typeof window === "undefined") return;
+
+    const device = devices.find((d) => d.id === deviceId);
+    if (!device) {
+      setMessage("Gerät wurde nicht gefunden.");
+      return;
+    }
+
+    const pin = window.prompt(
+      `Admin-PIN eingeben, um das Gerät "${device.name}" ${
+        device.isArchived ? "aus dem Archiv zu holen" : "zu archivieren"
+      }:`
+    );
+    if (pin === null) return;
+    if (pin !== ADMIN_PIN) {
+      setMessage("Admin-PIN falsch. Aktion abgebrochen.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Gerät "${device.name}" wirklich ${
+        device.isArchived
+          ? "reaktivieren (aus Archiv holen)"
+          : "archivieren (Stilllegung)?"
+      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.`
+    );
+    if (!ok) return;
+
+    let archiveReason: string | undefined;
+    let archivedAt: string | undefined;
+
+    // Nur beim Archivieren (nicht beim Reaktivieren) Grund & Datum setzen
+    if (!device.isArchived) {
+      const reason = window.prompt(
+        `Archiv-/Stilllegungsgrund für "${device.name}" (optional):`,
+        device.archiveReason || ""
+      );
+      archiveReason = reason || "";
+      archivedAt = new Date().toISOString();
+    }
+
+    setDevices((prev) => {
+      const updated = prev.map((d) =>
+        d.id === deviceId
+          ? {
+              ...d,
+              isArchived: !d.isArchived,
+              archivedAt: !d.isArchived ? archivedAt : d.archivedAt,
+              archiveReason: !d.isArchived ? archiveReason : d.archiveReason,
+            }
+          : d
+      );
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
+      }
+      return updated;
+    });
+
+    if (device.isArchived) {
+      addAuditEntry(
+        device.id,
+        "device_unarchived",
+        `Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).`
+      );
+      setMessage(`Gerät "${device.name}" wurde aus dem Archiv geholt.`);
+    } else {
+      addAuditEntry(
+        device.id,
+        "device_archived",
+        `Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).${
+          archiveReason ? ` Grund: ${archiveReason}` : ""
+        }`
+      );
+      setMessage(
+        `Gerät "${device.name}" wurde archiviert (Stilllegung).`
+      );
+    }
+  };
+
+  // 🔄 Export JSON (alle Geräte)
+  const handleExportJSON = () => {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const json = JSON.stringify(devices, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als JSON exportiert.");
+  };
+
+  // 🔄 Export CSV (alle Geräte)
+  const handleExportCSV = () => {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const csv = devicesToCSV(devices);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.csv";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als CSV exportiert.");
+  };
+
+  // 🔧 Status / Meta eines EINZELNEN Geräts ändern (inkl. CAPA / Service / PMS)
+  const handleUpdateDeviceMeta = (deviceId: string, updates: Partial<Device>) => {
+    setDevices((prev) => {
+      const deviceBefore = prev.find((d) => d.id === deviceId);
+      if (!deviceBefore) return prev;
+
+      const mergedUpdates: Partial<Device> = { ...updates };
+
+      // NC-ID automatisch vergeben, sobald eine Abweichung erfasst wird
+      if (
+        !deviceBefore.nonconformityId &&
+        (
+          (mergedUpdates.nonconformityCategory &&
+            mergedUpdates.nonconformityCategory.trim() !== "") ||
+          (mergedUpdates.nonconformitySeverity &&
+            mergedUpdates.nonconformitySeverity.trim() !== "") ||
+          (mergedUpdates.nonconformityAction &&
+            mergedUpdates.nonconformityAction.trim() !== "")
+        )
+      ) {
+        mergedUpdates.nonconformityId = generateNonconformityId();
+      }
+
+      const updated = prev.map((d) =>
+        d.id === deviceId ? { ...d, ...mergedUpdates } : d
+      );
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
+      }
+
+      const deviceAfter = updated.find((d) => d.id === deviceId);
+      if (!deviceAfter) return updated;
+
+      // Pflichtlogik: wenn Status blocked/recall -> Risikoklasse nötig
+      if (
+        mergedUpdates.status &&
+        (mergedUpdates.status === "blocked" ||
+          mergedUpdates.status === "recall")
+      ) {
+        if (!deviceAfter.riskClass || !deviceAfter.riskClass.trim()) {
+          // einfache Default-Risikoklasse setzen + Hinweis
+          deviceAfter.riskClass = "IIa";
+          if (typeof window !== "undefined") {
+            window.alert(
+              "Risikoklasse war leer. Es wurde automatisch 'IIa' gesetzt. Bitte ggf. anpassen."
+            );
+          }
+        }
+        if (
+          mergedUpdates.status === "recall" &&
+          (!deviceAfter.blockComment || !deviceAfter.blockComment.trim())
+        ) {
+          if (typeof window !== "undefined") {
+            window.alert(
+              "Bitte einen Kommentar / Sperrgrund für den Recall eintragen (z.B. Sicherheitsrückruf wegen Kompressor-Fehler)."
+            );
+          }
+        }
+      }
+
+      // Audit-Text generieren
+      const changes: string[] = [];
+
+      if (mergedUpdates.status && mergedUpdates.status !== deviceBefore.status) {
+        changes.push(
+          `Status geändert von "${
+            DEVICE_STATUS_LABELS[deviceBefore.status]
+          }" auf "${DEVICE_STATUS_LABELS[mergedUpdates.status]}".`
+        );
+      }
+      if (
+        mergedUpdates.riskClass !== undefined &&
+        mergedUpdates.riskClass !== deviceBefore.riskClass
+      ) {
+        changes.push(
+          `Risikoklasse geändert von "${
+            deviceBefore.riskClass || "–"
+          }" auf "${mergedUpdates.riskClass || "–"}".`
+        );
+      }
+      if (
+        mergedUpdates.blockComment !== undefined &&
+        mergedUpdates.blockComment !== deviceBefore.blockComment
+      ) {
+        changes.push(
+          `Kommentar / Sperrgrund aktualisiert: "${
+            mergedUpdates.blockComment || "–"
+          }".`
+        );
+      }
+      if (
+        mergedUpdates.nonconformityCategory !== undefined &&
+        mergedUpdates.nonconformityCategory !== deviceBefore.nonconformityCategory
+      ) {
+        changes.push(
+          `Abweichungskategorie gesetzt auf "${
+            mergedUpdates.nonconformityCategory || "–"
+          }".`
+        );
+      }
+      if (
+        mergedUpdates.nonconformitySeverity !== undefined &&
+        mergedUpdates.nonconformitySeverity !== deviceBefore.nonconformitySeverity
+      ) {
+        changes.push(
+          `Abweichungsschwere geändert auf "${
+            mergedUpdates.nonconformitySeverity || "–"
+          }".`
+        );
+      }
+      if (
+        mergedUpdates.nonconformityAction !== undefined &&
+        mergedUpdates.nonconformityAction !== deviceBefore.nonconformityAction
+      ) {
+        changes.push(`Abweichungs-/Sofortmaßnahmen aktualisiert.`);
+      }
+      if (
+        mergedUpdates.nonconformityResponsible !== undefined &&
+        mergedUpdates.nonconformityResponsible !==
+          deviceBefore.nonconformityResponsible
+      ) {
+        changes.push(
+          `Verantwortliche Person für Abweichung gesetzt auf "${
+            mergedUpdates.nonconformityResponsible || "–"
+          }".`
+        );
+      }
+      if (
+        mergedUpdates.lastServiceDate !== undefined &&
+        mergedUpdates.lastServiceDate !== deviceBefore.lastServiceDate
+      ) {
+        changes.push(
+          `Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.`
+        );
+      }
+      if (
+        mergedUpdates.nextServiceDate !== undefined &&
+        mergedUpdates.nextServiceDate !== deviceBefore.nextServiceDate
+      ) {
+        changes.push(
+          `Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.`
+        );
+      }
+      if (
+        mergedUpdates.serviceNotes !== undefined &&
+        mergedUpdates.serviceNotes !== deviceBefore.serviceNotes
+      ) {
+        changes.push(`Service-/Wartungs-Notizen aktualisiert.`);
+      }
+      if (
+        mergedUpdates.pmsNotes !== undefined &&
+        mergedUpdates.pmsNotes !== deviceBefore.pmsNotes
+      ) {
+        changes.push(`PMS-/Feedback-Notizen aktualisiert.`);
+      }
+      if (
+        mergedUpdates.validationStatus !== undefined &&
+        mergedUpdates.validationStatus !== deviceBefore.validationStatus
+      ) {
+        changes.push(
+          `Validierungsstatus (IQ/OQ/PQ) geändert auf "${
+            mergedUpdates.validationStatus || "–"
+          }".`
+        );
+      }
+      if (
+        mergedUpdates.nonconformityId &&
+        mergedUpdates.nonconformityId !== deviceBefore.nonconformityId
+      ) {
+        changes.push(
+          `Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".`
+        );
+      }
+
+      if (changes.length > 0) {
+        addAuditEntry(
+          deviceId,
+          "device_meta_changed",
+          `Änderungen für "${deviceAfter.name}" (SN: ${
+            deviceAfter.serial
+          }): ${changes.join(" | ")}`
+        );
+      }
+
+      return updated;
+    });
+  };
+
+  const docsForDevice = selectedDeviceId
+    ? docs.filter((d) => d.deviceId === selectedDeviceId)
+    : [];
+
+  const auditForView = selectedDeviceId
+    ? audit.filter((a) => a.deviceId === selectedDeviceId)
+    : audit;
+
+  // 🔍 Geräte nach Suchbegriff filtern (nur NICHT archivierte Geräte)
+  const filteredDevices = devices.filter((device) => {
+    if (device.isArchived) return false;
+    if (!searchTerm.trim()) return true;
+    const needle = searchTerm.toLowerCase();
+    const haystack = [
+      device.name,
+      device.serial,
+      device.udiDi,
+      device.batch,
+      device.udiPi,
+      device.udiHash,
+      DEVICE_STATUS_LABELS[device.status],
+      device.riskClass,
+      device.blockComment,
+      device.dmrId,
+      device.dhrId,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(needle);
+  });
+
+  const selectedDevice = selectedDeviceId
+    ? devices.find((d) => d.id === selectedDeviceId) || null
+    : null;
+
+  const totalDevices = devices.length;
+  const totalDocs = docs.length;
+  const totalArchived = devices.filter((d) => d.isArchived).length;
+
+  // 🔢 Gruppenbildung: ein Eintrag pro (Name + Batch) für aktive Geräte
+  type DeviceGroup = {
+    key: string;
+    representative: Device;
+    count: number;
+  };
+
+  const groupsMap: Record<string, DeviceGroup> = {};
+  for (const d of filteredDevices) {
+    const key = `${d.name}__${d.batch ?? ""}`;
+    if (!groupsMap[key]) {
+      groupsMap[key] = {
+        key,
+        representative: d,
+        count: 0,
+      };
+    }
+    groupsMap[key].count += 1;
   }
+  const groupedDevices: DeviceGroup[] = Object.values(groupsMap);
 
-  // --- UI ---
+  // Alle Geräte, die zur gleichen Gruppe (Name+Batch) gehören wie das ausgewählte Gerät
+  const devicesInSameGroup: Device[] = selectedDevice
+    ? devices.filter(
+        (d) =>
+          d.name === selectedDevice.name && d.batch === selectedDevice.batch
+      )
+    : [];
+
+  // Archivierte Geräte (Gruppenansicht)
+  const archivedDevices = devices.filter((d) => d.isArchived);
+  const archivedGroupsMap: Record<string, DeviceGroup> = {};
+  for (const d of archivedDevices) {
+    const key = `${d.name}__${d.batch ?? ""}`;
+    if (!archivedGroupsMap[key]) {
+      archivedGroupsMap[key] = {
+        key,
+        representative: d,
+        count: 0,
+      };
+    }
+    archivedGroupsMap[key].count += 1;
+  }
+  const archivedGroups: DeviceGroup[] = Object.values(archivedGroupsMap);
+
+  // DHR-Export für EIN Gerät
+  const handleExportDhrJson = () => {
+    if (!selectedDevice) {
+      setMessage("Kein Gerät für DHR-Export ausgewählt.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const dhrDocs = docs.filter((d) => d.deviceId === selectedDevice.id);
+    const dhrAudit = audit.filter((a) => a.deviceId === selectedDevice.id);
+
+    const payload = {
+      device: selectedDevice,
+      docs: dhrDocs,
+      audit: dhrAudit,
+      exportedAt: new Date().toISOString(),
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    const safeSerial = selectedDevice.serial || selectedDevice.id;
+    a.href = url;
+    a.download = `DHR-${safeSerial}.json`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("DHR für dieses Gerät als JSON exportiert.");
+  };
+
   return (
-    <main style={{ padding: "24px", maxWidth: "1100px", margin: "0 auto" }}>
-      <h1 style={{ fontSize: "28px", fontWeight: "bold", marginBottom: "16px" }}>
-        MedSafe-UDI – Geräte & Dokumente (Supabase)
-      </h1>
-
-      {/* Neue Geräte anlegen */}
-      <section
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: "8px",
-          padding: "16px",
-          marginBottom: "24px",
-        }}
-      >
-        <h2 style={{ fontSize: "20px", marginBottom: "12px" }}>
-          Neue Geräte anlegen
-        </h2>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr auto",
-            gap: "12px",
-            alignItems: "center",
-          }}
-        >
-          <div>
-            <label style={{ fontSize: "14px" }}>
-              Produktname
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="z.B. FREEZO FZ-380"
-                style={{ width: "100%", padding: "6px", marginTop: "4px" }}
-              />
-            </label>
+    <main className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+        {/* HEADER + Export + KPIs */}
+        <header className="space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold">
+                MedSafe-UDI – Geräteübersicht
+              </h1>
+              <p className="text-slate-400 text-sm mt-1">
+                Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern,
+                Charge &amp; UDI-PI (ohne Verfallsdatum) werden automatisch
+                generiert. Jedes Gerät startet als freigegeben und kann später
+                einzeln in Quarantäne oder Recall (Rückruf) gesetzt, kommentiert,
+                archiviert und mit Service-/PMS-/Dokumenten-Historie verwaltet
+                werden – MDR-/ISO-13485-Denkweise (DMR/DHR-Light).
+              </p>
+            </div>
           </div>
 
-          <div>
-            <label style={{ fontSize: "14px" }}>
-              Charge (optional)
-              <input
-                type="text"
-                value={newBatch}
-                onChange={(e) => setNewBatch(e.target.value)}
-                placeholder="z.B. 251128"
-                style={{ width: "100%", padding: "6px", marginTop: "4px" }}
-              />
-            </label>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex gap-3 text-xs md:text-sm">
+              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
+                <div className="text-slate-400">Geräte gesamt</div>
+                <div className="text-lg font-semibold">{totalDevices}</div>
+              </div>
+              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
+                <div className="text-slate-400">Dokumente</div>
+                <div className="text-lg font-semibold">{totalDocs}</div>
+              </div>
+              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
+                <div className="text-slate-400">Archiviert</div>
+                <div className="text-lg font-semibold">{totalArchived}</div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleExportJSON}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Export JSON
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Export CSV
+              </button>
+            </div>
           </div>
+        </header>
 
-          <div>
-            <label style={{ fontSize: "14px" }}>
-              Anzahl
-              <input
-                type="number"
-                min={1}
-                value={newCount}
-                onChange={(e) => setNewCount(Number(e.target.value))}
-                style={{ width: "100%", padding: "6px", marginTop: "4px" }}
-              />
-            </label>
-          </div>
-
-          <div>
-            <button
-              onClick={handleSaveDevices}
-              disabled={isSavingDevices}
-              style={{
-                padding: "8px 16px",
-                cursor: isSavingDevices ? "not-allowed" : "pointer",
-              }}
-            >
-              {isSavingDevices ? "Speichern..." : "Geräte speichern"}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Geräte-Liste */}
-      <section>
-        <h2 style={{ fontSize: "20px", marginBottom: "12px" }}>
-          Geräteübersicht
-        </h2>
-
-        {devices.length === 0 ? (
-          <p>Keine Geräte vorhanden. Lege oben ein neues Gerät an.</p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {devices.map((device) => {
-              const deviceDocs = docs.filter((d) => d.deviceId === device.id);
-
-              return (
-                <div
-                  key={device.id}
-                  style={{
-                    border: "1px solid #ddd",
-                    borderRadius: "8px",
-                    padding: "12px",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    <div>
-                      <strong>{device.name}</strong>{" "}
-                      {device.batch && <span>– Charge: {device.batch}</span>}
-                      <div style={{ fontSize: "13px", color: "#555" }}>
-                        SN: {device.serial} · UDI-DI: {device.udiDi}
-                      </div>
-                      <div style={{ fontSize: "11px", color: "#999" }}>
-                        Hash: {device.udiHash.slice(0, 16)}…
-                      </div>
-                    </div>
-                    <div style={{ fontSize: "12px", textAlign: "right" }}>
-                      Angelegt:{" "}
-                      {device.createdAt
-                        ? new Date(device.createdAt).toLocaleString()
-                        : "-"}
-                    </div>
-                  </div>
-
-                  {/* Dokumente zu diesem Gerät */}
-                  <div style={{ marginTop: "8px" }}>
-                    <div style={{ fontSize: "14px", marginBottom: "4px" }}>
-                      Dokumente
-                    </div>
-                    {deviceDocs.length === 0 ? (
-                      <p style={{ fontSize: "13px", color: "#777" }}>
-                        Noch keine Dokumente verknüpft.
-                      </p>
-                    ) : (
-                      <ul style={{ fontSize: "13px", paddingLeft: "18px" }}>
-                        {deviceDocs.map((doc) => (
-                          <li key={doc.id}>
-                            <a
-                              href={doc.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {doc.name}
-                            </a>{" "}
-                            <span style={{ color: "#999" }}>
-                              ({new Date(doc.createdAt).toLocaleString()})
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  {/* Upload-Bereich */}
-                  <div style={{ marginTop: "8px" }}>
-                    <label style={{ fontSize: "13px" }}>
-                      Dokument hochladen:
-                      <input
-                        type="file"
-                        style={{ display: "block", marginTop: "4px" }}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            handleUploadDoc(device, file);
-                            // Input resetten
-                            e.target.value = "";
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
+        {message && (
+          <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
+            {message}
           </div>
         )}
-      </section>
+
+        {/* Neues Gerät */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Neue Geräte anlegen</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Produktname (z.B. FREEZO FZ-380)"
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
+            />
+            <input
+              type="number"
+              min={1}
+              max={999}
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Anzahl"
+              value={quantity}
+              onChange={(e) =>
+                setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
+              }
+            />
+            <p className="text-xs text-slate-400">
+              Es werden automatisch so viele Geräte mit derselben Charge
+              angelegt (Status beim Anlegen: Freigegeben, inkl. DMR-/DHR-ID).
+            </p>
+          </div>
+
+          <button
+            onClick={handleSaveDevice}
+            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+          >
+            Geräte speichern
+          </button>
+        </section>
+
+        {/* Geräte-Liste mit Suche (Gruppenansicht) */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <h2 className="text-lg font-semibold">
+              Angelegte Geräte-Gruppen (Produkt / Charge – aktive Geräte)
+            </h2>
+
+            <div className="w-full md:w-1/2 flex items-center gap-2">
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Suche nach Name, SN, UDI, Status, Kommentar, DMR…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {devices.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Noch keine Geräte angelegt.
+            </p>
+          ) : groupedDevices.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Keine aktiven Geräte passend zur Suche gefunden.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {groupedDevices.map((group) => {
+                const device = group.representative;
+                const isSelected = selectedDeviceId === device.id;
+
+                // alle Geräte dieser Gruppe (inkl. archivierter, für DHR-Historie)
+                const devicesOfGroup = devices.filter(
+                  (d) => d.name === device.name && d.batch === device.batch
+                );
+                const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
+                  return (
+                    sum +
+                    docs.filter((doc) => doc.deviceId === d.id).length
+                  );
+                }, 0);
+
+                const statusSet = new Set(
+                  devicesOfGroup.map((d) => d.status)
+                );
+                let statusLabel: string;
+                if (statusSet.size === 1) {
+                  statusLabel =
+                    DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
+                } else {
+                  statusLabel = "Gemischter Status";
+                }
+
+                const hasRiskStatus = devicesOfGroup.some(
+                  (d) => d.status === "blocked" || d.status === "recall"
+                );
+
+                const statusClass =
+                  statusLabel === "Gemischter Status"
+                    ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
+                    : hasRiskStatus
+                    ? "bg-red-600/20 text-red-300 border-red-500/40"
+                    : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
+
+                return (
+                  <li key={group.key}>
+                    <button
+                      onClick={() => handleSelectDevice(device.id)}
+                      className={
+                        "w-full text-left px-4 py-3 rounded-xl border text-sm " +
+                        (isSelected
+                          ? "bg-emerald-900/50 border-emerald-600"
+                          : "bg-slate-900 border-slate-700 hover:border-emerald-500/60")
+                      }
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-medium">
+                          {device.name} – Charge: {device.batch ?? "–"}{" "}
+                          <span className="text-slate-400">
+                            ({group.count} aktive Gerät
+                            {group.count !== 1 ? "e" : ""},{" "}
+                            {docCountForGroup} Dokument
+                            {docCountForGroup !== 1 ? "e" : ""})
+                          </span>
+                        </div>
+                        <span
+                          className={
+                            "text-[10px] px-2 py-0.5 rounded-full border " +
+                            statusClass
+                          }
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                      {device.dmrId && (
+                        <div className="text-[11px] text-slate-400 mt-1 break-all">
+                          DMR-ID: {device.dmrId}
+                        </div>
+                      )}
+                      <div className="text-xs text-slate-400 mt-1 break-all">
+                        Beispiel-SN: {device.serial}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1 break-all">
+                        UDI-DI: {device.udiDi}
+                      </div>
+                      {device.udiPi && (
+                        <div className="text-xs text-slate-300 mt-1 break-all">
+                          UDI-PI (Beispiel): {device.udiPi}
+                        </div>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {/* Archivierte Geräte */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-lg font-semibold">
+            Archivierte Geräte (Stilllegung)
+          </h2>
+          {archivedGroups.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Noch keine Geräte archiviert.
+            </p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {archivedGroups.map((group) => {
+                const device = group.representative;
+                const isSelected = selectedDeviceId === device.id;
+
+                return (
+                  <li key={group.key}>
+                    <button
+                      onClick={() => handleSelectDevice(device.id)}
+                      className={
+                        "w-full text-left px-4 py-3 rounded-xl border text-sm " +
+                        (isSelected
+                          ? "bg-slate-900 border-emerald-500"
+                          : "bg-slate-900 border-slate-700 hover:border-slate-500/70")
+                      }
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-medium">
+                          {device.name} – Charge: {device.batch ?? "–"}{" "}
+                          <span className="text-slate-400">
+                            ({group.count} archivierte Gerät
+                            {group.count !== 1 ? "e" : ""})
+                          </span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-700/50 text-slate-200 border-slate-500/60">
+                          Archiviert / Stillgelegt
+                        </span>
+                      </div>
+                      {device.dmrId && (
+                        <div className="text-[11px] text-slate-400 mt-1 break-all">
+                          DMR-ID: {device.dmrId}
+                        </div>
+                      )}
+                      <div className="text-xs text-slate-400 mt-1 break-all">
+                        Beispiel-SN: {device.serial}
+                      </div>
+                      {device.archivedAt && (
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          Archiviert am:{" "}
+                          {new Date(device.archivedAt).toLocaleString()}
+                        </div>
+                      )}
+                      {device.archiveReason && (
+                        <div className="text-[11px] text-slate-500 mt-1 break-all">
+                          Grund: {device.archiveReason}
+                        </div>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {/* Geräteakte – Detailansicht (inkl. alle Geräte der Gruppe) */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">
+              Geräteakte – Detailansicht (DHR)
+            </h2>
+            {selectedDevice && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleToggleArchiveDevice(selectedDevice.id)}
+                  className={
+                    "text-xs md:text-sm rounded-lg border px-3 py-2 " +
+                    (selectedDevice.isArchived
+                      ? "border-emerald-500/70 bg-emerald-900/40 hover:bg-emerald-800"
+                      : "border-yellow-500/70 bg-yellow-900/40 hover:bg-yellow-800")
+                  }
+                >
+                  {selectedDevice.isArchived
+                    ? "Aus Archiv holen (Admin-PIN)"
+                    : "Archivieren / Stilllegen (Admin-PIN)"}
+                </button>
+                <button
+                  onClick={handleExportDhrJson}
+                  className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+                >
+                  DHR als JSON exportieren
+                </button>
+              </div>
+            )}
+          </div>
+
+          {!selectedDevice ? (
+            <p className="text-sm text-amber-400">
+              Bitte oben eine Geräte-Gruppe oder ein archiviertes Gerät
+              auswählen und dann unten in der Tabelle ein Gerät anklicken, um
+              dessen Geräteakte (DHR) zu sehen.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {/* Basisdaten zum EINZELNEN Gerät */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
+                  <div className="text-slate-400 text-xs">Produktname</div>
+                  <div className="font-semibold">{selectedDevice.name}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Seriennummer (DHR)
+                  </div>
+                  <div className="break-all">{selectedDevice.serial}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    DHR-ID (Geräte-Historie)
+                  </div>
+                  <div className="break-all">
+                    {selectedDevice.dhrId || "–"}
+                  </div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    DMR-ID (Stammdokument)
+                  </div>
+                  <div className="break-all">
+                    {selectedDevice.dmrId || "–"}
+                  </div>
+
+                  <div className="text-slate-400 text-xs mt-3">Charge</div>
+                  <div>{selectedDevice.batch || "–"}</div>
+
+                  {selectedDevice.isArchived && (
+                    <>
+                      <div className="text-slate-400 text-xs mt-3">
+                        Archiviert am
+                      </div>
+                      <div>
+                        {selectedDevice.archivedAt
+                          ? new Date(
+                              selectedDevice.archivedAt
+                            ).toLocaleString()
+                          : "–"}
+                      </div>
+                      <div className="text-slate-400 text-xs mt-3">
+                        Archivgrund
+                      </div>
+                      <div className="break-all">
+                        {selectedDevice.archiveReason || "–"}
+                      </div>
+                    </>
+                  )}
+
+                  <div className="text-slate-400 text-xs mt-3">UDI-DI</div>
+                  <div className="break-all">{selectedDevice.udiDi}</div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    UDI-PI (ohne Verfallsdatum)
+                  </div>
+                  <div className="break-all">
+                    {selectedDevice.udiPi || "–"}
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-2 text-sm">
+                  <div className="text-slate-400 text-xs">
+                    Status (nur dieses Gerät)
+                  </div>
+                  <select
+                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500"
+                    value={selectedDevice.status}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        status: e.target.value as DeviceStatus,
+                      })
+                    }
+                  >
+                    <option value="released">
+                      Freigegeben (Inverkehrbringen)
+                    </option>
+                    <option value="blocked">Gesperrt / Quarantäne</option>
+                    <option value="in_production">In Herstellung</option>
+                    <option value="recall">Recall (Rückruf)</option>
+                  </select>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Risikoklasse (z.B. IIa, IIb, I)
+                  </div>
+                  <input
+                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500"
+                    placeholder="z.B. IIa"
+                    value={selectedDevice.riskClass || ""}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        riskClass: e.target.value,
+                      })
+                    }
+                  />
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Kommentar / Sperrgrund (nur dieses Gerät)
+                  </div>
+                  <textarea
+                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500 min-h-[60px]"
+                    placeholder="z.B. Defekt, Sicherheitsrückruf, spezieller Servicefall…"
+                    value={selectedDevice.blockComment || ""}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        blockComment: e.target.value,
+                      })
+                    }
+                  />
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    UDI-Hash (fälschungssichere ID)
+                  </div>
+                  <div className="break-all text-xs">
+                    {selectedDevice.udiHash}
+                  </div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Angelegt am
+                  </div>
+                  <div>
+                    {new Date(selectedDevice.createdAt).toLocaleString()}
+                  </div>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Validierungsstatus (IQ/OQ/PQ)
+                  </div>
+                  <input
+                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500"
+                    placeholder="z.B. IQ abgeschlossen, OQ/PQ geplant"
+                    value={selectedDevice.validationStatus || ""}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        validationStatus: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Abweichung / Quarantäne */}
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs space-y-3">
+                <div className="font-semibold mb-1">
+                  Abweichung / Quarantäne (Nonconformity – ISO 13485 / MDR)
+                </div>
+                <div className="text-slate-400 text-[11px] mb-1">
+                  NC-ID (wird automatisch vergeben, sobald eine Abweichung erfasst wird)
+                </div>
+                <div className="text-[11px] mb-3">
+                  {selectedDevice.nonconformityId || "–"}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-slate-400 text-[11px] mb-1">
+                      Kategorie der Abweichung
+                    </div>
+                    <input
+                      className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                      placeholder="z.B. mechanisch, elektrisch, Software…"
+                      value={selectedDevice.nonconformityCategory || ""}
+                      onChange={(e) =>
+                        handleUpdateDeviceMeta(selectedDevice.id, {
+                          nonconformityCategory: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <div className="text-slate-400 text-[11px] mb-1">
+                      Schweregrad
+                    </div>
+                    <select
+                      className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                      value={selectedDevice.nonconformitySeverity || ""}
+                      onChange={(e) =>
+                        handleUpdateDeviceMeta(selectedDevice.id, {
+                          nonconformitySeverity: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="">–</option>
+                      <option value="nicht kritisch">nicht kritisch</option>
+                      <option value="kritisch">kritisch</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-slate-400 text-[11px] mb-1">
+                      Verantwortlich
+                    </div>
+                    <input
+                      className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                      placeholder="Name der verantwortlichen Person"
+                      value={selectedDevice.nonconformityResponsible || ""}
+                      onChange={(e) =>
+                        handleUpdateDeviceMeta(selectedDevice.id, {
+                          nonconformityResponsible: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-[11px] mb-1">
+                    Sofortmaßnahmen / Korrekturmaßnahmen
+                  </div>
+                  <textarea
+                    className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 min-h-[50px] w-full"
+                    placeholder="z.B. Gerät gesperrt, Kunde informiert, CAPA eröffnet…"
+                    value={selectedDevice.nonconformityAction || ""}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        nonconformityAction: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Übersicht aller Geräte in der Gruppe */}
+              {devicesInSameGroup.length > 0 && (
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs space-y-2">
+                  <div className="font-semibold mb-1">
+                    Geräte in dieser Produkt/Charge-Gruppe (inkl. Archiv)
+                  </div>
+                  <div className="text-[11px] text-slate-400 mb-1">
+                    Klick auf eine Zeile, um dieses Gerät als aktives Gerät zu
+                    bearbeiten (Status, Recall-Markierung, Kommentar,
+                    Dokumente, Service, PMS).
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-[11px]">
+                      <thead>
+                        <tr className="border-b border-slate-700">
+                          <th className="text-left py-1 pr-2">
+                            Seriennummer
+                          </th>
+                          <th className="text-left py-1 pr-2">UDI-PI</th>
+                          <th className="text-left py-1 pr-2">Status</th>
+                          <th className="text-left py-1 pr-2">Archiv</th>
+                          <th className="text-left py-1 pr-2">
+                            Kommentar kurz
+                          </th>
+                          <th className="text-left py-1 pr-2">
+                            Angelegt am
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {devicesInSameGroup.map((d) => {
+                          const isRowSelected = selectedDeviceId === d.id;
+                          return (
+                            <tr
+                              key={d.id}
+                              onClick={() => setSelectedDeviceId(d.id)}
+                              className={
+                                "border-b border-slate-800 last:border-b-0 cursor-pointer " +
+                                (isRowSelected
+                                  ? "bg-emerald-900/40"
+                                  : d.isArchived
+                                  ? "bg-slate-800/60"
+                                  : "hover:bg-slate-800/60")
+                              }
+                            >
+                              <td className="py-1 pr-2 break-all">
+                                {d.serial}
+                              </td>
+                              <td className="py-1 pr-2 break-all">
+                                {d.udiPi}
+                              </td>
+                              <td className="py-1 pr-2">
+                                {DEVICE_STATUS_LABELS[d.status]}
+                              </td>
+                              <td className="py-1 pr-2">
+                                {d.isArchived ? "Archiviert" : "–"}
+                              </td>
+                              <td className="py-1 pr-2 break-all">
+                                {d.blockComment
+                                  ? d.blockComment.slice(0, 40) +
+                                    (d.blockComment.length > 40 ? "…" : "")
+                                  : "–"}
+                              </td>
+                              <td className="py-1 pr-2">
+                                {new Date(
+                                  d.createdAt
+                                ).toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Service / PMS Kennzahlen */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3">
+                  <div className="font-semibold mb-1">
+                    Service / Wartung (DHR)
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-slate-400 text-[11px] mb-1">
+                        Letzte Wartung (ISO-Datum)
+                      </div>
+                      <input
+                        type="date"
+                        className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                        value={selectedDevice.lastServiceDate || ""}
+                        onChange={(e) =>
+                          handleUpdateDeviceMeta(selectedDevice.id, {
+                            lastServiceDate: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <div className="text-slate-400 text-[11px] mb-1">
+                        Nächste Wartung (ISO-Datum)
+                      </div>
+                      <input
+                        type="date"
+                        className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full text-[11px]"
+                        value={selectedDevice.nextServiceDate || ""}
+                        onChange={(e) =>
+                          handleUpdateDeviceMeta(selectedDevice.id, {
+                            nextServiceDate: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-400 text-[11px] mb-1">
+                      Service- / Wartungsnotizen
+                    </div>
+                    <textarea
+                      className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 min-h-[50px] w-full"
+                      placeholder="z.B. Kompressor geprüft, Firmware aktualisiert, Dichtung getauscht…"
+                      value={selectedDevice.serviceNotes || ""}
+                      onChange={(e) =>
+                        handleUpdateDeviceMeta(selectedDevice.id, {
+                          serviceNotes: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3">
+                  <div className="font-semibold mb-1">
+                    PMS / Feedback (Post-Market Surveillance)
+                  </div>
+                  <div className="text-slate-400 text-[11px] mb-1">
+                    PMS- / Feedback-Notizen für dieses Gerät
+                  </div>
+                  <textarea
+                    className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 min-h-[80px] w-full"
+                    placeholder="z.B. Rückmeldungen von Anwendern, Vorkommnisse, Reklamationen, Beobachtungen…"
+                    value={selectedDevice.pmsNotes || ""}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        pmsNotes: e.target.value,
+                      })
+                    }
+                  />
+
+                  <div className="grid grid-cols-2 gap-3 mt-2 text-xs">
+                    <div>
+                      <div className="text-slate-400 text-[11px] mb-1">
+                        Verknüpfte Dokumente (DHR)
+                      </div>
+                      <div className="font-semibold text-lg">
+                        {
+                          docs.filter((d) => d.deviceId === selectedDevice.id)
+                            .length
+                        }
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400 text-[11px] mb-1">
+                        Aktivitäten (Audit)
+                      </div>
+                      <div className="font-semibold text-lg">
+                        {
+                          audit.filter((a) => a.deviceId === selectedDevice.id)
+                            .length
+                        }
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Dokumente zum Gerät */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-lg font-semibold">
+            Dokumente zum Gerät (DHR / DMR-Verknüpfung)
+          </h2>
+
+          {selectedDeviceId ? (
+            <p className="text-sm text-slate-400">
+              Aktuelles Gerät (für Dokument-Verknüpfung):{" "}
+              {devices.find((d) => d.id === selectedDeviceId)?.name} – SN:{" "}
+              {devices.find((d) => d.id === selectedDeviceId)?.serial}
+            </p>
+          ) : (
+            <p className="text-sm text-amber-400">
+              Bitte oben ein Gerät wählen – dann kannst du hier Dokumente zu
+              genau diesem Gerät (DHR) speichern.
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Dokumentenname"
+              value={docName}
+              onChange={(e) => setDocName(e.target.value)}
+            />
+
+            <select
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              value={docCategory}
+              onChange={(e) => setDocCategory(e.target.value)}
+            >
+              {DOC_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="file"
+              onChange={handleFileChange}
+              className="text-sm text-slate-200"
+            />
+          </div>
+
+          {/* Dokumentenlenkung-Details */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Version</div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="z.B. V1.0"
+                value={docVersion}
+                onChange={(e) => setDocVersion(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Revision</div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="z.B. Rev. 0, Rev. 1"
+                value={docRevision}
+                onChange={(e) => setDocRevision(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Status</div>
+              <select
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                value={docStatus}
+                onChange={(e) => setDocStatus(e.target.value as DocStatus)}
+              >
+                {DOC_STATUS_OPTIONS.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">
+                Freigegeben von
+              </div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="Name QMB / Verantwortlicher"
+                value={docApprovedBy}
+                onChange={(e) => setDocApprovedBy(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleUploadDoc}
+            disabled={isUploading}
+            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
+          >
+            {isUploading ? "Upload läuft …" : "Dokument speichern (Pinata)"}
+          </button>
+
+          {selectedDeviceId && (
+            <div className="mt-4 space-y-2">
+              <h3 className="text-sm font-semibold">
+                Dokumente für dieses Gerät (DHR-Dokumente)
+              </h3>
+
+              {docsForDevice.length === 0 ? (
+                <p className="text-sm text-slate-400">
+                  Noch keine Dokumente gespeichert.
+                </p>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {docsForDevice.map((doc) => (
+                    <li
+                      key={doc.id}
+                      className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
+                    >
+                      <div className="font-medium flex flex-wrap items-center gap-2">
+                        <span>{doc.name}</span>
+                        <span className="text-xs text-slate-400">
+                          ({doc.category ? doc.category : "ohne Kategorie"})
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Version: {doc.version || "–"} | Revision:{" "}
+                        {doc.revision || "–"} | Status:{" "}
+                        {doc.docStatus || "Controlled"} | Freigegeben von:{" "}
+                        {doc.approvedBy || "–"}
+                      </div>
+                      <div className="text-xs text-slate-400 break-all">
+                        CID: {doc.cid}
+                      </div>
+                      <a
+                        href={doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-emerald-400 underline mt-1 inline-block"
+                      >
+                        Öffnen
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Audit-Log */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+          <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
+          <p className="text-xs text-slate-400">
+            {selectedDeviceId
+              ? "Es werden nur Aktivitäten angezeigt, die dieses Gerät direkt betreffen (inkl. Status-/Recall-/Kommentar-/Service-/Dokumenten-Änderungen)."
+              : "Es werden Aktivitäten für alle Geräte / Bulk-Aktionen angezeigt."}
+          </p>
+
+          {auditForView.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              Noch keine Aktivitäten aufgezeichnet.
+            </p>
+          ) : (
+            <ul className="space-y-2 text-sm max-h-60 overflow-y-auto">
+              {auditForView.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
+                >
+                  <div className="text-xs text-slate-400">
+                    {new Date(entry.timestamp).toLocaleString()}
+                  </div>
+                  <div className="font-medium mt-1">{entry.message}</div>
+                  <div className="text-xs text-slate-500">
+                    Aktion: {entry.action}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
