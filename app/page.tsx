@@ -114,6 +114,7 @@ export default function MedSafePage() {
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [newProductName, setNewProductName] = useState("");
+  const [quantity, setQuantity] = useState<number>(1); // 🔢 Anzahl Geräte pro Klick
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -171,10 +172,19 @@ export default function MedSafePage() {
     });
   };
 
-  // 💾 Gerät speichern – UDI-DI, Seriennummer, Batch, UDI-PI werden automatisch generiert
+  // 💾 Geräte speichern – jetzt mit "Anzahl" (Bulk-Erstellung)
   const handleSaveDevice = async () => {
     if (!newProductName.trim()) {
       setMessage("Bitte einen Produktnamen eingeben.");
+      return;
+    }
+
+    const qty = Number.isFinite(quantity)
+      ? Math.max(1, Math.floor(quantity))
+      : 1;
+
+    if (qty < 1) {
+      setMessage("Anzahl muss mindestens 1 sein.");
       return;
     }
 
@@ -186,41 +196,53 @@ export default function MedSafePage() {
 
     // Geräte mit gleicher Charge zählen, um eine laufende Nummer pro Charge zu haben
     const devicesSameBatch = devices.filter((d) => d.batch === batch);
-    const serialRunningNumber = String(devicesSameBatch.length + 1).padStart(
-      3,
-      "0"
-    );
+    const existingInBatch = devicesSameBatch.length;
 
-    // Globale laufende Nummer für UDI-DI
-    const deviceIndex = devices.length + 1;
+    // Globale laufende Nummern-Basis für UDI-DI
+    const startDeviceIndex = devices.length;
 
-    // 🔢 automatisch generierte UDI-DI (interne Struktur)
-    const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
+    const newDevices: Device[] = [];
 
-    // 🔢 automatisch generierte Seriennummer (Charge + laufende Nummer)
-    const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
+    for (let i = 0; i < qty; i++) {
+      const serialRunningNumber = String(existingInBatch + i + 1).padStart(
+        3,
+        "0"
+      );
 
-    // UDI-Hash
-    const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
+      const deviceIndex = startDeviceIndex + i + 1;
 
-    // UDI-PI ohne Verfallsdatum:
-    // (11) = Herstellungsdatum, (21) = Seriennummer, (10) = Batch
-    const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
+      // 🔢 automatisch generierte UDI-DI (interne Struktur)
+      const generatedUdiDi = `TH-DI-${deviceIndex
+        .toString()
+        .padStart(6, "0")}`;
 
-    const newDevice: Device = {
-      id: crypto.randomUUID(),
-      name: newProductName.trim(),
-      udiDi: generatedUdiDi,
-      serial: generatedSerial,
-      udiHash,
-      createdAt: new Date().toISOString(),
-      batch,
-      productionDate,
-      udiPi,
-    };
+      // 🔢 automatisch generierte Seriennummer (Charge + laufende Nummer)
+      const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
+
+      // UDI-Hash
+      const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
+
+      // UDI-PI ohne Verfallsdatum:
+      // (11) = Herstellungsdatum, (21) = Seriennummer, (10) = Batch
+      const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
+
+      const newDevice: Device = {
+        id: crypto.randomUUID(),
+        name: newProductName.trim(),
+        udiDi: generatedUdiDi,
+        serial: generatedSerial,
+        udiHash,
+        createdAt: new Date().toISOString(),
+        batch,
+        productionDate,
+        udiPi,
+      };
+
+      newDevices.push(newDevice);
+    }
 
     // NEUE GERÄTE OBEN
-    const updated = [newDevice, ...devices];
+    const updated = [...newDevices, ...devices];
     setDevices(updated);
 
     if (typeof window !== "undefined") {
@@ -228,15 +250,29 @@ export default function MedSafePage() {
     }
 
     setNewProductName("");
-    setSelectedDeviceId(newDevice.id);
-    setMessage(
-      "Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum)."
-    );
+    setQuantity(1);
+    setSelectedDeviceId(newDevices[0]?.id ?? null);
+
+    if (qty === 1) {
+      setMessage(
+        `1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).`
+      );
+    } else {
+      setMessage(
+        `${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).`
+      );
+    }
+
+    // Sammel-Audit-Eintrag (kein Spam mit 100 Einzelzeilen)
+    const firstSerial = newDevices[0]?.serial;
+    const lastSerial = newDevices[newDevices.length - 1]?.serial;
 
     addAuditEntry(
-      newDevice.id,
-      "device_created",
-      `Gerät angelegt: ${newDevice.name} (UDI-DI: ${generatedUdiDi}, SN: ${generatedSerial}, Batch: ${batch})`
+      null,
+      "devices_bulk_created",
+      qty === 1
+        ? `1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial})`
+        : `${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}).`
     );
   };
 
@@ -502,10 +538,10 @@ export default function MedSafePage() {
                 MedSafe-UDI – Geräteübersicht
               </h1>
               <p className="text-slate-400 text-sm mt-1">
-                Nur Produktnamen eingeben – UDI-DI, Seriennummer, Charge &amp;
-                UDI-PI (ohne Verfallsdatum) werden automatisch generiert. Daten
-                bleiben im Browser (localStorage), Dateien zusätzlich bei
-                Pinata.
+                Nur Produktnamen &amp; Anzahl eingeben – UDI-DI,
+                Seriennummern, Charge &amp; UDI-PI (ohne Verfallsdatum) werden
+                automatisch generiert. Daten bleiben im Browser (localStorage),
+                Dateien zusätzlich bei Pinata.
               </p>
             </div>
 
@@ -558,15 +594,29 @@ export default function MedSafePage() {
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neues Gerät anlegen</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
               placeholder="Produktname (z.B. FREEZO FZ-380)"
               value={newProductName}
               onChange={(e) => setNewProductName(e.target.value)}
             />
+            <input
+              type="number"
+              min={1}
+              max={999}
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Anzahl"
+              value={quantity}
+              onChange={(e) =>
+                setQuantity(
+                  Math.max(1, Number(e.target.value || "1") || 1)
+                )
+              }
+            />
             <p className="text-xs text-slate-400">
-              UDI-DI &amp; Seriennummer werden automatisch erzeugt.
+              Es werden automatisch so viele Geräte mit derselben Charge
+              angelegt.
             </p>
           </div>
 
@@ -574,7 +624,7 @@ export default function MedSafePage() {
             onClick={handleSaveDevice}
             className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
           >
-            Gerät speichern
+            Geräte speichern
           </button>
         </section>
 
