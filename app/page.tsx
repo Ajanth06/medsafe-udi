@@ -25,12 +25,15 @@ type Device = {
   dmrId?: string; // Device Master Record ID (Produkt/Charge)
   dhrId?: string; // Device History Record ID (Einzelgerät)
   validationStatus?: string; // z.B. IQ/OQ/PQ-Status
+  archivedAt?: string; // ISO-Datum/Uhrzeit der Stilllegung
+  archiveReason?: string; // Grund der Archivierung / Stilllegung
 
   // Abweichung / Quarantäne (Nonconformity)
   nonconformityCategory?: string; // mechanisch, elektrisch, Software, ...
   nonconformitySeverity?: string; // kritisch / nicht kritisch
   nonconformityAction?: string; // Sofortmaßnahmen
   nonconformityResponsible?: string; // Verantwortliche Person
+  nonconformityId?: string; // NC-ID, z.B. NC-2025-001
 
   // Service / Wartung
   lastServiceDate?: string; // ISO-Datum
@@ -122,6 +125,15 @@ function slugifyName(name: string): string {
   return name.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
 }
 
+// Helfer: Nonconformity-ID generieren (NC-YYYY-XYZ)
+function generateNonconformityId(): string {
+  const year = new Date().getFullYear();
+  const random = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, "0");
+  return `NC-${year}-${random}`;
+}
+
 // Helfer: CSV für Geräte bauen
 function devicesToCSV(devices: Device[]): string {
   const header = [
@@ -139,6 +151,7 @@ function devicesToCSV(devices: Device[]): string {
     "NonconformitySeverity",
     "NonconformityAction",
     "NonconformityResponsible",
+    "NonconformityId",
     "LastServiceDate",
     "NextServiceDate",
     "ServiceNotes",
@@ -147,6 +160,8 @@ function devicesToCSV(devices: Device[]): string {
     "DMR-ID",
     "DHR-ID",
     "Archived",
+    "ArchivedAt",
+    "ArchiveReason",
     "CreatedAt",
   ].join(";");
 
@@ -166,6 +181,7 @@ function devicesToCSV(devices: Device[]): string {
       d.nonconformitySeverity || "",
       d.nonconformityAction || "",
       d.nonconformityResponsible || "",
+      d.nonconformityId || "",
       d.lastServiceDate || "",
       d.nextServiceDate || "",
       d.serviceNotes || "",
@@ -174,6 +190,8 @@ function devicesToCSV(devices: Device[]): string {
       d.dmrId || "",
       d.dhrId || "",
       d.isArchived ? "true" : "false",
+      d.archivedAt || "",
+      d.archiveReason || "",
       d.createdAt || "",
     ].map((val) => {
       const safe = String(val ?? "").replace(/"/g, '""');
@@ -237,6 +255,9 @@ export default function MedSafePage() {
           nextServiceDate: d.nextServiceDate ?? "",
           serviceNotes: d.serviceNotes ?? "",
           pmsNotes: d.pmsNotes ?? "",
+          archivedAt: d.archivedAt ?? "",
+          archiveReason: d.archiveReason ?? "",
+          nonconformityId: d.nonconformityId ?? "",
         }));
         setDevices(normalized);
       }
@@ -366,6 +387,9 @@ export default function MedSafePage() {
         nextServiceDate: "",
         serviceNotes: "",
         pmsNotes: "",
+        archivedAt: "",
+        archiveReason: "",
+        nonconformityId: "",
       };
 
       newDevices.push(newDevice);
@@ -517,14 +541,36 @@ export default function MedSafePage() {
 
     const ok = window.confirm(
       `Gerät "${device.name}" wirklich ${
-        device.isArchived ? "reaktivieren (aus Archiv holen)" : "archivieren (Stilllegung)?"
+        device.isArchived
+          ? "reaktivieren (aus Archiv holen)"
+          : "archivieren (Stilllegung)?"
       }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.`
     );
     if (!ok) return;
 
+    let archiveReason: string | undefined;
+    let archivedAt: string | undefined;
+
+    // Nur beim Archivieren (nicht beim Reaktivieren) Grund & Datum setzen
+    if (!device.isArchived) {
+      const reason = window.prompt(
+        `Archiv-/Stilllegungsgrund für "${device.name}" (optional):`,
+        device.archiveReason || ""
+      );
+      archiveReason = reason || "";
+      archivedAt = new Date().toISOString();
+    }
+
     setDevices((prev) => {
       const updated = prev.map((d) =>
-        d.id === deviceId ? { ...d, isArchived: !d.isArchived } : d
+        d.id === deviceId
+          ? {
+              ...d,
+              isArchived: !d.isArchived,
+              archivedAt: !d.isArchived ? archivedAt : d.archivedAt,
+              archiveReason: !d.isArchived ? archiveReason : d.archiveReason,
+            }
+          : d
       );
       if (typeof window !== "undefined") {
         window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
@@ -532,22 +578,28 @@ export default function MedSafePage() {
       return updated;
     });
 
-    addAuditEntry(
-      device.id,
-      device.isArchived ? "device_unarchived" : "device_archived",
-      device.isArchived
-        ? `Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).`
-        : `Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).`
-    );
-
-    setMessage(
-      device.isArchived
-        ? `Gerät "${device.name}" wurde aus dem Archiv geholt.`
-        : `Gerät "${device.name}" wurde archiviert (Stilllegung).`
-    );
+    if (device.isArchived) {
+      addAuditEntry(
+        device.id,
+        "device_unarchived",
+        `Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).`
+      );
+      setMessage(`Gerät "${device.name}" wurde aus dem Archiv geholt.`);
+    } else {
+      addAuditEntry(
+        device.id,
+        "device_archived",
+        `Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).${
+          archiveReason ? ` Grund: ${archiveReason}` : ""
+        }`
+      );
+      setMessage(
+        `Gerät "${device.name}" wurde archiviert (Stilllegung).`
+      );
+    }
   };
 
-  // 🔄 Export JSON
+  // 🔄 Export JSON (alle Geräte)
   const handleExportJSON = () => {
     if (!devices.length) {
       setMessage("Keine Geräte zum Exportieren vorhanden.");
@@ -568,7 +620,7 @@ export default function MedSafePage() {
     setMessage("Geräte als JSON exportiert.");
   };
 
-  // 🔄 Export CSV
+  // 🔄 Export CSV (alle Geräte)
   const handleExportCSV = () => {
     if (!devices.length) {
       setMessage("Keine Geräte zum Exportieren vorhanden.");
@@ -595,8 +647,25 @@ export default function MedSafePage() {
       const deviceBefore = prev.find((d) => d.id === deviceId);
       if (!deviceBefore) return prev;
 
+      const mergedUpdates: Partial<Device> = { ...updates };
+
+      // NC-ID automatisch vergeben, sobald eine Abweichung erfasst wird
+      if (
+        !deviceBefore.nonconformityId &&
+        (
+          (mergedUpdates.nonconformityCategory &&
+            mergedUpdates.nonconformityCategory.trim() !== "") ||
+          (mergedUpdates.nonconformitySeverity &&
+            mergedUpdates.nonconformitySeverity.trim() !== "") ||
+          (mergedUpdates.nonconformityAction &&
+            mergedUpdates.nonconformityAction.trim() !== "")
+        )
+      ) {
+        mergedUpdates.nonconformityId = generateNonconformityId();
+      }
+
       const updated = prev.map((d) =>
-        d.id === deviceId ? { ...d, ...updates } : d
+        d.id === deviceId ? { ...d, ...mergedUpdates } : d
       );
 
       if (typeof window !== "undefined") {
@@ -608,107 +677,142 @@ export default function MedSafePage() {
 
       // Pflichtlogik: wenn Status blocked/recall -> Risikoklasse nötig
       if (
-        updates.status &&
-        (updates.status === "blocked" || updates.status === "recall")
+        mergedUpdates.status &&
+        (mergedUpdates.status === "blocked" ||
+          mergedUpdates.status === "recall")
       ) {
         if (!deviceAfter.riskClass || !deviceAfter.riskClass.trim()) {
           // einfache Default-Risikoklasse setzen + Hinweis
           deviceAfter.riskClass = "IIa";
-          window.alert(
-            "Risikoklasse war leer. Es wurde automatisch 'IIa' gesetzt. Bitte ggf. anpassen."
-          );
+          if (typeof window !== "undefined") {
+            window.alert(
+              "Risikoklasse war leer. Es wurde automatisch 'IIa' gesetzt. Bitte ggf. anpassen."
+            );
+          }
         }
         if (
-          updates.status === "recall" &&
+          mergedUpdates.status === "recall" &&
           (!deviceAfter.blockComment || !deviceAfter.blockComment.trim())
         ) {
-          window.alert(
-            "Bitte einen Kommentar / Sperrgrund für den Recall eintragen (z.B. Sicherheitsrückruf wegen Kompressor-Fehler)."
-          );
+          if (typeof window !== "undefined") {
+            window.alert(
+              "Bitte einen Kommentar / Sperrgrund für den Recall eintragen (z.B. Sicherheitsrückruf wegen Kompressor-Fehler)."
+            );
+          }
         }
       }
 
       // Audit-Text generieren
       const changes: string[] = [];
 
-      if (updates.status && updates.status !== deviceBefore.status) {
+      if (mergedUpdates.status && mergedUpdates.status !== deviceBefore.status) {
         changes.push(
-          `Status geändert von "${DEVICE_STATUS_LABELS[deviceBefore.status]}" auf "${DEVICE_STATUS_LABELS[updates.status]}".`
+          `Status geändert von "${
+            DEVICE_STATUS_LABELS[deviceBefore.status]
+          }" auf "${DEVICE_STATUS_LABELS[mergedUpdates.status]}".`
         );
       }
-      if (updates.riskClass !== undefined && updates.riskClass !== deviceBefore.riskClass) {
+      if (
+        mergedUpdates.riskClass !== undefined &&
+        mergedUpdates.riskClass !== deviceBefore.riskClass
+      ) {
         changes.push(
-          `Risikoklasse geändert von "${deviceBefore.riskClass || "–"}" auf "${
-            updates.riskClass || "–"
-          }".`
+          `Risikoklasse geändert von "${
+            deviceBefore.riskClass || "–"
+          }" auf "${mergedUpdates.riskClass || "–"}".`
         );
       }
-      if (updates.blockComment !== undefined && updates.blockComment !== deviceBefore.blockComment) {
+      if (
+        mergedUpdates.blockComment !== undefined &&
+        mergedUpdates.blockComment !== deviceBefore.blockComment
+      ) {
         changes.push(
           `Kommentar / Sperrgrund aktualisiert: "${
-            updates.blockComment || "–"
+            mergedUpdates.blockComment || "–"
           }".`
         );
       }
       if (
-        updates.nonconformityCategory !== undefined &&
-        updates.nonconformityCategory !== deviceBefore.nonconformityCategory
+        mergedUpdates.nonconformityCategory !== undefined &&
+        mergedUpdates.nonconformityCategory !== deviceBefore.nonconformityCategory
       ) {
         changes.push(
-          `Abweichungskategorie gesetzt auf "${updates.nonconformityCategory || "–"}".`
+          `Abweichungskategorie gesetzt auf "${
+            mergedUpdates.nonconformityCategory || "–"
+          }".`
         );
       }
       if (
-        updates.nonconformitySeverity !== undefined &&
-        updates.nonconformitySeverity !== deviceBefore.nonconformitySeverity
+        mergedUpdates.nonconformitySeverity !== undefined &&
+        mergedUpdates.nonconformitySeverity !== deviceBefore.nonconformitySeverity
       ) {
         changes.push(
-          `Abweichungsschwere geändert auf "${updates.nonconformitySeverity || "–"}".`
+          `Abweichungsschwere geändert auf "${
+            mergedUpdates.nonconformitySeverity || "–"
+          }".`
         );
       }
       if (
-        updates.nonconformityAction !== undefined &&
-        updates.nonconformityAction !== deviceBefore.nonconformityAction
+        mergedUpdates.nonconformityAction !== undefined &&
+        mergedUpdates.nonconformityAction !== deviceBefore.nonconformityAction
+      ) {
+        changes.push(`Abweichungs-/Sofortmaßnahmen aktualisiert.`);
+      }
+      if (
+        mergedUpdates.nonconformityResponsible !== undefined &&
+        mergedUpdates.nonconformityResponsible !==
+          deviceBefore.nonconformityResponsible
       ) {
         changes.push(
-          `Abweichungs-/Sofortmaßnahmen aktualisiert.`
+          `Verantwortliche Person für Abweichung gesetzt auf "${
+            mergedUpdates.nonconformityResponsible || "–"
+          }".`
         );
       }
       if (
-        updates.nonconformityResponsible !== undefined &&
-        updates.nonconformityResponsible !== deviceBefore.nonconformityResponsible
+        mergedUpdates.lastServiceDate !== undefined &&
+        mergedUpdates.lastServiceDate !== deviceBefore.lastServiceDate
       ) {
         changes.push(
-          `Verantwortliche Person für Abweichung gesetzt auf "${updates.nonconformityResponsible || "–"}".`
+          `Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.`
         );
       }
       if (
-        updates.lastServiceDate !== undefined &&
-        updates.lastServiceDate !== deviceBefore.lastServiceDate
+        mergedUpdates.nextServiceDate !== undefined &&
+        mergedUpdates.nextServiceDate !== deviceBefore.nextServiceDate
       ) {
-        changes.push(`Letzte Wartung auf "${updates.lastServiceDate || "–"}" gesetzt.`);
+        changes.push(
+          `Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.`
+        );
       }
       if (
-        updates.nextServiceDate !== undefined &&
-        updates.nextServiceDate !== deviceBefore.nextServiceDate
-      ) {
-        changes.push(`Nächste Wartung auf "${updates.nextServiceDate || "–"}" gesetzt.`);
-      }
-      if (
-        updates.serviceNotes !== undefined &&
-        updates.serviceNotes !== deviceBefore.serviceNotes
+        mergedUpdates.serviceNotes !== undefined &&
+        mergedUpdates.serviceNotes !== deviceBefore.serviceNotes
       ) {
         changes.push(`Service-/Wartungs-Notizen aktualisiert.`);
       }
-      if (updates.pmsNotes !== undefined && updates.pmsNotes !== deviceBefore.pmsNotes) {
+      if (
+        mergedUpdates.pmsNotes !== undefined &&
+        mergedUpdates.pmsNotes !== deviceBefore.pmsNotes
+      ) {
         changes.push(`PMS-/Feedback-Notizen aktualisiert.`);
       }
       if (
-        updates.validationStatus !== undefined &&
-        updates.validationStatus !== deviceBefore.validationStatus
+        mergedUpdates.validationStatus !== undefined &&
+        mergedUpdates.validationStatus !== deviceBefore.validationStatus
       ) {
         changes.push(
-          `Validierungsstatus (IQ/OQ/PQ) geändert auf "${updates.validationStatus || "–"}".`
+          `Validierungsstatus (IQ/OQ/PQ) geändert auf "${
+            mergedUpdates.validationStatus || "–"
+          }".`
+        );
+      }
+      if (
+        mergedUpdates.nonconformityId &&
+        mergedUpdates.nonconformityId !== deviceBefore.nonconformityId
+      ) {
+        changes.push(
+          `Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".`
         );
       }
 
@@ -716,9 +820,9 @@ export default function MedSafePage() {
         addAuditEntry(
           deviceId,
           "device_meta_changed",
-          `Änderungen für "${deviceAfter.name}" (SN: ${deviceAfter.serial}): ${changes.join(
-            " | "
-          )}`
+          `Änderungen für "${deviceAfter.name}" (SN: ${
+            deviceAfter.serial
+          }): ${changes.join(" | ")}`
         );
       }
 
@@ -811,6 +915,38 @@ export default function MedSafePage() {
     archivedGroupsMap[key].count += 1;
   }
   const archivedGroups: DeviceGroup[] = Object.values(archivedGroupsMap);
+
+  // DHR-Export für EIN Gerät
+  const handleExportDhrJson = () => {
+    if (!selectedDevice) {
+      setMessage("Kein Gerät für DHR-Export ausgewählt.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+
+    const dhrDocs = docs.filter((d) => d.deviceId === selectedDevice.id);
+    const dhrAudit = audit.filter((a) => a.deviceId === selectedDevice.id);
+
+    const payload = {
+      device: selectedDevice,
+      docs: dhrDocs,
+      audit: dhrAudit,
+      exportedAt: new Date().toISOString(),
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    const safeSerial = selectedDevice.serial || selectedDevice.id;
+    a.href = url;
+    a.download = `DHR-${safeSerial}.json`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("DHR für dieses Gerät als JSON exportiert.");
+  };
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
@@ -1072,6 +1208,17 @@ export default function MedSafePage() {
                       <div className="text-xs text-slate-400 mt-1 break-all">
                         Beispiel-SN: {device.serial}
                       </div>
+                      {device.archivedAt && (
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          Archiviert am:{" "}
+                          {new Date(device.archivedAt).toLocaleString()}
+                        </div>
+                      )}
+                      {device.archiveReason && (
+                        <div className="text-[11px] text-slate-500 mt-1 break-all">
+                          Grund: {device.archiveReason}
+                        </div>
+                      )}
                     </button>
                   </li>
                 );
@@ -1087,19 +1234,27 @@ export default function MedSafePage() {
               Geräteakte – Detailansicht (DHR)
             </h2>
             {selectedDevice && (
-              <button
-                onClick={() => handleToggleArchiveDevice(selectedDevice.id)}
-                className={
-                  "text-xs md:text-sm rounded-lg border px-3 py-2 " +
-                  (selectedDevice.isArchived
-                    ? "border-emerald-500/70 bg-emerald-900/40 hover:bg-emerald-800"
-                    : "border-yellow-500/70 bg-yellow-900/40 hover:bg-yellow-800")
-                }
-              >
-                {selectedDevice.isArchived
-                  ? "Aus Archiv holen (Admin-PIN)"
-                  : "Archivieren / Stilllegen (Admin-PIN)"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleToggleArchiveDevice(selectedDevice.id)}
+                  className={
+                    "text-xs md:text-sm rounded-lg border px-3 py-2 " +
+                    (selectedDevice.isArchived
+                      ? "border-emerald-500/70 bg-emerald-900/40 hover:bg-emerald-800"
+                      : "border-yellow-500/70 bg-yellow-900/40 hover:bg-yellow-800")
+                  }
+                >
+                  {selectedDevice.isArchived
+                    ? "Aus Archiv holen (Admin-PIN)"
+                    : "Archivieren / Stilllegen (Admin-PIN)"}
+                </button>
+                <button
+                  onClick={handleExportDhrJson}
+                  className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+                >
+                  DHR als JSON exportieren
+                </button>
+              </div>
             )}
           </div>
 
@@ -1138,6 +1293,27 @@ export default function MedSafePage() {
 
                   <div className="text-slate-400 text-xs mt-3">Charge</div>
                   <div>{selectedDevice.batch || "–"}</div>
+
+                  {selectedDevice.isArchived && (
+                    <>
+                      <div className="text-slate-400 text-xs mt-3">
+                        Archiviert am
+                      </div>
+                      <div>
+                        {selectedDevice.archivedAt
+                          ? new Date(
+                              selectedDevice.archivedAt
+                            ).toLocaleString()
+                          : "–"}
+                      </div>
+                      <div className="text-slate-400 text-xs mt-3">
+                        Archivgrund
+                      </div>
+                      <div className="break-all">
+                        {selectedDevice.archiveReason || "–"}
+                      </div>
+                    </>
+                  )}
 
                   <div className="text-slate-400 text-xs mt-3">UDI-DI</div>
                   <div className="break-all">{selectedDevice.udiDi}</div>
@@ -1234,6 +1410,12 @@ export default function MedSafePage() {
                 <div className="font-semibold mb-1">
                   Abweichung / Quarantäne (Nonconformity – ISO 13485 / MDR)
                 </div>
+                <div className="text-slate-400 text-[11px] mb-1">
+                  NC-ID (wird automatisch vergeben, sobald eine Abweichung erfasst wird)
+                </div>
+                <div className="text-[11px] mb-3">
+                  {selectedDevice.nonconformityId || "–"}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <div className="text-slate-400 text-[11px] mb-1">
@@ -1273,7 +1455,7 @@ export default function MedSafePage() {
                       Verantwortlich
                     </div>
                     <input
-                      className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 text-[11px]"
+                      className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
                       placeholder="Name der verantwortlichen Person"
                       value={selectedDevice.nonconformityResponsible || ""}
                       onChange={(e) =>
