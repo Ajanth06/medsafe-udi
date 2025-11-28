@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
 
@@ -304,7 +305,7 @@ export default function MedSafePage() {
     });
   };
 
-  // 💾 Geräte speichern – mit "Anzahl" (Bulk-Erstellung)
+  // 💾 Geräte speichern – mit "Anzahl" (Bulk-Erstellung) + Supabase
   const handleSaveDevice = async () => {
     if (!newProductName.trim()) {
       setMessage("Bitte einen Produktnamen eingeben.");
@@ -395,7 +396,49 @@ export default function MedSafePage() {
       newDevices.push(newDevice);
     }
 
-    // NEUE GERÄTE OBEN
+    // 🟣 Supabase: Geräte in die Cloud-Datenbank speichern
+    try {
+      const { error } = await supabase.from("devices").insert(
+        newDevices.map((d) => ({
+          // du kannst die Spaltennamen in Supabase dazu passend anlegen:
+          external_id: d.id, // optional: eigene UUID im Frontend
+          name: d.name,
+          udi_di: d.udiDi,
+          serial: d.serial,
+          udi_hash: d.udiHash,
+          batch: d.batch ?? null,
+          production_date: d.productionDate ?? null,
+          udi_pi: d.udiPi ?? null,
+          status: d.status,
+          risk_class: d.riskClass ?? null,
+          block_comment: d.blockComment ?? null,
+          is_archived: d.isArchived ?? false,
+          dmr_id: d.dmrId ?? null,
+          dhr_id: d.dhrId ?? null,
+          validation_status: d.validationStatus ?? null,
+          archived_at: d.archivedAt ?? null,
+          archive_reason: d.archiveReason ?? null,
+          nonconformity_category: d.nonconformityCategory ?? null,
+          nonconformity_severity: d.nonconformitySeverity ?? null,
+          nonconformity_action: d.nonconformityAction ?? null,
+          nonconformity_responsible: d.nonconformityResponsible ?? null,
+          nonconformity_id: d.nonconformityId ?? null,
+          last_service_date: d.lastServiceDate ?? null,
+          next_service_date: d.nextServiceDate ?? null,
+          service_notes: d.serviceNotes ?? null,
+          pms_notes: d.pmsNotes ?? null,
+          created_at_client: d.createdAt ?? null, // optional extra Spalte
+        }))
+      );
+
+      if (error) {
+        console.error("Fehler Supabase Insert:", error);
+      }
+    } catch (err) {
+      console.error("Supabase Fehler:", err);
+    }
+
+    // NEUE GERÄTE OBEN (weiterhin localStorage + State)
     const updated = [...newDevices, ...devices];
     setDevices(updated);
 
