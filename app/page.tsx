@@ -107,14 +107,6 @@ function devicesToCSV(devices: Device[]): string {
   return [header, ...rows].join("\n");
 }
 
-// Typ für gruppierte Ansicht in der Liste
-type DeviceGroup = {
-  key: string;
-  name: string;
-  batch: string | undefined;
-  devices: Device[];
-};
-
 export default function MedSafePage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -518,6 +510,13 @@ export default function MedSafePage() {
     return haystack.includes(needle);
   });
 
+  const selectedDevice = selectedDeviceId
+    ? devices.find((d) => d.id === selectedDeviceId) || null
+    : null;
+
+  const totalDevices = devices.length;
+  const totalDocs = docs.length;
+
   // 🔢 Batch-Counts: wie viele Geräte pro Charge?
   const batchCounts: Record<string, number> = devices.reduce(
     (acc, d) => {
@@ -527,42 +526,6 @@ export default function MedSafePage() {
     },
     {} as Record<string, number>
   );
-
-  // 🧩 Gruppierte Geräte für die Liste (nach Name + Batch)
-  const groupedDevices: DeviceGroup[] = (() => {
-    const map: Record<string, DeviceGroup> = {};
-
-    for (const d of filteredDevices) {
-      const key = `${d.name}::${d.batch || "NO_BATCH"}`;
-      if (!map[key]) {
-        map[key] = {
-          key,
-          name: d.name,
-          batch: d.batch,
-          devices: [],
-        };
-      }
-      map[key].devices.push(d);
-    }
-
-    // Sortierung: neueste Gerätegruppe oben
-    return Object.values(map).sort((a, b) => {
-      const aNewest = a.devices
-        .map((d) => new Date(d.createdAt).getTime())
-        .reduce((m, v) => Math.max(m, v), 0);
-      const bNewest = b.devices
-        .map((d) => new Date(d.createdAt).getTime())
-        .reduce((m, v) => Math.max(m, v), 0);
-      return bNewest - aNewest;
-    });
-  })();
-
-  const selectedDevice = selectedDeviceId
-    ? devices.find((d) => d.id === selectedDeviceId) || null
-    : null;
-
-  const totalDevices = devices.length;
-  const totalDocs = docs.length;
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
@@ -646,7 +609,9 @@ export default function MedSafePage() {
               placeholder="Anzahl"
               value={quantity}
               onChange={(e) =>
-                setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
+                setQuantity(
+                  Math.max(1, Number(e.target.value || "1") || 1)
+                )
               }
             />
             <p className="text-xs text-slate-400">
@@ -663,7 +628,7 @@ export default function MedSafePage() {
           </button>
         </section>
 
-        {/* Geräte-Liste mit Suche (GRUPPIERT) */}
+        {/* Geräte-Liste mit Suche */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <h2 className="text-lg font-semibold">Angelegte Geräte</h2>
@@ -682,37 +647,26 @@ export default function MedSafePage() {
             <p className="text-sm text-slate-400">
               Noch keine Geräte angelegt.
             </p>
-          ) : groupedDevices.length === 0 ? (
+          ) : filteredDevices.length === 0 ? (
             <p className="text-sm text-slate-400">
               Keine Geräte passend zur Suche gefunden.
             </p>
           ) : (
             <ul className="space-y-2">
-              {groupedDevices.map((group) => {
-                // Geräte der Gruppe nach Serial sortieren, um Bereiche anzuzeigen
-                const sorted = [...group.devices].sort((a, b) =>
-                  a.serial.localeCompare(b.serial)
-                );
-                const first = sorted[0];
-                const last = sorted[sorted.length - 1];
-
-                // Dokumente für alle Geräte dieser Gruppe zählen
-                const docCount = docs.filter((d) =>
-                  group.devices.some((gd) => gd.id === d.deviceId)
+              {filteredDevices.map((device) => {
+                const count = docs.filter(
+                  (d) => d.deviceId === device.id
                 ).length;
+                const isSelected = device.id === selectedDeviceId;
 
-                const isSelected = group.devices.some(
-                  (d) => d.id === selectedDeviceId
-                );
-
-                const batchCount = group.batch
-                  ? batchCounts[group.batch] ?? group.devices.length
-                  : group.devices.length;
+                const batchCount = device.batch
+                  ? batchCounts[device.batch] ?? 1
+                  : 0;
 
                 return (
-                  <li key={group.key}>
+                  <li key={device.id}>
                     <button
-                      onClick={() => handleSelectDevice(first.id)}
+                      onClick={() => handleSelectDevice(device.id)}
                       className={
                         "w-full text-left px-4 py-3 rounded-xl border text-sm " +
                         (isSelected
@@ -721,46 +675,32 @@ export default function MedSafePage() {
                       }
                     >
                       <div className="font-medium">
-                        {group.name} – {group.devices.length} Gerät
-                        {group.devices.length !== 1 ? "e" : ""}{" "}
+                        {device.name} – SN: {device.serial}{" "}
                         <span className="text-slate-400">
-                          ({docCount} Dateien insgesamt)
+                          ({count} Dateien)
                         </span>
                       </div>
-
-                      {group.batch && (
-                        <div className="text-xs text-emerald-400 mt-1">
-                          Charge: {group.batch} ({batchCount} Gerät
-                          {batchCount !== 1 ? "e" : ""} in dieser Charge)
-                        </div>
-                      )}
-
                       <div className="text-xs text-slate-400 mt-1 break-all">
-                        Seriennummern:{" "}
-                        {first.serial === last.serial
-                          ? first.serial
-                          : `${first.serial} … ${last.serial}`}
+                        UDI-DI: {device.udiDi}
                       </div>
-
-                      <div className="text-xs text-slate-400 mt-1 break-all">
-                        UDI-DI:{" "}
-                        {first.udiDi === last.udiDi
-                          ? first.udiDi
-                          : `${first.udiDi} … ${last.udiDi}`}
-                      </div>
-
-                      {first.udiPi && (
-                        <div className="text-xs text-slate-300 mt-1 break-all">
-                          Beispiel UDI-PI: {first.udiPi}
-                        </div>
-                      )}
-
                       <div className="text-xs text-slate-500 mt-1 break-all">
-                        UDI-Hash (Beispiel):{" "}
-                        {first.udiHash
-                          ? first.udiHash.slice(0, 20) + "…"
+                        UDI-Hash:{" "}
+                        {device.udiHash
+                          ? device.udiHash.slice(0, 20) + "…"
                           : "noch kein Hash (altes Gerät)"}
                       </div>
+                      {device.batch && (
+                        <div className="text-xs text-emerald-400 mt-1">
+                          Charge: {device.batch} (
+                          {batchCount} Gerät
+                          {batchCount !== 1 ? "e" : ""})
+                        </div>
+                      )}
+                      {device.udiPi && (
+                        <div className="text-xs text-slate-300 mt-1 break-all">
+                          UDI-PI: {device.udiPi}
+                        </div>
+                      )}
                     </button>
                   </li>
                 );
