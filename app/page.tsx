@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 
+type DeviceStatus = "in_production" | "released" | "blocked" | "scrapped";
+
 type Device = {
   id: string;
   name: string; // Produktname
@@ -13,6 +15,9 @@ type Device = {
   batch?: string; // Charge, z.B. 251128
   productionDate?: string; // YYMMDD
   udiPi?: string; // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
+
+  status: DeviceStatus; // Gerätestatus
+  riskClass?: string; // z.B. IIa, IIb, I, etc.
 };
 
 type Doc = {
@@ -52,6 +57,14 @@ const DOC_CATEGORIES = [
   "Sonstiges",
 ];
 
+// mögliche Gerätestati
+const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
+  in_production: "In Produktion",
+  released: "Freigegeben",
+  blocked: "Gesperrt",
+  scrapped: "Ausgeschleust",
+};
+
 // 🔐 UDI-Hash berechnen (läuft im Browser)
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
   const input = `${udiDi}|${serial}`;
@@ -83,6 +96,8 @@ function devicesToCSV(devices: Device[]): string {
     "ProductionDate(YYMMDD)",
     "UDI-PI",
     "UDI-Hash",
+    "Status",
+    "RiskClass",
     "CreatedAt",
   ].join(";");
 
@@ -95,6 +110,8 @@ function devicesToCSV(devices: Device[]): string {
       d.productionDate || "",
       d.udiPi || "",
       d.udiHash || "",
+      DEVICE_STATUS_LABELS[d.status] || d.status || "",
+      d.riskClass || "",
       d.createdAt || "",
     ].map((val) => {
       const safe = String(val ?? "").replace(/"/g, '""');
@@ -135,7 +152,14 @@ export default function MedSafePage() {
       const storedAudit = window.localStorage.getItem(AUDIT_KEY);
 
       if (storedDevices) {
-        setDevices(JSON.parse(storedDevices));
+        const parsed = JSON.parse(storedDevices) as any[];
+        const normalized: Device[] = parsed.map((d) => ({
+          ...d,
+          status: (d.status ||
+            "in_production") as DeviceStatus, // Default für alte Daten
+          riskClass: d.riskClass || "",
+        }));
+        setDevices(normalized);
       }
       if (storedDocs) {
         setDocs(JSON.parse(storedDocs));
@@ -236,6 +260,8 @@ export default function MedSafePage() {
         batch,
         productionDate,
         udiPi,
+        status: "in_production", // Standardstatus für neue Geräte
+        riskClass: "", // kann später gesetzt werden
       };
 
       newDevices.push(newDevice);
@@ -444,6 +470,43 @@ export default function MedSafePage() {
     setMessage("Geräte als CSV exportiert.");
   };
 
+  // 🔧 Status / Risikoklasse ändern
+  const handleUpdateDeviceMeta = (
+    deviceId: string,
+    updates: Partial<Pick<Device, "status" | "riskClass">>
+  ) => {
+    setDevices((prev) => {
+      const updated = prev.map((d) => {
+        if (d.id !== deviceId) return d;
+        return { ...d, ...updates };
+      });
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
+      }
+
+      const deviceAfter = updated.find((d) => d.id === deviceId);
+      if (deviceAfter) {
+        if (updates.status) {
+          addAuditEntry(
+            deviceId,
+            "device_status_changed",
+            `Status von "${deviceAfter.name}" geändert auf "${DEVICE_STATUS_LABELS[updates.status]}".`
+          );
+        }
+        if (typeof updates.riskClass !== "undefined") {
+          addAuditEntry(
+            deviceId,
+            "device_riskclass_changed",
+            `Risikoklasse von "${deviceAfter.name}" geändert auf "${updates.riskClass || "–"}".`
+          );
+        }
+      }
+
+      return updated;
+    });
+  };
+
   const docsForDevice = selectedDeviceId
     ? docs.filter((d) => d.deviceId === selectedDeviceId)
     : [];
@@ -463,6 +526,8 @@ export default function MedSafePage() {
       device.batch,
       device.udiPi,
       device.udiHash,
+      DEVICE_STATUS_LABELS[device.status],
+      device.riskClass,
     ]
       .filter(Boolean)
       .join(" ")
@@ -520,8 +585,8 @@ export default function MedSafePage() {
               <p className="text-slate-400 text-sm mt-1">
                 Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern,
                 Charge &amp; UDI-PI (ohne Verfallsdatum) werden automatisch
-                generiert. In der Liste siehst du je eine Zeile pro
-                Produkt/Charge, Details zeigen alle Geräte dieser Gruppe.
+                generiert. Status &amp; Risikoklasse je Gerät können in der
+                Detailansicht gesetzt werden.
               </p>
             </div>
           </div>
@@ -607,7 +672,7 @@ export default function MedSafePage() {
             <div className="w-full md:w-1/2 flex items-center gap-2">
               <input
                 className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Suche nach Name, SN, UDI, Batch, UDI-PI…"
+                placeholder="Suche nach Name, SN, UDI, Status, Risikoklasse…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -639,6 +704,17 @@ export default function MedSafePage() {
                   );
                 }, 0);
 
+                const statusLabel = DEVICE_STATUS_LABELS[device.status];
+
+                const statusClass =
+                  device.status === "released"
+                    ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/40"
+                    : device.status === "blocked"
+                    ? "bg-red-600/20 text-red-300 border-red-500/40"
+                    : device.status === "scrapped"
+                    ? "bg-slate-700/60 text-slate-300 border-slate-500/60"
+                    : "bg-sky-600/20 text-sky-300 border-sky-500/40";
+
                 return (
                   <li key={group.key}>
                     <button
@@ -650,14 +726,29 @@ export default function MedSafePage() {
                           : "bg-slate-900 border-slate-700 hover:border-emerald-500/60")
                       }
                     >
-                      <div className="font-medium">
-                        {device.name} – Charge: {device.batch ?? "–"}{" "}
-                        <span className="text-slate-400">
-                          ({group.count} Gerät
-                          {group.count !== 1 ? "e" : ""},{" "}
-                          {docCountForGroup} Dokument
-                          {docCountForGroup !== 1 ? "e" : ""})
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-medium">
+                          {device.name} – Charge: {device.batch ?? "–"}{" "}
+                          <span className="text-slate-400">
+                            ({group.count} Gerät
+                            {group.count !== 1 ? "e" : ""},{" "}
+                            {docCountForGroup} Dokument
+                            {docCountForGroup !== 1 ? "e" : ""})
+                          </span>
+                        </div>
+                        <span
+                          className={
+                            "text-[10px] px-2 py-0.5 rounded-full border " +
+                            statusClass
+                          }
+                        >
+                          {statusLabel}
                         </span>
+                        {device.riskClass && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-200">
+                            Risikoklasse: {device.riskClass}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-400 mt-1 break-all">
                         Beispiel-SN: {device.serial}
@@ -745,6 +836,36 @@ export default function MedSafePage() {
                     {selectedDevice.udiHash}
                   </div>
 
+                  <div className="text-slate-400 text-xs mt-3">Status</div>
+                  <select
+                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500"
+                    value={selectedDevice.status}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        status: e.target.value as DeviceStatus,
+                      })
+                    }
+                  >
+                    <option value="in_production">In Produktion</option>
+                    <option value="released">Freigegeben</option>
+                    <option value="blocked">Gesperrt</option>
+                    <option value="scrapped">Ausgeschleust</option>
+                  </select>
+
+                  <div className="text-slate-400 text-xs mt-3">
+                    Risikoklasse (optional)
+                  </div>
+                  <input
+                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500"
+                    placeholder="z.B. IIa, IIb, I"
+                    value={selectedDevice.riskClass || ""}
+                    onChange={(e) =>
+                      handleUpdateDeviceMeta(selectedDevice.id, {
+                        riskClass: e.target.value,
+                      })
+                    }
+                  />
+
                   <div className="text-slate-400 text-xs mt-3">Angelegt am</div>
                   <div>
                     {new Date(selectedDevice.createdAt).toLocaleString()}
@@ -770,6 +891,7 @@ export default function MedSafePage() {
                           <th className="text-left py-1 pr-2">
                             Angelegt am
                           </th>
+                          <th className="text-left py-1 pr-2">Status</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -789,6 +911,9 @@ export default function MedSafePage() {
                             </td>
                             <td className="py-1 pr-2">
                               {new Date(d.createdAt).toLocaleString()}
+                            </td>
+                            <td className="py-1 pr-2">
+                              {DEVICE_STATUS_LABELS[d.status]}
                             </td>
                           </tr>
                         ))}
@@ -924,7 +1049,7 @@ export default function MedSafePage() {
           <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
           <p className="text-xs text-slate-400">
             {selectedDeviceId
-              ? "Es werden nur Aktivitäten angezeigt, die das ausgewählte Gerät direkt betreffen."
+              ? "Es werden nur Aktivitäten angezeigt, die das ausgewählte Gerät direkt betreffen (inkl. Status- & Risikoklassen-Änderungen)."
               : "Es werden Aktivitäten für alle Geräte / Bulk-Aktionen angezeigt."}
           </p>
 
