@@ -62,7 +62,7 @@ const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
   released: "Freigegeben",
   blocked: "Gesperrt",
   in_production: "In Produktion",
-  scrapped: "Ausgeschleust",
+  scrapped: "RECALL",
 };
 
 // 🔐 UDI-Hash berechnen (läuft im Browser)
