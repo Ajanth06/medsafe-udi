@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 
-type DeviceStatus = "released" | "blocked" | "in_production" | "scrapped";
+type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
 
 type Device = {
   id: string;
@@ -16,7 +16,7 @@ type Device = {
   productionDate?: string; // YYMMDD
   udiPi?: string; // kompletter GS1-UDI-PI-String (ohne Verfallsdatum)
 
-  status: DeviceStatus; // Gerätestatus
+  status: DeviceStatus; // Gerätestatus (MDR-/ISO-Logik)
   riskClass?: string; // z.B. IIa, IIb, I (optional)
   blockComment?: string; // Kommentar / Sperrgrund / Besonderheiten
 };
@@ -58,11 +58,12 @@ const DOC_CATEGORIES = [
   "Sonstiges",
 ];
 
+// MDR-/13485-nahe Status-Bezeichnungen
 const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
-  released: "Freigegeben",
-  blocked: "Gesperrt",
-  in_production: "In Produktion",
-  scrapped: "RECALL",
+  released: "Freigegeben (Inverkehrbringen)",
+  blocked: "Gesperrt / Quarantäne",
+  in_production: "In Herstellung",
+  recall: "Recall (Rückruf)",
 };
 
 // 🔐 UDI-Hash berechnen (läuft im Browser)
@@ -340,7 +341,7 @@ export default function MedSafePage() {
         body: formData,
       });
 
-        const data = await res.json();
+      const data = await res.json();
 
       if (!res.ok) {
         throw new Error(data.error || "Upload fehlgeschlagen");
@@ -595,8 +596,9 @@ export default function MedSafePage() {
               <p className="text-slate-400 text-sm mt-1">
                 Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern,
                 Charge &amp; UDI-PI (ohne Verfallsdatum) werden automatisch
-                generiert. Jedes Gerät kann später einzeln gesperrt oder
-                kommentiert werden (z.B. bei Defekt oder Recall).
+                generiert. Jedes Gerät startet als freigegeben und kann später
+                einzeln in Quarantäne oder Recall (Rückruf) gesetzt und
+                kommentiert werden – MDR-/ISO-13485-konforme Denkweise.
               </p>
             </div>
           </div>
@@ -660,8 +662,7 @@ export default function MedSafePage() {
             />
             <p className="text-xs text-slate-400">
               Es werden automatisch so viele Geräte mit derselben Charge
-              angelegt (Status: Freigegeben). Änderungen machst du später pro
-              Gerät.
+              angelegt (Status beim Anlegen: Freigegeben).
             </p>
           </div>
 
@@ -726,14 +727,14 @@ export default function MedSafePage() {
                   statusLabel = "Gemischter Status";
                 }
 
-                const hasBlocked = devicesOfGroup.some(
-                  (d) => d.status === "blocked"
+                const hasRiskStatus = devicesOfGroup.some(
+                  (d) => d.status === "blocked" || d.status === "recall"
                 );
 
                 const statusClass =
                   statusLabel === "Gemischter Status"
                     ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
-                    : hasBlocked
+                    : hasRiskStatus
                     ? "bg-red-600/20 text-red-300 border-red-500/40"
                     : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
 
@@ -849,10 +850,12 @@ export default function MedSafePage() {
                       })
                     }
                   >
-                    <option value="released">Freigegeben</option>
-                    <option value="blocked">Gesperrt</option>
-                    <option value="in_production">In Produktion</option>
-                    <option value="scrapped">Ausgeschleust</option>
+                    <option value="released">
+                      Freigegeben (Inverkehrbringen)
+                    </option>
+                    <option value="blocked">Gesperrt / Quarantäne</option>
+                    <option value="in_production">In Herstellung</option>
+                    <option value="recall">Recall (Rückruf)</option>
                   </select>
 
                   <div className="text-slate-400 text-xs mt-3">
@@ -860,7 +863,7 @@ export default function MedSafePage() {
                   </div>
                   <textarea
                     className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500 min-h-[60px]"
-                    placeholder="z.B. Defekt, Recall, spezieller Servicefall…"
+                    placeholder="z.B. Defekt, Sicherheitsrückruf, spezieller Servicefall…"
                     value={selectedDevice.blockComment || ""}
                     onChange={(e) =>
                       handleUpdateDeviceMeta(selectedDevice.id, {
@@ -893,7 +896,8 @@ export default function MedSafePage() {
                   </div>
                   <div className="text-[11px] text-slate-400 mb-1">
                     Klick auf eine Zeile, um dieses Gerät als aktives Gerät zu
-                    bearbeiten (Status, Kommentar, Dokumente).
+                    bearbeiten (Status, Recall-Markierung, Kommentar,
+                    Dokumente).
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full border-collapse text-[11px]">
@@ -1081,7 +1085,7 @@ export default function MedSafePage() {
           <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
           <p className="text-xs text-slate-400">
             {selectedDeviceId
-              ? "Es werden nur Aktivitäten angezeigt, die dieses Gerät direkt betreffen (inkl. Status-/Kommentar-Änderungen)."
+              ? "Es werden nur Aktivitäten angezeigt, die dieses Gerät direkt betreffen (inkl. Status-/Recall-/Kommentar-Änderungen)."
               : "Es werden Aktivitäten für alle Geräte / Bulk-Aktionen angezeigt."}
           </p>
 
