@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import AuthBar from "../components/AuthBar"; // ⬅️ NEU: Auth-Bar importieren
 
 export const metadata: Metadata = {
   title: "MedSafe-UDI",
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <div className="pointer-events-none absolute -right-10 bottom-10 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
 
           <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
+            {/* HEADER */}
             <header className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl">
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-base font-semibold text-slate-950 shadow-lg shadow-sky-900/50">
@@ -34,18 +36,21 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              {/* RECHTE SEITE: Online-Status + AuthBar */}
+              <div className="flex flex-col items-end gap-2">
                 <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80 sm:flex">
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80" />
                   <span>Online · Supabase verbunden</span>
                 </div>
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-slate-200 to-slate-50 text-xs font-semibold text-slate-900">
-                  AR
-                </div>
+
+                {/* Login / Logout / Magic-Link */}
+                <AuthBar />
               </div>
             </header>
 
+            {/* HAUPT-BEREICH */}
             <div className="flex flex-1 flex-col gap-4 md:flex-row">
+              {/* SIDEBAR */}
               <aside className="md:w-64">
                 <div className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
                   <div className="text-[11px] font-medium uppercase tracking-[0.25em] text-slate-300/80">
@@ -101,6 +106,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 </div>
               </aside>
 
+              {/* CONTENT / CARDS + PAGE-INHALT */}
               <section className="flex-1">
                 <div className="flex h-full flex-col gap-4">
                   <div className="grid gap-4 md:grid-cols-3">
