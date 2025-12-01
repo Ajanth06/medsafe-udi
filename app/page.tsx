@@ -1075,26 +1075,27 @@ export default function MedSafePage() {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={loadAllFromSupabase}
-                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-              >
-                Cloud aktualisieren
-              </button>
-              <button
-                onClick={handleExportJSON}
-                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-              >
-                Export JSON
-              </button>
-              <button
-                onClick={handleExportCSV}
-                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-              >
-                Export CSV
-              </button>
-            </div>
+<div className="flex gap-2">
+  <button
+    onClick={loadAllFromSupabase}
+    className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+  >
+    Cloud aktualisieren
+  </button>
+  <button
+    onClick={handleExportJSON}
+    className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+  >
+    Export JSON
+  </button>
+  <button
+    onClick={handleExportCSV}
+    className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+  >
+    Export CSV
+  </button>
+</div>
+
           </div>
         </header>
 
