@@ -342,34 +342,39 @@ export default function MedSafePage() {
 
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Daten laden
+  // ---------- ALLES AUS SUPABASE LADEN (Cloud-Refresh) ----------
+
+  const loadAllFromSupabase = async () => {
+    setIsLoading(true);
+    try {
+      const [
+        { data: deviceRows, error: devErr },
+        { data: docRows, error: docErr },
+        { data: auditRows, error: audErr },
+      ] = await Promise.all([
+        supabase.from("devices").select("*").order("created_at", { ascending: false }),
+        supabase.from("docs").select("*").order("created_at", { ascending: false }),
+        supabase.from("audit_log").select("*").order("timestamp", { ascending: false }),
+      ]);
+
+      if (devErr) throw devErr;
+      if (docErr) throw docErr;
+      if (audErr) throw audErr;
+
+      setDevices((deviceRows || []).map(mapDeviceRowToDevice));
+      setDocs((docRows || []).map(mapDocRowToDoc));
+      setAudit((auditRows || []).map(mapAuditRowToEntry));
+    } catch (err: any) {
+      console.error("Fehler beim Laden aus Supabase:", err);
+      setMessage("Fehler beim Laden der Daten aus Supabase.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Daten initial laden
   useEffect(() => {
-    const fetchAll = async () => {
-      setIsLoading(true);
-      try {
-        const [{ data: deviceRows, error: devErr }, { data: docRows, error: docErr }, { data: auditRows, error: audErr }] =
-          await Promise.all([
-            supabase.from("devices").select("*").order("created_at", { ascending: false }),
-            supabase.from("docs").select("*").order("created_at", { ascending: false }),
-            supabase.from("audit_log").select("*").order("timestamp", { ascending: false }),
-          ]);
-
-        if (devErr) throw devErr;
-        if (docErr) throw docErr;
-        if (audErr) throw audErr;
-
-        setDevices((deviceRows || []).map(mapDeviceRowToDevice));
-        setDocs((docRows || []).map(mapDocRowToDoc));
-        setAudit((auditRows || []).map(mapAuditRowToEntry));
-      } catch (err: any) {
-        console.error("Fehler beim Laden aus Supabase:", err);
-        setMessage("Fehler beim Laden der Daten aus Supabase.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchAll();
+    loadAllFromSupabase();
   }, []);
 
   // Audit-Eintrag
@@ -1071,6 +1076,12 @@ export default function MedSafePage() {
             </div>
 
             <div className="flex gap-2">
+              <button
+                onClick={loadAllFromSupabase}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Cloud aktualisieren
+              </button>
               <button
                 onClick={handleExportJSON}
                 className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
