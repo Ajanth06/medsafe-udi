@@ -1,10 +1,8 @@
 export default function BatchesPage() {
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-slate-50">Chargen & Serien</h1>
-      <p className="text-sm text-slate-300">
-        Bereich für Seriennummern & Produktionschargen.
-      </p>
+    <div className="text-sm text-slate-100">
+      <h1 className="text-xl font-semibold mb-2">Chargen &amp; Serien</h1>
+      <p>Platzhalter-Seite für Produktions- und Chargenübersicht.</p>
     </div>
   );
 }

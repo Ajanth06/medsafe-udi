@@ -15,17 +15,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="de">
       <body className="min-h-screen bg-slate-950 text-slate-50 antialiased">
-        {/* Vollbild-Hintergrund mit weichem Gradient */}
         <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-          {/* leichte „Lichtkegel / Blobs“ im Hintergrund */}
           <div className="pointer-events-none absolute -left-24 top-10 h-72 w-72 rounded-full bg-sky-500/20 blur-3xl" />
           <div className="pointer-events-none absolute -right-10 bottom-10 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
 
-          {/* Haupt-Content zentriert */}
           <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
-            {/* --- Obere Leiste: Logo + User + Status --- */}
             <header className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl">
-              {/* Logo & Titel */}
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-base font-semibold text-slate-950 shadow-lg shadow-sky-900/50">
                   M
@@ -40,7 +35,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 </div>
               </div>
 
-              {/* Status + User rechts */}
               <div className="flex items-center gap-3">
                 <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80 sm:flex">
                   <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80" />
@@ -52,17 +46,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               </div>
             </header>
 
-            {/* --- Hauptbereich: Sidebar links + Dashboard rechts --- */}
             <div className="flex flex-1 flex-col gap-4 md:flex-row">
-              {/* Sidebar links (Navigation) */}
               <aside className="md:w-64">
                 <div className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
-                  {/* Sektionen-Titel */}
                   <div className="text-[11px] font-medium uppercase tracking-[0.25em] text-slate-300/80">
                     Navigation
                   </div>
 
-                  {/* Nav-Items */}
                   <nav className="space-y-1 text-sm">
                     <a
                       href="/"
@@ -78,47 +68,36 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
                     >
                       <span>Dokumente</span>
-                      <span className="text-[10px] text-slate-400">
-                        DMR/DHR
-                      </span>
+                      <span className="text-[10px] text-slate-400">DMR/DHR</span>
                     </a>
                     <a
                       href="/batches"
                       className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
                     >
                       <span>Chargen & Serien</span>
-                      <span className="text-[10px] text-slate-400">
-                        Produktion
-                      </span>
+                      <span className="text-[10px] text-slate-400">Produktion</span>
                     </a>
                     <a
                       href="/audit-log"
                       className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
                     >
                       <span>Audit-Log</span>
-                      <span className="text-[10px] text-amber-300/90">
-                        bald
-                      </span>
+                      <span className="text-[10px] text-amber-300/90">bald</span>
                     </a>
                   </nav>
 
-                  {/* Info-Karte unten */}
                   <div className="mt-2 rounded-2xl bg-black/40 px-3 py-3 text-[11px] text-slate-300/85">
-                    <div className="mb-1 font-medium">
-                      Pro-Funktionen vorbereitet
-                    </div>
+                    <div className="mb-1 font-medium">Pro-Funktionen vorbereitet</div>
                     <div className="text-[11px] text-slate-400">
-                      UDI-Hash, Recall-Status, DMR/DHR-Links und IPFS-Archiv
-                      kannst du später direkt hier im Layout erweitern.
+                      UDI-Hash, Recall-Status, DMR/DHR-Links und IPFS-Archiv kannst du
+                      später direkt hier im Layout erweitern.
                     </div>
                   </div>
                 </div>
               </aside>
 
-              {/* Rechts: Dashboard-Bereich mit Card-Layout */}
               <section className="flex-1">
                 <div className="flex h-full flex-col gap-4">
-                  {/* Obere Info-Zeile im Dashboard */}
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm shadow-lg shadow-slate-950/60 backdrop-blur-2xl">
                       <div className="text-[11px] uppercase tracking-[0.22em] text-slate-300/80">
@@ -128,9 +107,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         Geräte & UDI-Verwaltung
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-slate-300/85">
-                        Deine zentrale Übersicht für UDI-DI, UDI-PI,
-                        Seriennummern, Chargen und verknüpfte Dokumente. Alles
-                        in einer Oberfläche.
+                        Deine zentrale Übersicht für UDI-DI, UDI-PI, Seriennummern,
+                        Chargen und verknüpfte Dokumente. Alles in einer Oberfläche.
                       </p>
                     </div>
 
@@ -142,9 +120,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         UDI-Hash aktiv
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-emerald-100/85">
-                        Geräte werden mit kryptografischem Hash gespeichert.
-                        Ideal für MDR-/ISO-13485-Audits und
-                        Nachvollziehbarkeit.
+                        Geräte werden mit kryptografischem Hash gespeichert. Ideal
+                        für MDR-/ISO-13485-Audits und Nachvollziehbarkeit.
                       </p>
                     </div>
 
@@ -157,13 +134,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-sky-100/85">
                         Supabase als sicheres Backend. Bereit für spätere
-                        Recall-Logik, Blockierung, Archivierung und
-                        Serien-Tracking.
+                        Recall-Logik, Blockierung, Archivierung und Serien-Tracking.
                       </p>
                     </div>
                   </div>
 
-                  {/* Haupt-Card: hier kommt page.tsx rein */}
                   <main className="flex-1 overflow-hidden rounded-3xl border border-white/10 bg-black/40 p-4 shadow-inner shadow-slate-950/70 backdrop-blur-2xl sm:p-6">
                     {children}
                   </main>
