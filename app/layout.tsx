@@ -1,4 +1,3 @@
-// app/layout.tsx
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
@@ -68,29 +67,35 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
                     >
                       <span>Dokumente</span>
-                      <span className="text-[10px] text-slate-400">DMR/DHR</span>
+                      <span className="text-[10px] text-slate-400">
+                        DMR/DHR
+                      </span>
                     </a>
                     <a
                       href="/batches"
                       className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
                     >
-                      <span>Chargen & Serien</span>
-                      <span className="text-[10px] text-slate-400">Produktion</span>
+                      <span>Chargen &amp; Serien</span>
+                      <span className="text-[10px] text-slate-400">
+                        Produktion
+                      </span>
                     </a>
                     <a
                       href="/audit-log"
                       className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
                     >
                       <span>Audit-Log</span>
-                      <span className="text-[10px] text-amber-300/90">bald</span>
+                      <span className="text-[10px] text-amber-300/90">
+                        bald
+                      </span>
                     </a>
                   </nav>
 
                   <div className="mt-2 rounded-2xl bg-black/40 px-3 py-3 text-[11px] text-slate-300/85">
                     <div className="mb-1 font-medium">Pro-Funktionen vorbereitet</div>
                     <div className="text-[11px] text-slate-400">
-                      UDI-Hash, Recall-Status, DMR/DHR-Links und IPFS-Archiv kannst du
-                      später direkt hier im Layout erweitern.
+                      UDI-Hash, Recall-Status, DMR/DHR-Links und IPFS-Archiv
+                      kannst du später direkt hier im Layout erweitern.
                     </div>
                   </div>
                 </div>
@@ -104,7 +109,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         Überblick
                       </div>
                       <div className="mt-1 text-sm font-semibold text-slate-50">
-                        Geräte & UDI-Verwaltung
+                        Geräte &amp; UDI-Verwaltung
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-slate-300/85">
                         Deine zentrale Übersicht für UDI-DI, UDI-PI, Seriennummern,
