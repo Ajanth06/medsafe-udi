@@ -105,7 +105,7 @@ async function hashUdi(udiDi: string, serial: string): Promise<string> {
   const input = `${udiDi}|${serial}`;
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -289,7 +289,7 @@ export default function MedSafePage() {
   ) => {
     setAudit((prev) => {
       const entry: AuditEntry = {
-        id: crypto.randomUUID(),
+        id: globalThis.crypto.randomUUID(),
         deviceId,
         action,
         message: msg,
@@ -347,9 +347,7 @@ export default function MedSafePage() {
       const deviceIndex = startDeviceIndex + i + 1;
 
       // 🔢 automatisch generierte UDI-DI (interne Struktur)
-      const generatedUdiDi = `TH-DI-${deviceIndex
-        .toString()
-        .padStart(6, "0")}`;
+      const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
 
       // 🔢 automatisch generierte Seriennummer (Charge + laufende Nummer)
       const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
@@ -364,7 +362,7 @@ export default function MedSafePage() {
       const dhrId = `DHR-${productionDate}-${serialRunningNumber}`;
 
       const newDevice: Device = {
-        id: crypto.randomUUID(),
+        id: globalThis.crypto.randomUUID(),
         name: newProductName.trim(),
         udiDi: generatedUdiDi,
         serial: generatedSerial,
@@ -396,13 +394,35 @@ export default function MedSafePage() {
       newDevices.push(newDevice);
     }
 
-    // 🟣 Supabase: Geräte auch in die Cloud-Datenbank speichern (Minimal-Version)
+    // 🟣 Supabase: Geräte in die Cloud-Datenbank speichern (Vollversion)
     try {
       const payload = newDevices.map((d) => ({
         name: d.name,
         udi_di: d.udiDi,
         serial: d.serial,
         udi_hash: d.udiHash,
+        batch: d.batch ?? null,
+        production_date: d.productionDate ?? null,
+        udi_pi: d.udiPi ?? null,
+        status: d.status,
+        risk_class: d.riskClass ?? null,
+        block_comment: d.blockComment ?? null,
+        is_archived: d.isArchived ?? false,
+        dmr_id: d.dmrId ?? null,
+        dhr_id: d.dhrId ?? null,
+        validation_status: d.validationStatus ?? null,
+        archived_at: d.archivedAt ? new Date(d.archivedAt).toISOString() : null,
+        archive_reason: d.archiveReason ?? null,
+        nonconformity_category: d.nonconformityCategory ?? null,
+        nonconformity_severity: d.nonconformitySeverity ?? null,
+        nonconformity_action: d.nonconformityAction ?? null,
+        nonconformity_responsible: d.nonconformityResponsible ?? null,
+        nonconformity_id: d.nonconformityId ?? null,
+        last_service_date: d.lastServiceDate ?? null,
+        next_service_date: d.nextServiceDate ?? null,
+        service_notes: d.serviceNotes ?? null,
+        pms_notes: d.pmsNotes ?? null,
+        created_at: d.createdAt, // optional, falls Spalte existiert
       }));
 
       const { error } = await supabase.from("devices").insert(payload);
@@ -493,7 +513,7 @@ export default function MedSafePage() {
       }
 
       const newDoc: Doc = {
-        id: crypto.randomUUID(),
+        id: globalThis.crypto.randomUUID(),
         deviceId: selectedDeviceId,
         name: docName || file.name,
         cid: data.cid,
@@ -614,9 +634,7 @@ export default function MedSafePage() {
           archiveReason ? ` Grund: ${archiveReason}` : ""
         }`
       );
-      setMessage(
-        `Gerät "${device.name}" wurde archiviert (Stilllegung).`
-      );
+      setMessage(`Gerät "${device.name}" wurde archiviert (Stilllegung).`);
     }
   };
 
@@ -665,55 +683,43 @@ export default function MedSafePage() {
   // 🔧 Status / Meta eines EINZELNEN Geräts ändern (inkl. CAPA / Service / PMS)
   const handleUpdateDeviceMeta = (deviceId: string, updates: Partial<Device>) => {
     setDevices((prev) => {
-      const deviceBefore = prev.find((d) => d.id === deviceId);
-      if (!deviceBefore) return prev;
+      const before = prev.find((d) => d.id === deviceId);
+      if (!before) return prev;
 
-      const mergedUpdates: Partial<Device> = { ...updates };
+      const hasNewNcInfo =
+        (updates.nonconformityCategory &&
+          updates.nonconformityCategory.trim() !== "") ||
+        (updates.nonconformitySeverity &&
+          updates.nonconformitySeverity.trim() !== "") ||
+        (updates.nonconformityAction &&
+          updates.nonconformityAction.trim() !== "") ||
+        (updates.nonconformityResponsible &&
+          updates.nonconformityResponsible.trim() !== "");
 
-      // NC-ID automatisch vergeben, sobald eine Abweichung erfasst wird
-      if (
-        !deviceBefore.nonconformityId &&
-        (
-          (mergedUpdates.nonconformityCategory &&
-            mergedUpdates.nonconformityCategory.trim() !== "") ||
-          (mergedUpdates.nonconformitySeverity &&
-            mergedUpdates.nonconformitySeverity.trim() !== "") ||
-          (mergedUpdates.nonconformityAction &&
-            mergedUpdates.nonconformityAction.trim() !== "")
-        )
-      ) {
-        mergedUpdates.nonconformityId = generateNonconformityId();
+      const next: Device = {
+        ...before,
+        ...updates,
+      };
+
+      // NC-ID automatisch vergeben
+      if (!before.nonconformityId && hasNewNcInfo) {
+        next.nonconformityId = generateNonconformityId();
       }
-
-      const updated = prev.map((d) =>
-        d.id === deviceId ? { ...d, ...mergedUpdates } : d
-      );
-
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
-      }
-
-      const deviceAfter = updated.find((d) => d.id === deviceId);
-      if (!deviceAfter) return updated;
 
       // Pflichtlogik: wenn Status blocked/recall -> Risikoklasse nötig
-      if (
-        mergedUpdates.status &&
-        (mergedUpdates.status === "blocked" ||
-          mergedUpdates.status === "recall")
-      ) {
-        if (!deviceAfter.riskClass || !deviceAfter.riskClass.trim()) {
-          // einfache Default-Risikoklasse setzen + Hinweis
-          deviceAfter.riskClass = "IIa";
+      if (next.status === "blocked" || next.status === "recall") {
+        if (!next.riskClass || !next.riskClass.trim()) {
+          next.riskClass = "IIa";
           if (typeof window !== "undefined") {
             window.alert(
               "Risikoklasse war leer. Es wurde automatisch 'IIa' gesetzt. Bitte ggf. anpassen."
             );
           }
         }
+
         if (
-          mergedUpdates.status === "recall" &&
-          (!deviceAfter.blockComment || !deviceAfter.blockComment.trim())
+          next.status === "recall" &&
+          (!next.blockComment || !next.blockComment.trim())
         ) {
           if (typeof window !== "undefined") {
             window.alert(
@@ -723,117 +729,86 @@ export default function MedSafePage() {
         }
       }
 
-      // Audit-Text generieren
+      const updated = prev.map((d) => (d.id === deviceId ? next : d));
+
+      // Audit-Text generieren (Vergleich alt vs. neu)
       const changes: string[] = [];
 
-      if (mergedUpdates.status && mergedUpdates.status !== deviceBefore.status) {
+      if (next.status !== before.status) {
         changes.push(
           `Status geändert von "${
-            DEVICE_STATUS_LABELS[deviceBefore.status]
-          }" auf "${DEVICE_STATUS_LABELS[mergedUpdates.status]}".`
+            DEVICE_STATUS_LABELS[before.status]
+          }" auf "${DEVICE_STATUS_LABELS[next.status]}".`
         );
       }
-      if (
-        mergedUpdates.riskClass !== undefined &&
-        mergedUpdates.riskClass !== deviceBefore.riskClass
-      ) {
+
+      if (next.riskClass !== before.riskClass) {
         changes.push(
           `Risikoklasse geändert von "${
-            deviceBefore.riskClass || "–"
-          }" auf "${mergedUpdates.riskClass || "–"}".`
+            before.riskClass || "–"
+          }" auf "${next.riskClass || "–"}".`
         );
       }
-      if (
-        mergedUpdates.blockComment !== undefined &&
-        mergedUpdates.blockComment !== deviceBefore.blockComment
-      ) {
+
+      if (next.blockComment !== before.blockComment) {
         changes.push(
-          `Kommentar / Sperrgrund aktualisiert: "${
-            mergedUpdates.blockComment || "–"
-          }".`
+          `Kommentar / Sperrgrund aktualisiert: "${next.blockComment || "–"}".`
         );
       }
-      if (
-        mergedUpdates.nonconformityCategory !== undefined &&
-        mergedUpdates.nonconformityCategory !== deviceBefore.nonconformityCategory
-      ) {
+
+      if (next.nonconformityCategory !== before.nonconformityCategory) {
         changes.push(
-          `Abweichungskategorie gesetzt auf "${
-            mergedUpdates.nonconformityCategory || "–"
-          }".`
+          `Abweichungskategorie gesetzt auf "${next.nonconformityCategory || "–"}".`
         );
       }
-      if (
-        mergedUpdates.nonconformitySeverity !== undefined &&
-        mergedUpdates.nonconformitySeverity !== deviceBefore.nonconformitySeverity
-      ) {
+
+      if (next.nonconformitySeverity !== before.nonconformitySeverity) {
         changes.push(
-          `Abweichungsschwere geändert auf "${
-            mergedUpdates.nonconformitySeverity || "–"
-          }".`
+          `Abweichungsschwere geändert auf "${next.nonconformitySeverity || "–"}".`
         );
       }
-      if (
-        mergedUpdates.nonconformityAction !== undefined &&
-        mergedUpdates.nonconformityAction !== deviceBefore.nonconformityAction
-      ) {
+
+      if (next.nonconformityAction !== before.nonconformityAction) {
         changes.push(`Abweichungs-/Sofortmaßnahmen aktualisiert.`);
       }
-      if (
-        mergedUpdates.nonconformityResponsible !== undefined &&
-        mergedUpdates.nonconformityResponsible !==
-          deviceBefore.nonconformityResponsible
-      ) {
+
+      if (next.nonconformityResponsible !== before.nonconformityResponsible) {
         changes.push(
-          `Verantwortliche Person für Abweichung gesetzt auf "${
-            mergedUpdates.nonconformityResponsible || "–"
-          }".`
+          `Verantwortliche Person für Abweichung gesetzt auf "${next.nonconformityResponsible || "–"}".`
         );
       }
-      if (
-        mergedUpdates.lastServiceDate !== undefined &&
-        mergedUpdates.lastServiceDate !== deviceBefore.lastServiceDate
-      ) {
+
+      if (next.lastServiceDate !== before.lastServiceDate) {
         changes.push(
-          `Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.`
+          `Letzte Wartung auf "${next.lastServiceDate || "–"}" gesetzt.`
         );
       }
-      if (
-        mergedUpdates.nextServiceDate !== undefined &&
-        mergedUpdates.nextServiceDate !== deviceBefore.nextServiceDate
-      ) {
+
+      if (next.nextServiceDate !== before.nextServiceDate) {
         changes.push(
-          `Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.`
+          `Nächste Wartung auf "${next.nextServiceDate || "–"}" gesetzt.`
         );
       }
-      if (
-        mergedUpdates.serviceNotes !== undefined &&
-        mergedUpdates.serviceNotes !== deviceBefore.serviceNotes
-      ) {
+
+      if (next.serviceNotes !== before.serviceNotes) {
         changes.push(`Service-/Wartungs-Notizen aktualisiert.`);
       }
-      if (
-        mergedUpdates.pmsNotes !== undefined &&
-        mergedUpdates.pmsNotes !== deviceBefore.pmsNotes
-      ) {
+
+      if (next.pmsNotes !== before.pmsNotes) {
         changes.push(`PMS-/Feedback-Notizen aktualisiert.`);
       }
-      if (
-        mergedUpdates.validationStatus !== undefined &&
-        mergedUpdates.validationStatus !== deviceBefore.validationStatus
-      ) {
+
+      if (next.validationStatus !== before.validationStatus) {
         changes.push(
           `Validierungsstatus (IQ/OQ/PQ) geändert auf "${
-            mergedUpdates.validationStatus || "–"
+            next.validationStatus || "–"
           }".`
         );
       }
-      if (
-        mergedUpdates.nonconformityId &&
-        mergedUpdates.nonconformityId !== deviceBefore.nonconformityId
-      ) {
+
+      if (next.nonconformityId !== before.nonconformityId) {
         changes.push(
-          `Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".`
+          `Nonconformity-ID vergeben: "${next.nonconformityId}".`
         );
       }
 
@@ -841,10 +816,14 @@ export default function MedSafePage() {
         addAuditEntry(
           deviceId,
           "device_meta_changed",
-          `Änderungen für "${deviceAfter.name}" (SN: ${
-            deviceAfter.serial
-          }): ${changes.join(" | ")}`
+          `Änderungen für "${next.name}" (SN: ${next.serial}): ${changes.join(
+            " | "
+          )}`
         );
+      }
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DEVICES_KEY, JSON.stringify(updated));
       }
 
       return updated;
@@ -1568,9 +1547,7 @@ export default function MedSafePage() {
                                   : "–"}
                               </td>
                               <td className="py-1 pr-2">
-                                {new Date(
-                                  d.createdAt
-                                ).toLocaleString()}
+                                {new Date(d.createdAt).toLocaleString()}
                               </td>
                             </tr>
                           );
@@ -1609,7 +1586,7 @@ export default function MedSafePage() {
                       </div>
                       <input
                         type="date"
-                        className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full text-[11px]"
+                        className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
                         value={selectedDevice.nextServiceDate || ""}
                         onChange={(e) =>
                           handleUpdateDeviceMeta(selectedDevice.id, {
