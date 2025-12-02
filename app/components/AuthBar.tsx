@@ -30,9 +30,24 @@ export default function AuthBar() {
     alert("Login-Link wurde geschickt!");
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+    const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error(error);
+      alert("Fehler beim Logout");
+      return;
+    }
+
+    // Frontend-Status zurücksetzen
+    setUser(null);
+    setEmail("");
+
+    // Seite neu laden, damit alles sauber ist
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
   };
+
 
   if (!user) {
     return (
