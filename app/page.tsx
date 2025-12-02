@@ -322,6 +322,7 @@ function mapAuditToDb(entry: AuditEntry | Partial<AuditEntry>): any {
 
 // ---------- KOMPONENTE ----------
 
+
 export default function MedSafePage() {
   // Auth-Zustand
   const [user, setUser] = useState<User | null>(null);
@@ -356,30 +357,38 @@ export default function MedSafePage() {
   // ---------- AUTH ----------
 
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) {
+  const initAuth = async () => {
+    try {
+      const { data, error } = await supabase.auth.getUser();
+
+      if (error) {
+        // "Auth session missing!" = niemand eingeloggt → ist OK, kein echter Fehler
+        if (error.message !== "Auth session missing!") {
           console.error("Supabase getUser error:", error);
         }
-        setUser(data.user ?? null);
-      } finally {
-        setAuthLoading(false);
+        setUser(null);
+        return;
       }
-    };
 
-    initAuth();
+      setUser(data.user ?? null);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setUser(session?.user ?? null);
-      }
-    );
+  initAuth();
 
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
+  const { data: authListener } = supabase.auth.onAuthStateChange(
+    (_event, session) => {
+      setUser(session?.user ?? null);
+    }
+  );
+
+  return () => {
+    authListener.subscription.unsubscribe();
+  };
+}, []);
+
 
   const handleSendLoginLink = async (e: React.FormEvent) => {
     e.preventDefault();
