@@ -25,10 +25,29 @@ export default function AuthBar() {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  const handleLogin = async () => {
-    await supabase.auth.signInWithOtp({ email });
-    alert("Login-Link wurde geschickt!");
-  };
+ const handleLogin = async () => {
+  if (!email) {
+    alert("Bitte E-Mail eingeben.");
+    return;
+  }
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      // wichtig: immer auf die aktuelle Origin zurück
+      emailRedirectTo: window.location.origin,
+    },
+  });
+
+  if (error) {
+    console.error(error);
+    alert("Fehler beim Senden des Login-Links");
+    return;
+  }
+
+  alert("Login-Link wurde an deine E-Mail geschickt.");
+};
+
 
     const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
