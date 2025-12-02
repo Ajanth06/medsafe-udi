@@ -2,14 +2,13 @@
 
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabaseClient"; // <-- Pfad korrekt für: app/components/AuthBar.tsx
+import { supabase } from "../../lib/supabaseClient"; // <- wie in deinem alten Code
 
 export default function AuthBar() {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // --- User laden & Listener aktivieren ---
   useEffect(() => {
     const loadUser = async () => {
       const { data, error } = await supabase.auth.getUser();
@@ -22,19 +21,18 @@ export default function AuthBar() {
 
     loadUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        console.log("onAuthStateChange:", event, session);
-        setUser(session?.user ?? null);
-      }
-    );
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("onAuthStateChange:", event, session);
+      setUser(session?.user ?? null);
+    });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
-  // --- Login ---
   const handleLogin = async () => {
     if (!email) {
       alert("Bitte E-Mail eingeben.");
@@ -46,7 +44,7 @@ export default function AuthBar() {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: window.location.origin, // wichtig!
+        emailRedirectTo: window.location.origin,
       },
     });
 
@@ -54,29 +52,30 @@ export default function AuthBar() {
 
     if (error) {
       console.error("signInWithOtp error:", error);
-      alert("Login fehlgeschlagen");
+      alert("Fehler beim Senden des Login-Links.");
       return;
     }
 
     alert("Login-Link wurde an deine E-Mail geschickt.");
   };
 
-  // --- Logout ---
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error("signOut error:", error);
-      alert("Fehler beim Logout");
+      alert("Fehler beim Logout.");
       return;
     }
 
     setUser(null);
     setEmail("");
 
-    window.location.reload();
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
   };
 
-  // --- Falls ausgeloggt ---
+  // nicht eingeloggt
   if (!user) {
     return (
       <div className="flex items-center gap-2 text-xs">
@@ -98,7 +97,7 @@ export default function AuthBar() {
     );
   }
 
-  // --- Eingeloggt ---
+  // eingeloggt
   return (
     <div className="flex items-center gap-3 text-xs">
       <div className="flex items-center gap-2 rounded-full bg-slate-900/70 px-3 py-1">
