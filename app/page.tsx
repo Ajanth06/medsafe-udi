@@ -92,7 +92,7 @@ const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
 // ---------- HELFER ----------
 
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
-  const input = `${udiDi}|${serial}`;
+  const input = ${udiDi}|${serial};
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -105,7 +105,7 @@ function formatDateYYMMDD(date: Date): string {
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  return `${yy}${mm}${dd}`;
+  return ${yy}${mm}${dd};
 }
 
 function slugifyName(name: string): string {
@@ -117,7 +117,7 @@ function generateNonconformityId(): string {
   const random = Math.floor(Math.random() * 1000)
     .toString()
     .padStart(3, "0");
-  return `NC-${year}-${random}`;
+  return NC-${year}-${random};
 }
 
 // leere Strings → NULL für date/timestamptz
@@ -187,7 +187,7 @@ function devicesToCSV(devices: Device[]): string {
       d.createdAt || "",
     ].map((val) => {
       const safe = String(val ?? "").replace(/"/g, '""');
-      return `"${safe}"`;
+      return "${safe}";
     });
 
     return cols.join(";");
@@ -420,18 +420,18 @@ export default function MedSafePage() {
     const existingInBatch = devicesSameBatch.length;
     const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
-    const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
+    const dmrIdForBatch = DMR-${batch}-${nameSlug};
 
     const newDevices: Device[] = [];
 
     for (let i = 0; i < qty; i++) {
       const serialRunningNumber = String(existingInBatch + i + 1).padStart(3, "0");
       const deviceIndex = startDeviceIndex + i + 1;
-      const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
-      const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
+      const generatedUdiDi = TH-DI-${deviceIndex.toString().padStart(6, "0")};
+      const generatedSerial = TH-SN-${productionDate}-${serialRunningNumber};
       const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
-      const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
-      const dhrId = `DHR-${productionDate}-${serialRunningNumber}`;
+      const udiPi = (11)${productionDate}(21)${generatedSerial}(10)${batch};
+      const dhrId = DHR-${productionDate}-${serialRunningNumber};
 
       const id = crypto.randomUUID();
 
@@ -488,11 +488,11 @@ export default function MedSafePage() {
 
       if (qty === 1) {
         setMessage(
-          `1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).`
+          1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).
         );
       } else {
         setMessage(
-          `${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).`
+          ${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).
         );
       }
 
@@ -503,8 +503,8 @@ export default function MedSafePage() {
         null,
         "devices_bulk_created",
         qty === 1
-          ? `1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForBatch}).`
-          : `${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForBatch}).`
+          ? 1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForBatch}).
+          : ${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForBatch}).
       );
     } catch (e: any) {
       console.error("Supabase Devices Insert Exception:", e);
@@ -589,11 +589,11 @@ export default function MedSafePage() {
       addAuditEntry(
         selectedDeviceId,
         "document_uploaded",
-        `Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
+        Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
           newDoc.version || "-"
         }, Revision: ${newDoc.revision || "-"}, Status: ${
           newDoc.docStatus
-        }) hochgeladen (CID: ${shortCid}…).`
+        }) hochgeladen (CID: ${shortCid}…).
       );
     } catch (err: any) {
       console.error(err);
@@ -611,9 +611,9 @@ export default function MedSafePage() {
     }
 
     const pin = window.prompt(
-      `Admin-PIN eingeben, um das Gerät "${device.name}" ${
+      Admin-PIN eingeben, um das Gerät "${device.name}" ${
         device.isArchived ? "aus dem Archiv zu holen" : "zu archivieren"
-      }:`
+      }:
     );
     if (pin === null) return;
     if (pin !== ADMIN_PIN) {
@@ -622,9 +622,9 @@ export default function MedSafePage() {
     }
 
     const ok = window.confirm(
-      `Gerät "${device.name}" wirklich ${
+      Gerät "${device.name}" wirklich ${
         device.isArchived ? "reaktivieren (aus Archiv holen)" : "archivieren (Stilllegung)?"
-      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.`
+      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.
     );
     if (!ok) return;
 
@@ -633,7 +633,7 @@ export default function MedSafePage() {
 
     if (!device.isArchived) {
       const reason = window.prompt(
-        `Archiv-/Stilllegungsgrund für "${device.name}" (optional):`,
+        Archiv-/Stilllegungsgrund für "${device.name}" (optional):,
         device.archiveReason || ""
       );
       archiveReason = reason || "";
@@ -671,18 +671,18 @@ export default function MedSafePage() {
       addAuditEntry(
         device.id,
         "device_unarchived",
-        `Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).`
+        Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).
       );
-      setMessage(`Gerät "${device.name}" wurde aus dem Archiv geholt.`);
+      setMessage(Gerät "${device.name}" wurde aus dem Archiv geholt.);
     } else {
       addAuditEntry(
         device.id,
         "device_archived",
-        `Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).${
-          archiveReason ? ` Grund: ${archiveReason}` : ""
-        }`
+        Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).${
+          archiveReason ?  Grund: ${archiveReason} : ""
+        }
       );
-      setMessage(`Gerät "${device.name}" wurde archiviert (Stilllegung).`);
+      setMessage(Gerät "${device.name}" wurde archiviert (Stilllegung).);
     }
   };
 
@@ -736,9 +736,9 @@ export default function MedSafePage() {
 
       if (mergedUpdates.status && mergedUpdates.status !== deviceBefore.status) {
         changes.push(
-          `Status geändert von "${DEVICE_STATUS_LABELS[deviceBefore.status]}" auf "${DEVICE_STATUS_LABELS[
+          Status geändert von "${DEVICE_STATUS_LABELS[deviceBefore.status]}" auf "${DEVICE_STATUS_LABELS[
             mergedUpdates.status
-          ]}".`
+          ]}".
         );
       }
       if (
@@ -746,9 +746,9 @@ export default function MedSafePage() {
         mergedUpdates.riskClass !== deviceBefore.riskClass
       ) {
         changes.push(
-          `Risikoklasse geändert von "${deviceBefore.riskClass || "–"}" auf "${
+          Risikoklasse geändert von "${deviceBefore.riskClass || "–"}" auf "${
             mergedUpdates.riskClass || "–"
-          }".`
+          }".
         );
       }
       if (
@@ -756,7 +756,7 @@ export default function MedSafePage() {
         mergedUpdates.blockComment !== deviceBefore.blockComment
       ) {
         changes.push(
-          `Kommentar / Sperrgrund aktualisiert: "${mergedUpdates.blockComment || "–"}".`
+          Kommentar / Sperrgrund aktualisiert: "${mergedUpdates.blockComment || "–"}".
         );
       }
       if (
@@ -764,7 +764,7 @@ export default function MedSafePage() {
         mergedUpdates.nonconformityCategory !== deviceBefore.nonconformityCategory
       ) {
         changes.push(
-          `Abweichungskategorie gesetzt auf "${mergedUpdates.nonconformityCategory || "–"}".`
+          Abweichungskategorie gesetzt auf "${mergedUpdates.nonconformityCategory || "–"}".
         );
       }
       if (
@@ -772,23 +772,23 @@ export default function MedSafePage() {
         mergedUpdates.nonconformitySeverity !== deviceBefore.nonconformitySeverity
       ) {
         changes.push(
-          `Abweichungsschwere geändert auf "${mergedUpdates.nonconformitySeverity || "–"}".`
+          Abweichungsschwere geändert auf "${mergedUpdates.nonconformitySeverity || "–"}".
         );
       }
       if (
         mergedUpdates.nonconformityAction !== undefined &&
         mergedUpdates.nonconformityAction !== deviceBefore.nonconformityAction
       ) {
-        changes.push(`Abweichungs-/Sofortmaßnahmen aktualisiert.`);
+        changes.push(Abweichungs-/Sofortmaßnahmen aktualisiert.);
       }
       if (
         mergedUpdates.nonconformityResponsible !== undefined &&
         mergedUpdates.nonconformityResponsible !== deviceBefore.nonconformityResponsible
       ) {
         changes.push(
-          `Verantwortliche Person für Abweichung gesetzt auf "${
+          Verantwortliche Person für Abweichung gesetzt auf "${
             mergedUpdates.nonconformityResponsible || "–"
-          }".`
+          }".
         );
       }
       if (
@@ -796,7 +796,7 @@ export default function MedSafePage() {
         mergedUpdates.lastServiceDate !== deviceBefore.lastServiceDate
       ) {
         changes.push(
-          `Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.`
+          Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.
         );
       }
       if (
@@ -804,45 +804,45 @@ export default function MedSafePage() {
         mergedUpdates.nextServiceDate !== deviceBefore.nextServiceDate
       ) {
         changes.push(
-          `Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.`
+          Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.
         );
       }
       if (
         mergedUpdates.serviceNotes !== undefined &&
         mergedUpdates.serviceNotes !== deviceBefore.serviceNotes
       ) {
-        changes.push(`Service-/Wartungs-Notizen aktualisiert.`);
+        changes.push(Service-/Wartungs-Notizen aktualisiert.);
       }
       if (
         mergedUpdates.pmsNotes !== undefined &&
         mergedUpdates.pmsNotes !== deviceBefore.pmsNotes
       ) {
-        changes.push(`PMS-/Feedback-Notizen aktualisiert.`);
+        changes.push(PMS-/Feedback-Notizen aktualisiert.);
       }
       if (
         mergedUpdates.validationStatus !== undefined &&
         mergedUpdates.validationStatus !== deviceBefore.validationStatus
       ) {
         changes.push(
-          `Validierungsstatus (IQ/OQ/PQ) geändert auf "${
+          Validierungsstatus (IQ/OQ/PQ) geändert auf "${
             mergedUpdates.validationStatus || "–"
-          }".`
+          }".
         );
       }
       if (
         mergedUpdates.nonconformityId &&
         mergedUpdates.nonconformityId !== deviceBefore.nonconformityId
       ) {
-        changes.push(`Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".`);
+        changes.push(Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".);
       }
 
       if (changes.length > 0) {
         addAuditEntry(
           deviceId,
           "device_meta_changed",
-          `Änderungen für "${deviceAfter.name}" (SN: ${
+          Änderungen für "${deviceAfter.name}" (SN: ${
             deviceAfter.serial
-          }): ${changes.join(" | ")}`
+          }): ${changes.join(" | ")}
         );
       }
 
@@ -940,7 +940,7 @@ export default function MedSafePage() {
 
   const groupsMap: Record<string, DeviceGroup> = {};
   for (const d of filteredDevices) {
-    const key = `${d.name}__${d.batch ?? ""}`;
+    const key = ${d.name}__${d.batch ?? ""};
     if (!groupsMap[key]) {
       groupsMap[key] = {
         key,
@@ -959,7 +959,7 @@ export default function MedSafePage() {
   const archivedDevices = devices.filter((d) => d.isArchived);
   const archivedGroupsMap: Record<string, DeviceGroup> = {};
   for (const d of archivedDevices) {
-    const key = `${d.name}__${d.batch ?? ""}`;
+    const key = ${d.name}__${d.batch ?? ""};
     if (!archivedGroupsMap[key]) {
       archivedGroupsMap[key] = {
         key,
@@ -1032,7 +1032,7 @@ export default function MedSafePage() {
     const a = document.createElement("a");
     const safeSerial = selectedDevice.serial || selectedDevice.id;
     a.href = url;
-    a.download = `DHR-${safeSerial}.json`;
+    a.download = DHR-${safeSerial}.json;
     a.click();
 
     URL.revokeObjectURL(url);
@@ -1882,4 +1882,3 @@ export default function MedSafePage() {
       </div>
     </main>
   );
-}
