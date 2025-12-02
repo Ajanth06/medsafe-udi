@@ -102,8 +102,9 @@ export default function AuthBar() {
     <div className="flex items-center gap-3 text-xs">
       <div className="flex items-center gap-2 rounded-full bg-slate-900/70 px-3 py-1">
         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-[11px] font-semibold text-white">
-          {(user.email ?? "?")[0]?.toUpperCase()}
-        </div>
+  M
+</div>
+
         <span className="max-w-[180px] truncate text-[11px] text-slate-100">
           {user.email}
         </span>
