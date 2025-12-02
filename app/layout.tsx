@@ -45,6 +45,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   <span>Online · Supabase verbunden</span>
                 </div>
 
+                {/* 🔐 Login / Logout */}
                 <AuthBar />
               </div>
             </header>
