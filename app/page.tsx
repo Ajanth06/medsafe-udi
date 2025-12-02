@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
+import Lottie from "lottie-react";
+import birdAnimation from "./animations/bird.json"; // Lege bird.json unter app/animations/ ab
 
 type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
 
@@ -92,7 +95,7 @@ const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
 // ---------- HELFER ----------
 
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
-  const input = ${udiDi}|${serial};
+  const input = `${udiDi}|${serial}`;
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -105,7 +108,7 @@ function formatDateYYMMDD(date: Date): string {
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  return ${yy}${mm}${dd};
+  return `${yy}${mm}${dd}`;
 }
 
 function slugifyName(name: string): string {
@@ -117,7 +120,7 @@ function generateNonconformityId(): string {
   const random = Math.floor(Math.random() * 1000)
     .toString()
     .padStart(3, "0");
-  return NC-${year}-${random};
+  return `NC-${year}-${random}`;
 }
 
 // leere Strings → NULL für date/timestamptz
@@ -187,7 +190,7 @@ function devicesToCSV(devices: Device[]): string {
       d.createdAt || "",
     ].map((val) => {
       const safe = String(val ?? "").replace(/"/g, '""');
-      return "${safe}";
+      return `"${safe}"`;
     });
 
     return cols.join(";");
@@ -320,6 +323,14 @@ function mapAuditToDb(entry: AuditEntry | Partial<AuditEntry>): any {
 // ---------- KOMPONENTE ----------
 
 export default function MedSafePage() {
+  // Auth-Zustand
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginInfo, setLoginInfo] = useState<string | null>(null);
+
+  // Daten
   const [devices, setDevices] = useState<Device[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
@@ -338,13 +349,78 @@ export default function MedSafePage() {
 
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [searchTerm, setSearchTerm] = useState("");
+
+  // ---------- AUTH ----------
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) {
+          console.error("Supabase getUser error:", error);
+        }
+        setUser(data.user ?? null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    initAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
+      }
+    );
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleSendLoginLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail.trim()) {
+      setLoginInfo("Bitte eine gültige E-Mail eingeben.");
+      return;
+    }
+    try {
+      setLoginInfo("Login-Link wird gesendet …");
+      const { error } = await supabase.auth.signInWithOtp({
+        email: loginEmail,
+        options: {
+          emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+        },
+      });
+      if (error) {
+        console.error("Magic Link Fehler:", error);
+        setLoginInfo("Fehler: " + error.message);
+        return;
+      }
+      setLoginInfo("Login-Link wurde an deine E-Mail geschickt.");
+      setLoginEmail("");
+    } catch (err: any) {
+      console.error(err);
+      setLoginInfo("Unerwarteter Fehler beim Login.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setDevices([]);
+    setDocs([]);
+    setAudit([]);
+    setSelectedDeviceId(null);
+  };
 
   // ---------- ALLES AUS SUPABASE LADEN (Cloud-Refresh) ----------
 
   const loadAllFromSupabase = async () => {
+    if (!user) return;
+
     setIsLoading(true);
     try {
       const [
@@ -372,12 +448,15 @@ export default function MedSafePage() {
     }
   };
 
-  // Daten initial laden
+  // Daten laden, sobald User eingeloggt ist
   useEffect(() => {
-    loadAllFromSupabase();
-  }, []);
+    if (user) {
+      loadAllFromSupabase();
+    }
+  }, [user]);
 
-  // Audit-Eintrag
+  // ---------- AUDIT ----------
+
   const addAuditEntry = async (deviceId: string | null, action: string, msg: string) => {
     const entry: AuditEntry = {
       id: crypto.randomUUID(),
@@ -399,7 +478,8 @@ export default function MedSafePage() {
     }
   };
 
-  // Geräte speichern
+  // ---------- GERÄTE SPEICHERN ----------
+
   const handleSaveDevice = async () => {
     if (!newProductName.trim()) {
       setMessage("Bitte einen Produktnamen eingeben.");
@@ -420,18 +500,18 @@ export default function MedSafePage() {
     const existingInBatch = devicesSameBatch.length;
     const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
-    const dmrIdForBatch = DMR-${batch}-${nameSlug};
+    const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
 
     const newDevices: Device[] = [];
 
     for (let i = 0; i < qty; i++) {
       const serialRunningNumber = String(existingInBatch + i + 1).padStart(3, "0");
       const deviceIndex = startDeviceIndex + i + 1;
-      const generatedUdiDi = TH-DI-${deviceIndex.toString().padStart(6, "0")};
-      const generatedSerial = TH-SN-${productionDate}-${serialRunningNumber};
+      const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
+      const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
       const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
-      const udiPi = (11)${productionDate}(21)${generatedSerial}(10)${batch};
-      const dhrId = DHR-${productionDate}-${serialRunningNumber};
+      const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
+      const dhrId = `DHR-${productionDate}-${serialRunningNumber}`;
 
       const id = crypto.randomUUID();
 
@@ -488,11 +568,11 @@ export default function MedSafePage() {
 
       if (qty === 1) {
         setMessage(
-          1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).
+          `1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).`
         );
       } else {
         setMessage(
-          ${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).
+          `${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).`
         );
       }
 
@@ -503,8 +583,8 @@ export default function MedSafePage() {
         null,
         "devices_bulk_created",
         qty === 1
-          ? 1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForBatch}).
-          : ${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForBatch}).
+          ? `1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForBatch}).`
+          : `${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForBatch}).`
       );
     } catch (e: any) {
       console.error("Supabase Devices Insert Exception:", e);
@@ -589,11 +669,11 @@ export default function MedSafePage() {
       addAuditEntry(
         selectedDeviceId,
         "document_uploaded",
-        Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
+        `Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
           newDoc.version || "-"
         }, Revision: ${newDoc.revision || "-"}, Status: ${
           newDoc.docStatus
-        }) hochgeladen (CID: ${shortCid}…).
+        }) hochgeladen (CID: ${shortCid}…).`
       );
     } catch (err: any) {
       console.error(err);
@@ -611,9 +691,9 @@ export default function MedSafePage() {
     }
 
     const pin = window.prompt(
-      Admin-PIN eingeben, um das Gerät "${device.name}" ${
+      `Admin-PIN eingeben, um das Gerät "${device.name}" ${
         device.isArchived ? "aus dem Archiv zu holen" : "zu archivieren"
-      }:
+      }:`
     );
     if (pin === null) return;
     if (pin !== ADMIN_PIN) {
@@ -622,9 +702,9 @@ export default function MedSafePage() {
     }
 
     const ok = window.confirm(
-      Gerät "${device.name}" wirklich ${
+      `Gerät "${device.name}" wirklich ${
         device.isArchived ? "reaktivieren (aus Archiv holen)" : "archivieren (Stilllegung)?"
-      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.
+      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.`
     );
     if (!ok) return;
 
@@ -633,7 +713,7 @@ export default function MedSafePage() {
 
     if (!device.isArchived) {
       const reason = window.prompt(
-        Archiv-/Stilllegungsgrund für "${device.name}" (optional):,
+        `Archiv-/Stilllegungsgrund für "${device.name}" (optional):`,
         device.archiveReason || ""
       );
       archiveReason = reason || "";
@@ -671,18 +751,18 @@ export default function MedSafePage() {
       addAuditEntry(
         device.id,
         "device_unarchived",
-        Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).
+        `Gerät reaktiviert (Archiv aufgehoben): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).`
       );
-      setMessage(Gerät "${device.name}" wurde aus dem Archiv geholt.);
+      setMessage(`Gerät "${device.name}" wurde aus dem Archiv geholt.`);
     } else {
       addAuditEntry(
         device.id,
         "device_archived",
-        Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).${
-          archiveReason ?  Grund: ${archiveReason} : ""
-        }
+        `Gerät archiviert (Stilllegung): ${device.name} (UDI-DI: ${device.udiDi}, SN: ${device.serial}).${
+          archiveReason ? ` Grund: ${archiveReason}` : ""
+        }`
       );
-      setMessage(Gerät "${device.name}" wurde archiviert (Stilllegung).);
+      setMessage(`Gerät "${device.name}" wurde archiviert (Stilllegung).`);
     }
   };
 
@@ -736,9 +816,9 @@ export default function MedSafePage() {
 
       if (mergedUpdates.status && mergedUpdates.status !== deviceBefore.status) {
         changes.push(
-          Status geändert von "${DEVICE_STATUS_LABELS[deviceBefore.status]}" auf "${DEVICE_STATUS_LABELS[
+          `Status geändert von "${DEVICE_STATUS_LABELS[deviceBefore.status]}" auf "${DEVICE_STATUS_LABELS[
             mergedUpdates.status
-          ]}".
+          ]}".`
         );
       }
       if (
@@ -746,9 +826,9 @@ export default function MedSafePage() {
         mergedUpdates.riskClass !== deviceBefore.riskClass
       ) {
         changes.push(
-          Risikoklasse geändert von "${deviceBefore.riskClass || "–"}" auf "${
+          `Risikoklasse geändert von "${deviceBefore.riskClass || "–"}" auf "${
             mergedUpdates.riskClass || "–"
-          }".
+          }".`
         );
       }
       if (
@@ -756,7 +836,7 @@ export default function MedSafePage() {
         mergedUpdates.blockComment !== deviceBefore.blockComment
       ) {
         changes.push(
-          Kommentar / Sperrgrund aktualisiert: "${mergedUpdates.blockComment || "–"}".
+          `Kommentar / Sperrgrund aktualisiert: "${mergedUpdates.blockComment || "–"}".`
         );
       }
       if (
@@ -764,7 +844,7 @@ export default function MedSafePage() {
         mergedUpdates.nonconformityCategory !== deviceBefore.nonconformityCategory
       ) {
         changes.push(
-          Abweichungskategorie gesetzt auf "${mergedUpdates.nonconformityCategory || "–"}".
+          `Abweichungskategorie gesetzt auf "${mergedUpdates.nonconformityCategory || "–"}".`
         );
       }
       if (
@@ -772,23 +852,23 @@ export default function MedSafePage() {
         mergedUpdates.nonconformitySeverity !== deviceBefore.nonconformitySeverity
       ) {
         changes.push(
-          Abweichungsschwere geändert auf "${mergedUpdates.nonconformitySeverity || "–"}".
+          `Abweichungsschwere geändert auf "${mergedUpdates.nonconformitySeverity || "–"}".`
         );
       }
       if (
         mergedUpdates.nonconformityAction !== undefined &&
         mergedUpdates.nonconformityAction !== deviceBefore.nonconformityAction
       ) {
-        changes.push(Abweichungs-/Sofortmaßnahmen aktualisiert.);
+        changes.push(`Abweichungs-/Sofortmaßnahmen aktualisiert.`);
       }
       if (
         mergedUpdates.nonconformityResponsible !== undefined &&
         mergedUpdates.nonconformityResponsible !== deviceBefore.nonconformityResponsible
       ) {
         changes.push(
-          Verantwortliche Person für Abweichung gesetzt auf "${
+          `Verantwortliche Person für Abweichung gesetzt auf "${
             mergedUpdates.nonconformityResponsible || "–"
-          }".
+          }".`
         );
       }
       if (
@@ -796,7 +876,7 @@ export default function MedSafePage() {
         mergedUpdates.lastServiceDate !== deviceBefore.lastServiceDate
       ) {
         changes.push(
-          Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.
+          `Letzte Wartung auf "${mergedUpdates.lastServiceDate || "–"}" gesetzt.`
         );
       }
       if (
@@ -804,45 +884,45 @@ export default function MedSafePage() {
         mergedUpdates.nextServiceDate !== deviceBefore.nextServiceDate
       ) {
         changes.push(
-          Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.
+          `Nächste Wartung auf "${mergedUpdates.nextServiceDate || "–"}" gesetzt.`
         );
       }
       if (
         mergedUpdates.serviceNotes !== undefined &&
         mergedUpdates.serviceNotes !== deviceBefore.serviceNotes
       ) {
-        changes.push(Service-/Wartungs-Notizen aktualisiert.);
+        changes.push(`Service-/Wartungs-Notizen aktualisiert.`);
       }
       if (
         mergedUpdates.pmsNotes !== undefined &&
         mergedUpdates.pmsNotes !== deviceBefore.pmsNotes
       ) {
-        changes.push(PMS-/Feedback-Notizen aktualisiert.);
+        changes.push(`PMS-/Feedback-Notizen aktualisiert.`);
       }
       if (
         mergedUpdates.validationStatus !== undefined &&
         mergedUpdates.validationStatus !== deviceBefore.validationStatus
       ) {
         changes.push(
-          Validierungsstatus (IQ/OQ/PQ) geändert auf "${
+          `Validierungsstatus (IQ/OQ/PQ) geändert auf "${
             mergedUpdates.validationStatus || "–"
-          }".
+          }".`
         );
       }
       if (
         mergedUpdates.nonconformityId &&
         mergedUpdates.nonconformityId !== deviceBefore.nonconformityId
       ) {
-        changes.push(Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".);
+        changes.push(`Nonconformity-ID vergeben: "${mergedUpdates.nonconformityId}".`);
       }
 
       if (changes.length > 0) {
         addAuditEntry(
           deviceId,
           "device_meta_changed",
-          Änderungen für "${deviceAfter.name}" (SN: ${
+          `Änderungen für "${deviceAfter.name}" (SN: ${
             deviceAfter.serial
-          }): ${changes.join(" | ")}
+          }): ${changes.join(" | ")}`
         );
       }
 
@@ -940,7 +1020,7 @@ export default function MedSafePage() {
 
   const groupsMap: Record<string, DeviceGroup> = {};
   for (const d of filteredDevices) {
-    const key = ${d.name}__${d.batch ?? ""};
+    const key = `${d.name}__${d.batch ?? ""}`;
     if (!groupsMap[key]) {
       groupsMap[key] = {
         key,
@@ -959,7 +1039,7 @@ export default function MedSafePage() {
   const archivedDevices = devices.filter((d) => d.isArchived);
   const archivedGroupsMap: Record<string, DeviceGroup> = {};
   for (const d of archivedDevices) {
-    const key = ${d.name}__${d.batch ?? ""};
+    const key = `${d.name}__${d.batch ?? ""}`;
     if (!archivedGroupsMap[key]) {
       archivedGroupsMap[key] = {
         key,
@@ -1032,14 +1112,112 @@ export default function MedSafePage() {
     const a = document.createElement("a");
     const safeSerial = selectedDevice.serial || selectedDevice.id;
     a.href = url;
-    a.download = DHR-${safeSerial}.json;
+    a.download = `DHR-${safeSerial}.json`;
     a.click();
 
     URL.revokeObjectURL(url);
     setMessage("DHR für dieses Gerät als JSON exportiert.");
   };
 
-  // ---------- UI ----------
+  // ---------- CONDITIONAL UI (LOGIN / DASHBOARD) ----------
+
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
+        <div className="text-sm text-slate-400">MedSafe-UDI wird geladen …</div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    // Vor-Login Landing + Vogel
+    return (
+      <main className="relative min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-50 overflow-hidden">
+        {/* Lottie-Vogel im Hintergrund */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-32 top-24 w-64 opacity-60">
+            <Lottie animationData={birdAnimation} loop autoplay />
+          </div>
+        </div>
+
+        <div className="relative mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-4 py-10 text-center space-y-6">
+          <div className="text-xs uppercase tracking-[0.3em] text-sky-400">
+            MedSafe-UDI · UDI · DMR · Cloud
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-semibold">
+            Sichere UDI- &amp; Dokumenten-Cloud
+            <span className="block text-sky-400 mt-1">
+              für Medizinprodukte-Hersteller
+            </span>
+          </h1>
+          <p className="max-w-xl text-sm text-slate-300">
+            Verwalte UDI-DI, UDI-PI, Seriennummern, Chargen, DMR/DHR-Dokumente und
+            Audit-Events in einer Supabase-Cloud. Der Zugriff ist nur per Magic-Link
+            möglich.
+          </p>
+
+          <button
+            onClick={() => setShowLoginModal(true)}
+            className="mt-4 inline-flex items-center justify-center rounded-full bg-sky-500 px-8 py-3 text-sm font-medium text-slate-950 shadow-lg shadow-sky-500/40 hover:bg-sky-400"
+          >
+            Login starten
+          </button>
+
+          <p className="text-[11px] text-slate-500 max-w-xs">
+            Du erhältst einen einmaligen Login-Link an deine E-Mail-Adresse. Kein
+            Passwort, kein Benutzername – geeignet für interne QMS-/MDR-Nutzung.
+          </p>
+        </div>
+
+        {showLoginModal && (
+          <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60">
+            <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 px-6 py-5 text-left">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold">Cloud-Login</h2>
+                <button
+                  onClick={() => {
+                    setShowLoginModal(false);
+                    setLoginInfo(null);
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-200"
+                >
+                  Schließen
+                </button>
+              </div>
+              <form onSubmit={handleSendLoginLink} className="space-y-3 text-sm">
+                <div>
+                  <label className="text-xs text-slate-300 mb-1 block">
+                    E-Mail für Magic-Link
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="name@firma.de"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm outline-none placeholder:text-slate-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-400"
+                >
+                  Login-Link senden
+                </button>
+                {loginInfo && (
+                  <p className="text-[11px] text-slate-400 whitespace-pre-line">
+                    {loginInfo}
+                  </p>
+                )}
+              </form>
+            </div>
+          </div>
+        )}
+      </main>
+    );
+  }
+
+  // ---------- EINGELOGGT: DASHBOARD ----------
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
@@ -1056,6 +1234,17 @@ export default function MedSafePage() {
                 in Quarantäne oder Recall gesetzt, kommentiert, archiviert und mit
                 Service-/PMS-/Dokumenten-Historie verwaltet werden.
               </p>
+            </div>
+            <div className="flex flex-col items-end gap-2 text-xs">
+              <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-200 max-w-[200px] truncate">
+                {user.email}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="rounded-full bg-slate-800 px-3 py-1 text-slate-300 hover:bg-slate-700"
+              >
+                Logout
+              </button>
             </div>
           </div>
 
@@ -1075,27 +1264,26 @@ export default function MedSafePage() {
               </div>
             </div>
 
-<div className="flex gap-2">
-  <button
-    onClick={loadAllFromSupabase}
-    className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-  >
-    Cloud aktualisieren
-  </button>
-  <button
-    onClick={handleExportJSON}
-    className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-  >
-    Export JSON
-  </button>
-  <button
-    onClick={handleExportCSV}
-    className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-  >
-    Export CSV
-  </button>
-</div>
-
+            <div className="flex gap-2">
+              <button
+                onClick={loadAllFromSupabase}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Cloud aktualisieren
+              </button>
+              <button
+                onClick={handleExportJSON}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Export JSON
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
+              >
+                Export CSV
+              </button>
+            </div>
           </div>
         </header>
 
@@ -1882,3 +2070,4 @@ export default function MedSafePage() {
       </div>
     </main>
   );
+}
