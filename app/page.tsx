@@ -1138,93 +1138,95 @@ export default function MedSafePage() {
     );
   }
 
-  if (!user) {
-    // Vor-Login Landing + Vogel
-    return (
-      <main className="relative min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-50 overflow-hidden">
-        {/* Lottie-Vogel im Hintergrund */}
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute -left-32 top-24 w-64 opacity-60">
-            <Lottie animationData={birdAnimation} loop autoplay />
-          </div>
+if (!user) {
+  // Vor-Login Landing + gut sichtbarer Vogel
+  return (
+    <main className="relative min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-50 overflow-hidden">
+      
+      {/* Vogel klar sichtbar rechts oben */}
+      <div className="absolute right-6 top-6 w-40">
+        <Lottie
+          animationData={birdAnimation}
+          loop={true}
+          autoplay={true}
+        />
+      </div>
+
+      <div className="relative mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-4 py-10 text-center space-y-6">
+        <div className="text-xs uppercase tracking-[0.3em] text-sky-400">
+          MedSafe-UDI · UDI · DMR · Cloud
         </div>
+        <h1 className="text-3xl sm:text-4xl font-semibold">
+          Sichere UDI- &amp; Dokumenten-Cloud
+          <span className="block text-sky-400 mt-1">
+            für Medizinprodukte-Hersteller
+          </span>
+        </h1>
+        <p className="max-w-xl text-sm text-slate-300">
+          Verwalte UDI-DI, UDI-PI, Seriennummern, Chargen, DMR/DHR-Dokumente und
+          Audit-Events in einer Supabase-Cloud. Der Zugriff ist nur per Magic-Link möglich.
+        </p>
 
-        <div className="relative mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-4 py-10 text-center space-y-6">
-          <div className="text-xs uppercase tracking-[0.3em] text-sky-400">
-            MedSafe-UDI · UDI · DMR · Cloud
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-semibold">
-            Sichere UDI- &amp; Dokumenten-Cloud
-            <span className="block text-sky-400 mt-1">
-              für Medizinprodukte-Hersteller
-            </span>
-          </h1>
-          <p className="max-w-xl text-sm text-slate-300">
-            Verwalte UDI-DI, UDI-PI, Seriennummern, Chargen, DMR/DHR-Dokumente und
-            Audit-Events in einer Supabase-Cloud. Der Zugriff ist nur per Magic-Link
-            möglich.
-          </p>
+        <button
+          onClick={() => setShowLoginModal(true)}
+          className="mt-4 inline-flex items-center justify-center rounded-full bg-sky-500 px-8 py-3 text-sm font-medium text-slate-950 shadow-lg shadow-sky-500/40 hover:bg-sky-400"
+        >
+          Login starten
+        </button>
 
-          <button
-            onClick={() => setShowLoginModal(true)}
-            className="mt-4 inline-flex items-center justify-center rounded-full bg-sky-500 px-8 py-3 text-sm font-medium text-slate-950 shadow-lg shadow-sky-500/40 hover:bg-sky-400"
-          >
-            Login starten
-          </button>
+        <p className="text-[11px] text-slate-500 max-w-xs">
+          Du erhältst einen einmaligen Login-Link an deine E-Mail-Adresse. Kein Passwort, kein Benutzername – geeignet für interne QMS-/MDR-Nutzung.
+        </p>
+      </div>
 
-          <p className="text-[11px] text-slate-500 max-w-xs">
-            Du erhältst einen einmaligen Login-Link an deine E-Mail-Adresse. Kein
-            Passwort, kein Benutzername – geeignet für interne QMS-/MDR-Nutzung.
-          </p>
-        </div>
-
-        {showLoginModal && (
-          <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60">
-            <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 px-6 py-5 text-left">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold">Cloud-Login</h2>
-                <button
-                  onClick={() => {
-                    setShowLoginModal(false);
-                    setLoginInfo(null);
-                  }}
-                  className="text-xs text-slate-400 hover:text-slate-200"
-                >
-                  Schließen
-                </button>
-              </div>
-              <form onSubmit={handleSendLoginLink} className="space-y-3 text-sm">
-                <div>
-                  <label className="text-xs text-slate-300 mb-1 block">
-                    E-Mail für Magic-Link
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="name@firma.de"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm outline-none placeholder:text-slate-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-400"
-                >
-                  Login-Link senden
-                </button>
-                {loginInfo && (
-                  <p className="text-[11px] text-slate-400 whitespace-pre-line">
-                    {loginInfo}
-                  </p>
-                )}
-              </form>
+      {showLoginModal && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 px-6 py-5 text-left">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">Cloud-Login</h2>
+              <button
+                onClick={() => {
+                  setShowLoginModal(false);
+                  setLoginInfo(null);
+                }}
+                className="text-xs text-slate-400 hover:text-slate-200"
+              >
+                Schließen
+              </button>
             </div>
+
+            <form onSubmit={handleSendLoginLink} className="space-y-3 text-sm">
+              <div>
+                <label className="text-xs text-slate-300 mb-1 block">E-Mail für Magic-Link</label>
+                <input
+                  type="email"
+                  required
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="name@firma.de"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm outline-none placeholder:text-slate-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-400"
+              >
+                Login-Link senden
+              </button>
+
+              {loginInfo && (
+                <p className="text-[11px] text-slate-400 whitespace-pre-line">{loginInfo}</p>
+              )}
+            </form>
           </div>
-        )}
-      </main>
-    );
-  }
+        </div>
+      )}
+
+    </main>
+  );
+}
+
 
   // ---------- EINGELOGGT: DASHBOARD ----------
 
