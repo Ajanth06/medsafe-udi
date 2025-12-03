@@ -1141,81 +1141,25 @@ export default function MedSafePage() {
 if (!user) {
   return (
     <main className="relative min-h-screen bg-slate-900 text-slate-50 overflow-hidden">
-      
-      {/* Vogel rechts oben */}
-      <div className="absolute right-6 top-6 w-40 h-40">
-        <Lottie
-          animationData={birdAnimation}
-          loop
-          autoplay
-          style={{ width: "100%", height: "100%" }}
-        />
-      </div>
 
-      {/* Login Inhalt */}
-      <div className="relative mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center px-4 py-10 text-center space-y-6">
-        <h1 className="text-3xl font-semibold">MedSafe-UDI Login</h1>
-        <p className="text-sm text-slate-300">
-          Sicherer Login mit Magic-Link.
-        </p>
-
-        <button
-          onClick={() => setShowLoginModal(true)}
-          className="mt-4 inline-flex items-center justify-center rounded-full bg-sky-500 px-8 py-3 text-sm font-medium text-slate-950 shadow-lg"
-        >
-          Login starten
-        </button>
-      </div>
-
-      {/* Login Modal bleibt unverändert */}
-      {showLoginModal && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 px-6 py-5 text-left">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold">Cloud-Login</h2>
-              <button
-                onClick={() => {
-                  setShowLoginModal(false);
-                  setLoginInfo(null);
-                }}
-                className="text-xs text-slate-400 hover:text-slate-200"
-              >
-                Schließen
-              </button>
-            </div>
-
-            <form onSubmit={handleSendLoginLink} className="space-y-3 text-sm">
-              <div>
-                <label className="text-xs text-slate-300 mb-1 block">
-                  E-Mail für Magic-Link
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="name@firma.de"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-medium"
-              >
-                Login-Link senden
-              </button>
-              {loginInfo && (
-                <p className="text-[11px] text-slate-400 whitespace-pre-line">
-                  {loginInfo}
-                </p>
-              )}
-            </form>
+      {/* Vogel */}
+      <div className="absolute right-6 top-6 w-20 h-20 flex items-center justify-center">
+        <div className="relative w-16 h-16">
+          <div className="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" />
+          <div className="absolute inset-2 rounded-full bg-slate-800 border border-sky-400 flex items-center justify-center">
+            <span className="text-3xl animate-bounce">🐦</span>
           </div>
         </div>
-      )}
+      </div>
+
     </main>
   );
 }
+
+
+
+      
+
 
 
 

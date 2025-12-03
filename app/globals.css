@@ -24,3 +24,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+@keyframes bird-fly {
+  0% {
+    transform: translateX(0) translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateX(-30px) translateY(-10px) rotate(-5deg);
+  }
+  50% {
+    transform: translateX(-60px) translateY(0) rotate(0deg);
+  }
+  75% {
+    transform: translateX(-30px) translateY(10px) rotate(5deg);
+  }
+  100% {
+    transform: translateX(0) translateY(0) rotate(0deg);
+  }
+}
+
+.bird-fly {
+  animation: bird-fly 1.2s infinite ease-in-out;
+}
