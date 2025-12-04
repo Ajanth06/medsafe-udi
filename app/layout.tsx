@@ -54,49 +54,24 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <div className="flex flex-1 flex-col gap-4 md:flex-row">
               {/* Sidebar */}
               <aside className="md:w-64">
-                <div className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
-                  <div className="text-[11px] font-medium uppercase tracking-[0.25em] text-slate-300/80">
-                    Navigation
-                  </div>
+  <div className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
+    <div className="text-[11px] font-medium uppercase tracking-[0.25em] text-slate-300/80">
+      Navigation
+    </div>
 
-                  <nav className="space-y-1 text-sm">
-                    <a
-                      href="/"
-                      className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
-                    >
-                      <span>Geräteübersicht</span>
-                      <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
-                        Aktiv
-                      </span>
-                    </a>
-                    <a
-                      href="/docs"
-                      className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
-                    >
-                      <span>Dokumente</span>
-                      <span className="text-[10px] text-slate-400">
-                        DMR/DHR
-                      </span>
-                    </a>
-                    <a
-                      href="/batches"
-                      className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
-                    >
-                      <span>Chargen &amp; Serien</span>
-                      <span className="text-[10px] text-slate-400">
-                        Produktion
-                      </span>
-                    </a>
-                    <a
-                      href="/audit-log"
-                      className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white"
-                    >
-                      <span>Audit-Log</span>
-                      <span className="text-[10px] text-amber-300/90">
-                        bald
-                      </span>
-                    </a>
-                  </nav>
+<nav className="space-y-1 text-sm">
+  <a href="/" className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10">
+    <span>Geräteübersicht</span>
+    <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-medium text-white">Aktiv</span>
+  </a>
+
+  <a href="/docs" className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white">
+    <span>Dokumente</span>
+    <span className="text-[10px] text-slate-400">DMR/DHR</span>
+  </a>
+</nav>
+
+
 
                   <div className="mt-2 rounded-2xl bg-black/40 px-3 py-3 text-[11px] text-slate-300/85">
                     <div className="mb-1 font-medium">
@@ -140,6 +115,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         ideal für MDR-/ISO-13485-Audits.
                       </p>
                     </div>
+                    
 
                     <div className="rounded-3xl border border-sky-500/25 bg-sky-500/10 p-4 text-sm shadow-lg shadow-sky-900/50 backdrop-blur-2xl">
                       <div className="text-[11px] uppercase tracking-[0.22em] text-sky-100/90">

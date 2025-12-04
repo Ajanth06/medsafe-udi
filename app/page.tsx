@@ -1165,73 +1165,101 @@ if (!user) {
 
   // ---------- EINGELOGGT: DASHBOARD ----------
 
-  return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
-        {/* HEADER */}
-        <header className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">MedSafe-UDI – Geräteübersicht</h1>
-              <p className="text-slate-400 text-sm mt-1">
-                Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern, Charge &amp;
-                UDI-PI (ohne Verfallsdatum) werden automatisch generiert und in Supabase
-                gespeichert. Jedes Gerät startet als freigegeben und kann später einzeln
-                in Quarantäne oder Recall gesetzt, kommentiert, archiviert und mit
-                Service-/PMS-/Dokumenten-Historie verwaltet werden.
-              </p>
-            </div>
-            <div className="flex flex-col items-end gap-2 text-xs">
-              <span className="rounded-full bg-slate-800 px-3 py-1 text-slate-200 max-w-[200px] truncate">
-                {user.email}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="rounded-full bg-slate-800 px-3 py-1 text-slate-300 hover:bg-slate-700"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
+ return (
+  <main className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+      {/* HEADER */}
+<header
+  className="
+    relative
+    space-y-4
+    rounded-3xl
+    bg-slate-900/40
+    backdrop-blur-xl
+    border border-white/10
+    shadow-[0_0_25px_rgba(0,200,255,0.15)]
+    before:absolute before:inset-0 before:-z-10
+    before:rounded-3xl
+    before:bg-gradient-to-r before:from-cyan-500/10 before:to-blue-500/10
+    before:blur-2xl
+  "
+>
+  <div className="flex items-start justify-between gap-4 p-6">
+    <div>
+      <h1 className="text-3xl font-bold text-sky-100 drop-shadow-[0_0_4px_rgba(0,200,255,0.3)]">
+        MedSafe-UDI – Geräteübersicht
+      </h1>
 
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div className="flex gap-3 text-xs md:text-sm">
-              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
-                <div className="text-slate-400">Geräte gesamt</div>
-                <div className="text-lg font-semibold">{totalDevices}</div>
-              </div>
-              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
-                <div className="text-slate-400">Dokumente</div>
-                <div className="text-lg font-semibold">{totalDocs}</div>
-              </div>
-              <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700">
-                <div className="text-slate-400">Archiviert</div>
-                <div className="text-lg font-semibold">{totalArchived}</div>
-              </div>
-            </div>
+      <p className="text-slate-400 text-sm mt-1">
+        Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern, Charge &amp;
+        UDI-PI (ohne Verfallsdatum) werden automatisch generiert und in Supabase
+        gespeichert. Jedes Gerät startet als freigegeben und kann später einzeln
+        in Quarantäne oder Recall gesetzt, kommentiert, archiviert und mit
+        Service-/PMS-/Dokumenten-Historie verwaltet werden.
+      </p>
+    </div>
+  </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={loadAllFromSupabase}
-                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-              >
-                Cloud aktualisieren
-              </button>
-              <button
-                onClick={handleExportJSON}
-                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-              >
-                Export JSON
-              </button>
-              <button
-                onClick={handleExportCSV}
-                className="text-xs md:text-sm rounded-lg border border-slate-700 px-3 py-2 bg-slate-900 hover:border-emerald-500"
-              >
-                Export CSV
-              </button>
-            </div>
-          </div>
-        </header>
+  {/* Stats + Aktionen */}
+  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-6 pb-6">
+    <div className="flex gap-3 text-xs md:text-sm">
+      <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+        <div className="text-slate-400">Geräte gesamt</div>
+        <div className="text-lg font-semibold">{totalDevices}</div>
+      </div>
+
+      <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+        <div className="text-slate-400">Dokumente</div>
+        <div className="text-lg font-semibold">{totalDocs}</div>
+      </div>
+
+      <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+        <div className="text-slate-400">Archiviert</div>
+        <div className="text-lg font-semibold">{totalArchived}</div>
+      </div>
+    </div>
+
+    <div className="flex gap-2">
+      <button
+        onClick={loadAllFromSupabase}
+        className="
+          text-xs md:text-sm rounded-lg border border-slate-700
+          px-3 py-2 bg-slate-900
+          hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+          transition
+        "
+      >
+        Cloud aktualisieren
+      </button>
+
+      <button
+        onClick={handleExportJSON}
+        className="
+          text-xs md:text-sm rounded-lg border border-slate-700
+          px-3 py-2 bg-slate-900
+          hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+          transition
+        "
+      >
+        Export JSON
+      </button>
+
+      <button
+        onClick={handleExportCSV}
+        className="
+          text-xs md:text-sm rounded-lg border border-slate-700
+          px-3 py-2 bg-slate-900
+          hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+          transition
+        "
+      >
+        Export CSV
+      </button>
+    </div>
+  </div>
+</header>
+
+
 
         {isLoading && (
           <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
