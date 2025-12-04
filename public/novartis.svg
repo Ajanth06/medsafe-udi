@@ -1,0 +1,5 @@
+<svg width="120" height="28" viewBox="0 0 120 28" xmlns="http://www.w3.org/2000/svg">
+  <rect width="120" height="28" rx="6" fill="#ffffff10"/>
+  <path d="M10 20V8l6 12 6-12v12" stroke="#4fa3ff" stroke-width="2" fill="none" />
+  <text x="30" y="19" font-size="12" fill="#4fa3ff" font-family="Arial">NOVARTIS</text>
+</svg>

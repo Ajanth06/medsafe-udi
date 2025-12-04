@@ -65,3 +65,18 @@ body {
   will-change: transform, opacity;
 }
 
+@keyframes float-soft {
+  0% {
+    transform: translateY(0px) translateX(0px);
+  }
+  50% {
+    transform: translateY(-4px) translateX(2px);
+  }
+  100% {
+    transform: translateY(0px) translateX(0px);
+  }
+}
+
+.float-soft {
+  animation: float-soft 3s ease-in-out infinite;
+}
