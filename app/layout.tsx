@@ -36,16 +36,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </div>
 
     {/* Vogel mit Glow + Bounce */}
-   <div className="relative w-14 h-14 flex items-center justify-center">
+   <div className="relative w-20 h-20 flex items-center justify-center">
   {/* Glow-Kreis */}
   <div className="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" />
 
   {/* Innerer Kreis + Vogel */}
-  <div className="relative w-20 h-20 rounded-full bg-slate-900 border border-sky-400 flex items-center justify-center float-soft">
+  <div className="relative w-18 h-18 rounded-full bg-slate-900 border border-sky-400 flex items-center justify-center float-soft">
     <img
       src="/icons/red-bird.svg"
       alt="MedSafe Bird"
-      className="h-60 w-60"
+      className="h-70 w-70"
     />
   </div>
 </div>
@@ -54,7 +54,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   </div>
 
   {/* Rechts: Online-Status + AuthBar */}
-  <div className="flex flex-col items-end gap-2">
+    <div className="flex flex-col items-end gap-2 mr-3 sm:mr-6">
     <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80 sm:flex">
       <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80 animate-pulse" />
       <span>Online</span>

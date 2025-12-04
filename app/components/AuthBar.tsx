@@ -93,13 +93,23 @@ export default function AuthBar() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          className="h-7 rounded-full bg-sky-500 px-3 text-[11px] font-medium text-white hover:bg-sky-400 disabled:opacity-60"
-        >
-          {loading ? "Sende…" : "Login-Link"}
-        </button>
+     <button
+  onClick={handleLogin}
+  disabled={loading}
+  className="
+    h-7 rounded-full 
+    bg-sky-700 
+    px-3 text-[11px] font-medium text-white 
+    shadow-[0_0_8px_rgba(56,189,248,0.4)] 
+    hover:shadow-[0_0_12px_rgba(56,189,248,0.7)]
+    hover:bg-sky-600
+    transition-all duration-200
+    disabled:opacity-60
+  "
+>
+  {loading ? "Sende…" : "Login-Link"}
+</button>
+
       </div>
     );
   }
