@@ -1,0 +1,7 @@
+<svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg">
+  <rect width="140" height="28" rx="6" fill="#ffffff10"/>
+  <circle cx="12" cy="14" r="6" stroke="#65f4c1" stroke-width="2" fill="none"/>
+  <rect x="22" y="8" width="4" height="12" rx="2" fill="#65f4c1"/>
+  <rect x="30" y="8" width="4" height="12" rx="2" fill="#65f4c1"/>
+  <text x="40" y="19" font-size="12" fill="#65f4c1" font-family="Arial">MERKA</text>
+</svg>

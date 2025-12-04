@@ -1130,31 +1130,41 @@ export default function MedSafePage() {
 
   // ---------- CONDITIONAL UI (LOGIN / DASHBOARD) ----------
 
-  if (authLoading) {
-    return (
-      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
-        <div className="text-sm text-slate-400">MedSafe-UDI wird geladen …</div>
-      </main>
-    );
-  }
-
 if (!user) {
   return (
-    <main className="relative min-h-screen bg-slate-900 text-slate-50 overflow-hidden">
+    <main className="relative min-h-[60vh] flex items-center justify-center">
+      {/* Partner-Logos mittig, keine eigene blaue Fläche */}
+      <div className="flex flex-col items-center">
+        <span className="text-xs text-slate-400 mb-2">
+          Partner • Healthcare &amp; Pharma
+        </span>
 
-      {/* Vogel */}
-      <div className="absolute right-6 top-6 w-20 h-20 flex items-center justify-center">
-        <div className="relative w-16 h-16">
-          <div className="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" />
-          <div className="absolute inset-2 rounded-full bg-slate-800 border border-sky-400 flex items-center justify-center">
-            <span className="text-3xl animate-bounce">🐦</span>
-          </div>
+        <div className="flex items-center gap-6 opacity-80 logo-slide">
+          <img src="/partners/novartis.svg" className="h-6" alt="Novartis" />
+          <img src="/partners/roche.svg" className="h-6" alt="Roche" />
+          <img src="/partners/pfizer.svg" className="h-6" alt="Pfizer" />
+          <img src="/partners/merck.svg" className="h-6" alt="Merck" />
+          <img src="/partners/thalheimer.svg" className="h-6" alt="Thalheimer" />
         </div>
       </div>
-
     </main>
   );
 }
+
+
+
+
+if (!user) {
+  return (
+    <main className="relative min-h-screen text-slate-50 overflow-hidden">
+      {/* Hier absichtlich leer – keine Grafik, kein Vogel */}
+    </main>
+  );
+}
+
+
+
+
 
 
 

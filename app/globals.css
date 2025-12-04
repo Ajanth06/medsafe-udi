@@ -45,3 +45,23 @@ body {
 .bird-fly {
   animation: bird-fly 1.2s infinite ease-in-out;
 }
+@keyframes slideInLogos {
+  0% {
+    transform: translateX(40px);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-40px);
+    opacity: 1;
+  }
+}
+
+.logo-slide {
+  animation: slideInLogos 4s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+

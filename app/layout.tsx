@@ -24,25 +24,36 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             {/* HEADER */}
             <header className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl">
               {/* Logo links */}
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-base font-semibold text-slate-950 shadow-lg shadow-sky-900/50">
-                  M
-                </div>
-                <div>
-                  <div className="text-sm font-semibold tracking-tight">
-                    MedSafe-UDI
-                  </div>
-                  <div className="text-[11px] text-slate-300/80">
-                    UDI · DMR · Dokumenten-Cloud
-                  </div>
-                </div>
-              </div>
+           {/* Links: MEDSAFE-Card + Vogel */}
+<div className="flex items-center gap-4">
+  {/* Glow-Card MEDSAFE-UDI */}
+  <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 shadow-[0_0_20px_rgba(0,150,255,0.3)] backdrop-blur-xl">
+    <div className="text-lg font-bold tracking-wide text-sky-100">
+      MEDSAFE-UDI
+    </div>
+    <div className="text-[11px] text-slate-300/80 mt-0.5">
+      UDI · MDR · DOCUMENT CLOUD
+    </div>
+  </div>
+
+  {/* Vogel rechts neben MEDSAFE-Card */}
+  <div className="relative w-12 h-12">
+    <div className="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" />
+    <div className="absolute inset-2 rounded-full bg-slate-900 border border-sky-400 flex items-center justify-center">
+      <span className="text-2xl animate-bounce">🐦</span>
+    </div>
+  </div>
+</div>
+
+
 
               {/* Rechts: Online-Status + AuthBar */}
               <div className="flex flex-col items-end gap-2">
                 <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80 sm:flex">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80" />
-                  <span>Online · Supabase verbunden</span>
+                  <span className="relative flex h-2 w-2">
+  <span className="absolute inset-0 rounded-full bg-emerald-400 opacity-1000000000000 animate-ping"></span>
+  <span className="relative h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-900/100"></span>
+</span> <span>Online </span>
                 </div>
 
                 {/* 🔐 Login / Logout */}

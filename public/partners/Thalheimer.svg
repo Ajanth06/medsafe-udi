@@ -1,0 +1,5 @@
+<svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg">
+  <rect width="160" height="28" rx="6" fill="#ffffff10"/>
+  <path d="M10 8h20v2H20v10h-2V10h-8V8Z" fill="#4fa3ff" />
+  <text x="40" y="19" font-size="12" fill="#4fa3ff" font-family="Arial">THALHEIMER</text>
+</svg>
