@@ -1971,7 +1971,7 @@ if (!user) {
             disabled={isUploading}
             className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
           >
-            {isUploading ? "Upload läuft …" : "Dokument speichern (Pinata + Supabase)"}
+            {isUploading ? "Upload läuft …" : "Dokument speichern"}
           </button>
 
           {selectedDeviceId && (
