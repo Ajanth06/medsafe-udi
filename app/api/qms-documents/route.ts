@@ -13,7 +13,7 @@ export async function POST(req: Request) {
     const file = formData.get("file");
     const documentKey = formData.get("documentKey") as string | null;
     const revision = (formData.get("revision") as string | null) || "R1";
-    const createdBy = formData.get("userId") as string | null; // optional
+    const createdBy = formData.get("userId") as string | null;
 
     if (!file || !(file instanceof Blob)) {
       return NextResponse.json(
@@ -42,15 +42,13 @@ export async function POST(req: Request) {
 
     const safeName = originalName.replace(/[^a-zA-Z0-9.\-_]/g, "_");
 
-    // Datei in Buffer umwandeln
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const sizeBytes = buffer.byteLength;
 
-    // SHA-256 Hash berechnen
     const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
 
-    // Nächste Version bestimmen (max(version) + 1)
+    // letzte Version holen
     const { data: existing, error: versionErr } = await supabaseAdmin
       .from("documents")
       .select("version")
@@ -59,19 +57,17 @@ export async function POST(req: Request) {
       .limit(1);
 
     if (versionErr) {
-      console.error("Fehler beim Lesen der Version:", versionErr);
+      console.error("Version-Fehler:", versionErr);
       return NextResponse.json(
-        { error: "Fehler beim Lesen der Version aus Supabase." },
+        { error: "Fehler beim Lesen der Version." },
         { status: 500 }
       );
     }
 
     const nextVersion = (existing?.[0]?.version ?? 0) + 1;
 
-    // Pfad im Bucket "documents"
     const path = `${documentKey}/v${nextVersion}-${Date.now()}-${safeName}`;
 
-    // Upload in Bucket "documents"
     const { error: uploadError } = await supabaseAdmin.storage
       .from("documents")
       .upload(path, buffer, {
@@ -87,7 +83,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Alte Versionen dieses document_key auf is_current = false setzen
+    // alte Versionen dieses Keys auf is_current = false
     const { error: updateOldErr } = await supabaseAdmin
       .from("documents")
       .update({ is_current: false })
@@ -95,10 +91,8 @@ export async function POST(req: Request) {
 
     if (updateOldErr) {
       console.error("Fehler beim Aktualisieren alter Versionen:", updateOldErr);
-      // kein Hard-Fail, aber loggen
     }
 
-    // Neue Version in Tabelle eintragen
     const insertPayload = {
       document_key: documentKey,
       version: nextVersion,
@@ -121,26 +115,14 @@ export async function POST(req: Request) {
     if (insertErr) {
       console.error("Insert-Error documents:", insertErr);
       return NextResponse.json(
-        { error: "Dokument konnte nicht in der Tabelle gespeichert werden." },
+        { error: "Dokument konnte nicht gespeichert werden." },
         { status: 500 }
       );
     }
 
-    // Signierte URL für direkten Zugriff
-    const { data: signed, error: signedErr } = await supabaseAdmin.storage
-      .from("documents")
-      .createSignedUrl(path, 60 * 60); // 1 Stunde
-
-    if (signedErr || !signed?.signedUrl) {
-      console.error("Signed URL Fehler:", signedErr);
-    }
-
     return NextResponse.json(
       {
-        doc: {
-          ...inserted,
-          signedUrl: signed?.signedUrl ?? null,
-        },
+        doc: inserted,
       },
       { status: 200 }
     );
