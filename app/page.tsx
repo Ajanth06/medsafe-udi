@@ -611,86 +611,90 @@ export default function MedSafePage() {
     setFile(f);
   };
 
-  const handleUploadDoc = async () => {
-    if (!selectedDeviceId) {
-      setMessage("Bitte zuerst ein Gerät auswählen.");
-      return;
+const handleUploadDoc = async () => {
+  if (!selectedDeviceId) {
+    setMessage("Bitte zuerst ein Gerät auswählen.");
+    return;
+  }
+  if (!file) {
+    setMessage("Bitte eine Datei auswählen.");
+    return;
+  }
+
+  setIsUploading(true);
+  setMessage("Upload läuft …");
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("deviceId", selectedDeviceId); // ⬅️ WICHTIG: Gerät mitsenden
+
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Upload fehlgeschlagen");
     }
-    if (!file) {
-      setMessage("Bitte eine Datei auswählen.");
-      return;
-    }
 
-    setIsUploading(true);
-    setMessage("Upload läuft …");
+    const newDoc: Doc = {
+      id: crypto.randomUUID(),
+      deviceId: selectedDeviceId,
+      name: docName || file.name,
+      cid: data.cid,
+      url: data.url,
+      createdAt: new Date().toISOString(),
+      category: docCategory,
+      version: docVersion || "",
+      revision: docRevision || "",
+      docStatus: docStatus || "Controlled",
+      approvedBy: docApprovedBy || "",
+    };
 
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
+    const { error } = await supabase.from("docs").insert({
+      id: newDoc.id,
+      ...mapDocToDb(newDoc),
+    });
 
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Upload fehlgeschlagen");
-      }
-
-      const newDoc: Doc = {
-        id: crypto.randomUUID(),
-        deviceId: selectedDeviceId,
-        name: docName || file.name,
-        cid: data.cid,
-        url: data.url,
-        createdAt: new Date().toISOString(),
-        category: docCategory,
-        version: docVersion || "",
-        revision: docRevision || "",
-        docStatus: docStatus || "Controlled",
-        approvedBy: docApprovedBy || "",
-      };
-
-      const { error } = await supabase.from("docs").insert({
-        id: newDoc.id,
-        ...mapDocToDb(newDoc),
-      });
-
-      if (error) {
-        console.error("Supabase Docs Insert Error:", error);
-        setMessage("Fehler beim Speichern des Dokuments in Supabase: " + error.message);
-        return;
-      }
-
-      setDocs((prev) => [newDoc, ...prev]);
-
-      setDocName("");
-      setDocVersion("");
-      setDocRevision("");
-      setDocApprovedBy("");
-      setFile(null);
-      setMessage("Dokument erfolgreich gespeichert.");
-
-      const shortCid = String(newDoc.cid).slice(0, 10);
-
-      addAuditEntry(
-        selectedDeviceId,
-        "document_uploaded",
-        `Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
-          newDoc.version || "-"
-        }, Revision: ${newDoc.revision || "-"}, Status: ${
-          newDoc.docStatus
-        }) hochgeladen (CID: ${shortCid}…).`
+    if (error) {
+      console.error("Supabase Docs Insert Error:", error);
+      setMessage(
+        "Fehler beim Speichern des Dokuments in Supabase: " + error.message
       );
-    } catch (err: any) {
-      console.error(err);
-      setMessage(err.message || "Fehler beim Upload.");
-    } finally {
-      setIsUploading(false);
+      return;
     }
-  };
+
+    setDocs((prev) => [newDoc, ...prev]);
+
+    setDocName("");
+    setDocVersion("");
+    setDocRevision("");
+    setDocApprovedBy("");
+    setFile(null);
+    setMessage("Dokument erfolgreich gespeichert.");
+
+    const shortCid = String(newDoc.cid).slice(0, 10);
+
+    addAuditEntry(
+      selectedDeviceId,
+      "document_uploaded",
+      `Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
+        newDoc.version || "-"
+      }, Revision: ${newDoc.revision || "-"}, Status: ${
+        newDoc.docStatus
+      }) hochgeladen (CID: ${shortCid}…).`
+    );
+  } catch (err: any) {
+    console.error(err);
+    setMessage(err.message || "Fehler beim Upload.");
+  } finally {
+    setIsUploading(false);
+  }
+};
+
 
   const handleToggleArchiveDevice = (deviceId: string) => {
     const device = devices.find((d) => d.id === deviceId);

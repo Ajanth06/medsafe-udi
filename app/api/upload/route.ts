@@ -66,11 +66,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Frontend erwartet { cid, url } – das behalten wir bei
+    // Frontend erwartet { cid, url }
     return NextResponse.json(
       {
-        cid: path,           // statt IPFS-Hash jetzt der Storage-Pfad
-        url: signed.signedUrl, // signierte HTTPS-URL aus Supabase
+        cid: path,          // Storage-Pfad im Bucket
+        url: signed.signedUrl, // signierte HTTPS-URL zum Öffnen
       },
       { status: 200 }
     );

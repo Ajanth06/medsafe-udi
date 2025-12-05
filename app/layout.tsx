@@ -81,10 +81,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-medium text-white">Aktiv</span>
   </a>
 
-  <a href="/docs" className="flex items-center justify-between rounded-2xl px-3 py-2 text-slate-200/80 hover:bg-white/5 hover:text-white">
-    <span>Dokumente</span>
-    <span className="text-[10px] text-slate-400">DMR/DHR</span>
-  </a>
+  <a href="/docs" className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10">
+  <span>Dokumente</span>
+  <span className="rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
+    Aktiv
+  </span>
+</a>
+
 </nav>
 
 
