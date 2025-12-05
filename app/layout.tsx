@@ -42,7 +42,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   <div className="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" />
 
   {/* Innerer Kreis + Vogel */}
-  <div className="relative w-18 h-18 rounded-full bg-slate-900 border border-sky-400 flex items-center justify-center float-soft">
+  <div className="relative w-10 h-10 rounded-full bg-slate-900 border border-sky-400 flex items-center justify-center float-soft">
     <img
       src="/icons/red-bird.svg"
       alt="MedSafe Bird"
