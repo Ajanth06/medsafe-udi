@@ -1775,18 +1775,29 @@ if (!user) {
                       <tbody>
                         {devicesInSameGroup.map((d) => {
                           const isRowSelected = selectedDeviceId === d.id;
-                          const isBlocked = d.status === "blocked";
-                          const isRecall = d.status === "recall";
+                          const statusLabel = DEVICE_STATUS_LABELS[d.status];
+                          const statusClass = (() => {
+                            switch (statusLabel) {
+                              case "Recall (Rückruf)":
+                                return "bg-rose-950/70 border-l-4 border-amber-400 shadow-[0_0_22px_rgba(251,146,60,0.45)] hover:bg-rose-950/70";
+                              case "Gesperrt / Quarantäne":
+                                return "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60";
+                              case "In Herstellung":
+                                return "bg-amber-950/55 shadow-[0_0_12px_rgba(251,146,60,0.35)] hover:bg-amber-950/55";
+                              case "Freigegeben (Inverkehrbringen)":
+                                return "bg-emerald-900/40 hover:bg-emerald-900/40";
+                              default:
+                                return "";
+                            }
+                          })();
                           return (
                             <tr
                               key={d.id}
                               onClick={() => setSelectedDeviceId(d.id)}
                               className={
                                 "border-b border-slate-800 last:border-b-0 cursor-pointer " +
-                                (isRecall
-                                  ? "bg-rose-950/70 border-l-4 border-amber-400 shadow-[0_0_22px_rgba(251,146,60,0.45)] hover:bg-rose-950/70"
-                                  : isBlocked
-                                  ? "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60"
+                                (statusClass
+                                  ? statusClass
                                   : isRowSelected
                                   ? "bg-emerald-900/40"
                                   : d.isArchived
