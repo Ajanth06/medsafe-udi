@@ -1143,7 +1143,7 @@ if (!user) {
           Partner • Healthcare &amp; Pharma
         </span>
 
-        <div className="logo-marquee">
+        <div className="logo-marquee w-[520px] max-w-full">
           <div className="logo-marquee-track gap-8 opacity-90">
             <div className="flex items-center gap-8 pr-8">
               <img
