@@ -1145,7 +1145,7 @@ if (!user) {
 
         <div className="flex items-center gap-6 opacity-80 logo-slide">
           <img
-  src="/partners/novartis-logo-transparent.png"
+  src="/partners/novartis.png"
   className="h-10 w-auto object-contain"
   alt="Novartis"
 />
