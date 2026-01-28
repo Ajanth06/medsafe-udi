@@ -1151,7 +1151,7 @@ if (!user) {
 />
           <img src="/partners/roche.png" className="h-6" alt="Roche" />
           <img src="/partners/pfizer.png" className="h-6" alt="Pfizer" />
-          <img src="/partners/johnson.png" className="h-7" alt="Merck" />
+          <img src="/partners/johnson.png" className="h-6" alt="Merck" />
           <img src="/partners/bayer.png" className="h-7" alt="Thalheimer" />
         </div>
       </div>
