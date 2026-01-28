@@ -45,24 +45,32 @@ body {
 .bird-fly {
   animation: bird-fly 1.2s infinite ease-in-out;
 }
-@keyframes slideInLogos {
+@keyframes logo-ticker {
   0% {
-    transform: translateX(40px);
-    opacity: 0.4;
-  }
-  50% {
-    transform: translateX(0);
-    opacity: 1;
+    transform: translateX(-50%);
   }
   100% {
-    transform: translateX(-40px);
-    opacity: 1;
+    transform: translateX(0);
   }
 }
 
-.logo-slide {
-  animation: slideInLogos 4s ease-in-out infinite alternate;
-  will-change: transform, opacity;
+.logo-ticker {
+  position: relative;
+  overflow: hidden;
+}
+
+.logo-ticker-sizer {
+  visibility: hidden;
+}
+
+.logo-ticker-track {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  width: max-content;
+  animation: logo-ticker 18s linear infinite;
+  will-change: transform;
 }
 
 @keyframes float-soft {
