@@ -1217,7 +1217,7 @@ if (!user) {
 
  return (
   <main className="min-h-screen bg-slate-950 text-slate-100">
-    <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
       {/* HEADER */}
 <header
   className="
