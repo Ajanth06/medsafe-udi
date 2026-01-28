@@ -1775,13 +1775,16 @@ if (!user) {
                       <tbody>
                         {devicesInSameGroup.map((d) => {
                           const isRowSelected = selectedDeviceId === d.id;
+                          const isBlocked = d.status === "blocked";
                           return (
                             <tr
                               key={d.id}
                               onClick={() => setSelectedDeviceId(d.id)}
                               className={
                                 "border-b border-slate-800 last:border-b-0 cursor-pointer " +
-                                (isRowSelected
+                                (isBlocked
+                                  ? "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60"
+                                  : isRowSelected
                                   ? "bg-emerald-900/40"
                                   : d.isArchived
                                   ? "bg-slate-800/60"
