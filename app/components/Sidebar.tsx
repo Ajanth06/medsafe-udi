@@ -50,7 +50,7 @@ export default function Sidebar() {
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
             <span className="text-slate-400">System:</span>
-            <span className="text-slate-200">Online</span>
+            <span className="text-slate-200">Aktiv</span>
             <span className="text-slate-400">Security:</span>
             <span className="text-slate-200">UDI-Hash aktiv</span>
             <span className="text-slate-400">Storage:</span>
