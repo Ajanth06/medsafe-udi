@@ -1779,7 +1779,7 @@ if (!user) {
                           const statusClass = (() => {
                             switch (statusLabel) {
                               case "Recall (Rückruf)":
-                                return "recall-row text-slate-100 hover:bg-rose-950/70";
+                                return "recall-row text-slate-100";
                               case "Gesperrt / Quarantäne":
                                 return "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60";
                               case "In Herstellung":

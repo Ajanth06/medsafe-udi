@@ -89,7 +89,7 @@ body {
   animation: float-soft 3s ease-in-out infinite;
 }
 
-@keyframes recall-pulse {
+@keyframes recallPulse {
   0% {
     box-shadow: 0 0 28px rgba(239, 68, 68, 0.55);
     background-color: rgba(60, 4, 12, 0.7);
@@ -105,6 +105,6 @@ body {
 }
 
 .recall-row {
-  animation: recall-pulse 3.5s ease-in-out infinite;
+  animation: recallPulse 3.5s ease-in-out infinite;
   border-left: 4px solid #f59e0b;
 }
