@@ -1150,7 +1150,8 @@ if (!user) {
   alt="Novartis"
 />
           <img src="/partners/Roche.svg" className="h-6" alt="Roche" />
-          <img src="/partners/Pfizer.svg" className="h-6" alt="Pfizer" />
+          <img src="/partners/Pfizer.png
+          " className="h-6" alt="Pfizer" />
           <img src="/partners/Merck.svg" className="h-6" alt="Merck" />
           <img src="/partners/Thalheimer.svg" className="h-6" alt="Thalheimer" />
         </div>
