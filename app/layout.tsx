@@ -21,7 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <div className="pointer-events-none absolute -left-24 top-10 h-72 w-72 rounded-full bg-sky-500/20 blur-3xl" />
           <div className="pointer-events-none absolute -right-10 bottom-10 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
 
-          <div className="relative mx-auto flex min-h-screen max-w-screen-2xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 2xl:px-12">
+          <div className="relative mx-auto flex min-h-screen w-full max-w-screen-3xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 2xl:px-12 3xl:px-16">
             {/* HEADER */}
            <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl gap-3">
 
