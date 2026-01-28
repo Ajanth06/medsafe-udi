@@ -105,6 +105,12 @@ body {
 }
 
 .recall-row {
+}
+
+.recall-row > td {
   animation: recallPulse 3.5s ease-in-out infinite;
+}
+
+.recall-row > td:first-child {
   border-left: 4px solid #f59e0b;
 }
