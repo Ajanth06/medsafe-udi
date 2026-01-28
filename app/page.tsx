@@ -1783,7 +1783,7 @@ if (!user) {
                               case "Gesperrt / Quarantäne":
                                 return "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60";
                               case "In Herstellung":
-                                return "bg-amber-950/55 shadow-[0_0_12px_rgba(251,146,60,0.35)] hover:bg-amber-950/55";
+                                return "bg-slate-900/60 shadow-[0_0_16px_rgba(251,146,60,0.5)] hover:bg-slate-900/60";
                               case "Freigegeben (Inverkehrbringen)":
                                 return "bg-emerald-900/40 hover:bg-emerald-900/40";
                               default:
