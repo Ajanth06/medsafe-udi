@@ -47,6 +47,38 @@ export default function Sidebar() {
             später direkt hier im Layout erweitern.
           </div>
         </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
+          <div className="mb-2 flex items-center justify-between text-[11px] font-semibold tracking-[0.2em] text-slate-300">
+            <span>PLATFORM STATUS</span>
+            <span className="flex items-center gap-2 text-emerald-300 drop-shadow-[0_0_6px_rgba(16,185,129,0.6)]">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+              <span>Online</span>
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
+            <span className="text-slate-400">System:</span>
+            <span className="text-slate-200">Online</span>
+            <span className="text-slate-400">Security:</span>
+            <span className="text-slate-200">UDI-Hash aktiv</span>
+            <span className="text-slate-400">Storage:</span>
+            <span className="text-slate-200">Cloud bereit</span>
+            <span className="text-slate-400">Region:</span>
+            <span className="text-slate-200">EU (Frankfurt)</span>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
+          <div className="mb-2 text-[11px] font-semibold tracking-[0.2em] text-slate-300">
+            TRUST &amp; COMPLIANCE
+          </div>
+          <div className="space-y-1 text-[12px] text-slate-300">
+            <div>MDR-konzipierte Architektur</div>
+            <div>ISO 13485-orientiert</div>
+            <div>Audit-Trail vorbereitet</div>
+            <div>EU-Datenhaltung</div>
+          </div>
+        </div>
       </div>
     );
   }
