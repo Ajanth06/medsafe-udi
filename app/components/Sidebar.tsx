@@ -40,14 +40,6 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <div className="rounded-2xl bg-black/40 px-3 py-3 text-[11px] text-slate-300/85">
-          <div className="mb-1 font-medium">Pro-Funktionen vorbereitet</div>
-          <div className="text-[11px] text-slate-400">
-            UDI-Hash, Recall-Status, DMR/DHR-Links und IPFS-Archiv kannst du
-            später direkt hier im Layout erweitern.
-          </div>
-        </div>
-
         <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
           <div className="mb-2 flex items-center justify-between text-[11px] font-semibold tracking-[0.2em] text-slate-300">
             <span>PLATFORM STATUS</span>
