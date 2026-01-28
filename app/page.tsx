@@ -1149,7 +1149,7 @@ if (!user) {
   className="h-10 w-auto object-contain"
   alt="Novartis"
 />
-          <img src="/partners/Roche.png" className="h-6" alt="Roche" />
+          <img src="/partners/roche.png" className="h-6" alt="Roche" />
           <img src="/partners/pfizer.png" className="h-6" alt="Pfizer" />
           <img src="/partners/Merck.png" className="h-6" alt="Merck" />
           <img src="/partners/thalheimer.png" className="h-6" alt="Thalheimer" />
