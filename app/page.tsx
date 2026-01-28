@@ -1776,13 +1776,16 @@ if (!user) {
                         {devicesInSameGroup.map((d) => {
                           const isRowSelected = selectedDeviceId === d.id;
                           const isBlocked = d.status === "blocked";
+                          const isRecall = d.status === "recall";
                           return (
                             <tr
                               key={d.id}
                               onClick={() => setSelectedDeviceId(d.id)}
                               className={
                                 "border-b border-slate-800 last:border-b-0 cursor-pointer " +
-                                (isBlocked
+                                (isRecall
+                                  ? "bg-rose-950/70 border-l-4 border-amber-400 shadow-[0_0_22px_rgba(251,146,60,0.45)] hover:bg-rose-950/70"
+                                  : isBlocked
                                   ? "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60"
                                   : isRowSelected
                                   ? "bg-emerald-900/40"
