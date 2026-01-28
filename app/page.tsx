@@ -1144,7 +1144,11 @@ if (!user) {
         </span>
 
         <div className="flex items-center gap-6 opacity-80 logo-slide">
-          <img src="/partners/novartis.svg" className="h-6" alt="Novartis" />
+          <img
+  src="/partners/novartis-logo-transparent.png"
+  className="h-10 w-auto object-contain"
+  alt="Novartis"
+/>
           <img src="/partners/Roche.svg" className="h-6" alt="Roche" />
           <img src="/partners/Pfizer.svg" className="h-6" alt="Pfizer" />
           <img src="/partners/Merck.svg" className="h-6" alt="Merck" />
