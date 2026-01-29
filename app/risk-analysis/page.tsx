@@ -1132,7 +1132,7 @@ export default function RiskAnalysisPage() {
               Noch keine FMEA-Einträge vorhanden.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/70">
               <table className="min-w-[1400px] w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-700 text-left">
