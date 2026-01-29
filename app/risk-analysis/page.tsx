@@ -1133,7 +1133,7 @@ export default function RiskAnalysisPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-[11px]">
+              <table className="min-w-[1400px] w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-700 text-left">
                     <th className="py-2 pr-2">Phase</th>
