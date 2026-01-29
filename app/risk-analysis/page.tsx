@@ -925,8 +925,10 @@ export default function RiskAnalysisPage() {
   if (!user) {
     return (
       <main className="min-h-screen w-full bg-slate-950 text-slate-50">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-sm">
-          Bitte einloggen, um die Risikoanalyse zu öffnen.
+        <div className="w-full px-6 py-6">
+          <div className="ml-auto max-w-[900px] rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-sm">
+            Bitte einloggen, um die Risikoanalyse zu öffnen.
+          </div>
         </div>
       </main>
     );
