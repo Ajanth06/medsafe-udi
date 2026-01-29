@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 
           <div className="relative mx-auto flex min-h-screen w-full min-w-0 max-w-[1800px] flex-col gap-5 px-6 py-6 sm:px-8 lg:px-10 2xl:px-10">
             {/* HEADER */}
-           <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl gap-3">
+           <header className="-mr-6 flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl sm:flex-row sm:items-center sm:justify-between sm:-mr-8 lg:-mr-10 2xl:-mr-10">
 
   {/* Links: MEDSAFE-Card + Vogel */}
   <div className="flex items-center gap-4">
