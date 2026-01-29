@@ -14,9 +14,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="de">
-      <body className="min-h-screen bg-slate-950 text-slate-50 antialiased">
-        <div className="relative min-h-screen overflow-visible bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <html lang="de" className="bg-slate-950">
+      <body className="min-h-screen w-full bg-slate-950 text-slate-50 antialiased">
+        <div className="relative min-h-screen w-full min-w-full overflow-visible bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
           {/* weiche Farb-Blobs */}
           <div className="pointer-events-none absolute -left-24 top-10 h-72 w-72 rounded-full bg-sky-500/20 blur-3xl" />
           <div className="pointer-events-none absolute -right-10 bottom-10 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
