@@ -1243,7 +1243,12 @@ if (!user) {
 
  return (
   <main className="min-h-screen bg-slate-950 text-slate-100">
-    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
+    <div
+      className={
+        "w-full min-w-0 mx-auto px-0 py-10 space-y-8 " +
+        (selectedDevice ? "pt-28" : "")
+      }
+    >
       {/* HEADER */}
 <header
   className="
@@ -1493,30 +1498,20 @@ if (!user) {
           )}
         </section>
 
-        {/* Ausgewählte Gruppe (Sticky) */}
+        {/* Ausgewählte Gruppe (fixiert) */}
         {selectedDevice && (
-          <section className="sticky top-24 z-20">
-            <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-4 md:p-6 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+          <section className="fixed left-0 right-0 top-24 z-30 px-4 md:px-6">
+            <div className="max-w-5xl mx-auto">
+              <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-4 md:p-5 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                 <div>
                   <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
-                    Ausgewählte Gruppe
+                    AUSGEWÄHLTE GRUPPE
                   </div>
                   <div className="text-sm text-slate-200">
                     Produkt / Charge – aktive Geräte
                   </div>
                 </div>
-                <button
-                  className="text-[11px] rounded-md border border-white/10 bg-white/5 px-3 py-1 text-slate-200 hover:bg-white/10"
-                  onClick={() => {
-                    setSelectedDeviceId(null);
-                    setEditRowId(null);
-                    setEditDraft(null);
-                    setUdiPiSearch("");
-                  }}
-                >
-                  Auswahl aufheben
-                </button>
               </div>
               {(() => {
                 const devicesOfGroup = devicesInSameGroup;
@@ -1578,6 +1573,7 @@ if (!user) {
                   </div>
                 );
               })()}
+            </div>
             </div>
           </section>
         )}
