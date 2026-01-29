@@ -202,6 +202,21 @@ function devicesToCSV(devices: Device[]): string {
   return [header, ...rows].join("\n");
 }
 
+function copyToClipboard(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
 // ---------- Mapping DB <-> UI ----------
 
 function mapDeviceRowToDevice(row: any): Device {
@@ -365,6 +380,7 @@ export default function MedSafePage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [udiPiSearch, setUdiPiSearch] = useState("");
 
   // ---------- AUTH ----------
 
@@ -1069,6 +1085,11 @@ const handleUploadDoc = async () => {
   const devicesInSameGroup: Device[] = selectedDevice
     ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
     : [];
+  const normalizedUdiPiSearch = udiPiSearch.trim().toLowerCase();
+  const filteredDevicesInSameGroup = devicesInSameGroup.filter((d) => {
+    if (!normalizedUdiPiSearch) return true;
+    return (d.udiPi || "").toLowerCase().includes(normalizedUdiPiSearch);
+  });
 
   const archivedDevices = devices.filter((d) => d.isArchived);
   const archivedGroupsMap: Record<string, DeviceGroup> = {};
@@ -1485,11 +1506,41 @@ if (!user) {
         {/* Tabelle Gruppe */}
         {selectedDevice && devicesInSameGroup.length > 0 && (
           <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-2">
-            <div className="font-semibold mb-1">
-              Geräte in dieser Produkt/Charge-Gruppe (inkl. Archiv)
-            </div>
-            <div className="text-[11px] text-slate-400 mb-1">
-              Klick auf eine Zeile, um dieses Gerät aktiv auszuwählen.
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <div>
+                <div className="font-semibold">
+                  Geräte in dieser Produkt/Charge-Gruppe (inkl. Archiv)
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Klick auf eine Zeile, um dieses Gerät aktiv auszuwählen.
+                </div>
+              </div>
+              <div className="w-full md:w-1/2">
+                <input
+                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Suche nach UDI-PI"
+                  value={udiPiSearch}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setUdiPiSearch(nextValue);
+                    const nextNeedle = nextValue.trim().toLowerCase();
+                    if (!nextNeedle) return;
+                    const matches = devicesInSameGroup.filter((d) =>
+                      (d.udiPi || "").toLowerCase().includes(nextNeedle)
+                    );
+                    if (matches.length === 1) {
+                      handleSelectDevice(matches[0].id);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    const matches = filteredDevicesInSameGroup;
+                    if (matches.length > 0) {
+                      handleSelectDevice(matches[0].id);
+                    }
+                  }}
+                />
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-[11px]">
@@ -1505,7 +1556,7 @@ if (!user) {
                   </tr>
                 </thead>
                 <tbody>
-                  {devicesInSameGroup.map((d) => {
+                  {filteredDevicesInSameGroup.map((d) => {
                     const isRowSelected = selectedDeviceId === d.id;
                     const statusLabel = DEVICE_STATUS_LABELS[d.status];
                     const statusClass = (() => {
@@ -1710,6 +1761,11 @@ if (!user) {
                 </tbody>
               </table>
             </div>
+            {filteredDevicesInSameGroup.length === 0 && (
+              <div className="text-[11px] text-slate-400">
+                Keine Geräte passend zur UDI-PI-Suche gefunden.
+              </div>
+            )}
           </section>
         )}
 
@@ -1810,87 +1866,72 @@ if (!user) {
             </p>
           ) : (
             <div className="space-y-4">
-              {/* Basisdaten */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-1 text-sm">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3 text-sm">
+                <div>
                   <div className="text-slate-400 text-xs">Produktname</div>
-                  <div className="font-semibold">{selectedDevice.name}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">Seriennummer (DHR)</div>
-                  <div className="break-all">{selectedDevice.serial}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">
+                  <div className="font-semibold">{selectedDevice.name || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Seriennummer (DHR)</div>
+                  <div className="break-all">{selectedDevice.serial || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">
                     DHR-ID (Geräte-Historie)
                   </div>
                   <div className="break-all">{selectedDevice.dhrId || "–"}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">DMR-ID</div>
-                  <div className="break-all">{selectedDevice.dmrId || "–"}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">Charge</div>
-                  <div>{selectedDevice.batch || "–"}</div>
-
-                  {selectedDevice.isArchived && (
-                    <>
-                      <div className="text-slate-400 text-xs mt-3">Archiviert am</div>
-                      <div>
-                        {selectedDevice.archivedAt
-                          ? new Date(selectedDevice.archivedAt).toLocaleString()
-                          : "–"}
-                      </div>
-                      <div className="text-slate-400 text-xs mt-3">Archivgrund</div>
-                      <div className="break-all">
-                        {selectedDevice.archiveReason || "–"}
-                      </div>
-                    </>
-                  )}
-
-                  <div className="text-slate-400 text-xs mt-3">UDI-DI</div>
-                  <div className="break-all">{selectedDevice.udiDi}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">
-                    UDI-PI (ohne Verfallsdatum)
-                  </div>
-                  <div className="break-all">{selectedDevice.udiPi || "–"}</div>
                 </div>
-
-                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-2 text-sm">
-                  <div className="text-slate-400 text-xs">
-                    Status (nur dieses Gerät)
+                <div>
+                  <div className="text-slate-400 text-xs">DMR-ID</div>
+                  <div className="break-all">{selectedDevice.dmrId || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Charge</div>
+                  <div>{selectedDevice.batch || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">UDI-DI</div>
+                  <div className="break-all">{selectedDevice.udiDi || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs flex items-center justify-between gap-2">
+                    <span>UDI-PI (ohne Verfallsdatum)</span>
+                    {selectedDevice.udiPi && (
+                      <button
+                        className="text-[10px] text-emerald-300 hover:text-emerald-200"
+                        onClick={() => copyToClipboard(selectedDevice.udiPi || "")}
+                      >
+                        Kopieren
+                      </button>
+                    )}
                   </div>
-                  <div>{DEVICE_STATUS_LABELS[selectedDevice.status]}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">
-                    Risikoklasse (z.B. IIa, IIb, I)
+                  <div className="break-all text-slate-200">
+                    {selectedDevice.udiPi || "–"}
                   </div>
-                  <div>{selectedDevice.riskClass || "–"}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">
-                    Kommentar / Sperrgrund
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs flex items-center justify-between gap-2">
+                    <span>UDI-Hash (fälschungssichere ID)</span>
+                    {selectedDevice.udiHash && (
+                      <button
+                        className="text-[10px] text-emerald-300 hover:text-emerald-200"
+                        onClick={() => copyToClipboard(selectedDevice.udiHash || "")}
+                      >
+                        Kopieren
+                      </button>
+                    )}
                   </div>
-                  <div className="break-all">{selectedDevice.blockComment || "–"}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">
-                    UDI-Hash (fälschungssichere ID)
+                  <div className="break-all text-xs text-slate-200">
+                    {selectedDevice.udiHash || "–"}
                   </div>
-                  <div className="break-all text-xs">{selectedDevice.udiHash}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">Angelegt am</div>
-                  <div>{new Date(selectedDevice.createdAt).toLocaleString()}</div>
-
-                  <div className="text-slate-400 text-xs mt-3">
-                    Validierungsstatus (IQ/OQ/PQ)
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Angelegt am</div>
+                  <div>
+                    {selectedDevice.createdAt
+                      ? new Date(selectedDevice.createdAt).toLocaleString()
+                      : "–"}
                   </div>
-                  <input
-                    className="mt-1 bg-slate-800 rounded-lg px-2 py-1 text-xs outline-none border border-slate-700 focus:border-emerald-500"
-                    placeholder="z.B. IQ abgeschlossen, OQ/PQ geplant"
-                    value={selectedDevice.validationStatus || ""}
-                    onChange={(e) =>
-                      handleUpdateDeviceMeta(selectedDevice.id, {
-                        validationStatus: e.target.value,
-                      })
-                    }
-                  />
                 </div>
               </div>
 
