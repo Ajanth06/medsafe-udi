@@ -366,6 +366,8 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
+  const createdByLabel =
+    (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -1378,6 +1380,10 @@ if (!user) {
               <option value="IIb">IIb</option>
               <option value="III">III</option>
             </select>
+            <div className="bg-slate-800 rounded-lg px-3 py-2 text-xs border border-slate-700">
+              <div className="text-slate-400">Angelegt von</div>
+              <div className="text-slate-100 truncate">{createdByLabel}</div>
+            </div>
             <input
               type="number"
               min={1}
@@ -1389,10 +1395,6 @@ if (!user) {
                 setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
               }
             />
-            <p className="text-xs text-slate-400">
-              Es werden automatisch so viele Geräte mit derselben Charge angelegt
-              (Freigegeben, inkl. DMR-/DHR-ID in Supabase).
-            </p>
           </div>
 
           <button
