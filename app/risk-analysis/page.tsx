@@ -1137,11 +1137,11 @@ export default function RiskAnalysisPage() {
                 <thead>
                   <tr className="border-b border-slate-700 text-left">
                     <th className="py-2 pr-2">Phase</th>
-                    <th className="py-2 pr-2">Prozess</th>
-                    <th className="py-2 pr-2">Failure Mode</th>
-                    <th className="py-2 pr-2">Effect</th>
-                    <th className="py-2 pr-2">Cause</th>
-                    <th className="py-2 pr-2">Controls</th>
+                    <th className="py-2 pr-2 min-w-[160px]">Prozess</th>
+                    <th className="py-2 pr-2 min-w-[180px]">Failure Mode</th>
+                    <th className="py-2 pr-2 min-w-[180px]">Effect</th>
+                    <th className="py-2 pr-2 min-w-[180px]">Cause</th>
+                    <th className="py-2 pr-2 min-w-[200px]">Controls</th>
                     <th className="py-2 pr-2">S</th>
                     <th className="py-2 pr-2">O</th>
                     <th className="py-2 pr-2">D</th>
@@ -1176,9 +1176,9 @@ export default function RiskAnalysisPage() {
                           ))}
                         </select>
                       </td>
-                      <td className="py-2 pr-2">
+                      <td className="py-2 pr-2 min-w-[160px]">
                         <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
+                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
                           value={row.process_step}
                           onChange={(e) =>
                             setFmeaRows((prev) =>
@@ -1196,9 +1196,9 @@ export default function RiskAnalysisPage() {
                           }
                         />
                       </td>
-                      <td className="py-2 pr-2">
+                      <td className="py-2 pr-2 min-w-[180px]">
                         <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
+                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
                           value={row.failure_mode}
                           onChange={(e) =>
                             setFmeaRows((prev) =>
@@ -1214,9 +1214,9 @@ export default function RiskAnalysisPage() {
                           }
                         />
                       </td>
-                      <td className="py-2 pr-2">
+                      <td className="py-2 pr-2 min-w-[180px]">
                         <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
+                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
                           value={row.effect}
                           onChange={(e) =>
                             setFmeaRows((prev) =>
@@ -1228,9 +1228,9 @@ export default function RiskAnalysisPage() {
                           onBlur={() => updateFmeaRow(row.id, { effect: row.effect })}
                         />
                       </td>
-                      <td className="py-2 pr-2">
+                      <td className="py-2 pr-2 min-w-[180px]">
                         <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
+                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
                           value={row.cause}
                           onChange={(e) =>
                             setFmeaRows((prev) =>
@@ -1242,9 +1242,9 @@ export default function RiskAnalysisPage() {
                           onBlur={() => updateFmeaRow(row.id, { cause: row.cause })}
                         />
                       </td>
-                      <td className="py-2 pr-2">
+                      <td className="py-2 pr-2 min-w-[200px]">
                         <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
+                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
                           value={row.existing_controls}
                           onChange={(e) =>
                             setFmeaRows((prev) =>
