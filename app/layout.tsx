@@ -56,7 +56,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   </div>
 
   {/* Rechts: Online-Status + AuthBar */}
-    <div className="flex flex-col items-end gap-2 mr-3 sm:mr-6">
+  <div className="ml-auto flex flex-col items-end gap-2">
     <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80 sm:flex">
       <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80 animate-pulse" />
       <span>Online</span>
