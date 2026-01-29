@@ -381,6 +381,7 @@ export default function MedSafePage() {
 
   const [searchTerm, setSearchTerm] = useState("");
   const [udiPiSearch, setUdiPiSearch] = useState("");
+  const [isGroupPinned, setIsGroupPinned] = useState(false);
 
   // ---------- AUTH ----------
 
@@ -1095,6 +1096,7 @@ const handleUploadDoc = async () => {
         (d) => d.isArchived && d.name === selectedDevice.name && d.batch === selectedDevice.batch
       )
     : [];
+  const isPinnedVisible = Boolean(selectedDevice && isGroupPinned);
 
   const handleExportJSON = () => {
     if (!devices.length) {
@@ -1243,7 +1245,12 @@ if (!user) {
 
  return (
   <main className="min-h-screen bg-slate-950 text-slate-100">
-    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
+    <div
+      className={
+        "w-full min-w-0 mx-auto px-0 py-10 space-y-8 " +
+        (isPinnedVisible ? "pt-28" : "")
+      }
+    >
       {/* HEADER */}
 <header
   className="
@@ -1493,91 +1500,99 @@ if (!user) {
           )}
         </section>
 
-        {/* Ausgewählte Gruppe (Sticky) */}
+        {/* Ausgewählte Gruppe (Pinned) */}
         {selectedDevice && (
-          <section className="sticky top-24 z-20">
-            <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-4 md:p-6 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
-                    Ausgewählte Gruppe
+          <section
+            className={
+              isGroupPinned
+                ? "fixed left-0 right-0 top-24 z-30 px-4 md:px-6"
+                : ""
+            }
+          >
+            <div className="max-w-5xl mx-auto">
+              <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-3 md:p-4 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
+                      AUSGEWÄHLTE GRUPPE
+                    </div>
+                    <div className="text-[12px] text-slate-300">
+                      Produkt / Charge – aktive Geräte
+                    </div>
                   </div>
-                  <div className="text-sm text-slate-200">
-                    Produkt / Charge – aktive Geräte
-                  </div>
+                  <button
+                    className={
+                      "text-[11px] rounded-md border px-3 py-1 transition " +
+                      (isGroupPinned
+                        ? "border-sky-400/70 bg-sky-500/20 text-sky-100 shadow-[0_0_18px_rgba(56,189,248,0.6)]"
+                        : "border-white/10 bg-white/5 text-slate-200 hover:border-sky-400/70 hover:text-sky-100 hover:shadow-[0_0_12px_rgba(56,189,248,0.45)]")
+                    }
+                    onClick={() => setIsGroupPinned((prev) => !prev)}
+                  >
+                    {isGroupPinned ? "Fixiert" : "Fixieren"}
+                  </button>
                 </div>
-                <button
-                  className="text-[11px] rounded-md border border-white/10 bg-white/5 px-3 py-1 text-slate-200 hover:bg-white/10"
-                  onClick={() => {
-                    setSelectedDeviceId(null);
-                    setEditRowId(null);
-                    setEditDraft(null);
-                    setUdiPiSearch("");
-                  }}
-                >
-                  Auswahl aufheben
-                </button>
-              </div>
-              {(() => {
-                const devicesOfGroup = devicesInSameGroup;
-                const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
-                  return sum + docs.filter((doc) => doc.deviceId === d.id).length;
-                }, 0);
-                const statusSet = new Set(devicesOfGroup.map((d) => d.status));
-                let statusLabel: string;
-                if (statusSet.size === 1) {
-                  statusLabel = DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
-                } else {
-                  statusLabel = "Gemischter Status";
-                }
-                const hasRiskStatus = devicesOfGroup.some(
-                  (d) => d.status === "blocked" || d.status === "recall"
-                );
-                const statusClass =
-                  statusLabel === "Gemischter Status"
-                    ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
-                    : hasRiskStatus
-                    ? "bg-red-600/20 text-red-300 border-red-500/40"
-                    : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
-                return (
-                  <div className="mt-2 rounded-xl border border-emerald-500/30 bg-slate-900/60 px-4 py-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-medium">
-                        {selectedDevice.name} – Charge: {selectedDevice.batch ?? "–"}{" "}
-                        <span className="text-slate-400">
-                          ({devicesOfGroup.length} aktive Gerät
-                          {devicesOfGroup.length !== 1 ? "e" : ""},{" "}
-                          {docCountForGroup} Dokument
-                          {docCountForGroup !== 1 ? "e" : ""})
+                {(() => {
+                  const devicesOfGroup = devicesInSameGroup;
+                  const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
+                    return sum + docs.filter((doc) => doc.deviceId === d.id).length;
+                  }, 0);
+                  const statusSet = new Set(devicesOfGroup.map((d) => d.status));
+                  let statusLabel: string;
+                  if (statusSet.size === 1) {
+                    statusLabel = DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
+                  } else {
+                    statusLabel = "Gemischter Status";
+                  }
+                  const hasRiskStatus = devicesOfGroup.some(
+                    (d) => d.status === "blocked" || d.status === "recall"
+                  );
+                  const statusClass =
+                    statusLabel === "Gemischter Status"
+                      ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
+                      : hasRiskStatus
+                      ? "bg-red-600/20 text-red-300 border-red-500/40"
+                      : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
+                  return (
+                    <div className="rounded-xl border border-emerald-500/30 bg-slate-900/60 px-3 py-2 text-[12px]">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-medium">
+                          {selectedDevice.name} – Charge: {selectedDevice.batch ?? "–"}{" "}
+                          <span className="text-slate-400">
+                            ({devicesOfGroup.length} aktive Gerät
+                            {devicesOfGroup.length !== 1 ? "e" : ""},{" "}
+                            {docCountForGroup} Dokument
+                            {docCountForGroup !== 1 ? "e" : ""})
+                          </span>
+                        </div>
+                        <span
+                          className={
+                            "text-[10px] px-2 py-0.5 rounded-full border " + statusClass
+                          }
+                        >
+                          {statusLabel}
                         </span>
                       </div>
-                      <span
-                        className={
-                          "text-[10px] px-2 py-0.5 rounded-full border " + statusClass
-                        }
-                      >
-                        {statusLabel}
-                      </span>
-                    </div>
-                    {selectedDevice.dmrId && (
+                      {selectedDevice.dmrId && (
+                        <div className="text-[11px] text-slate-400 mt-1 break-all">
+                          DMR-ID: {selectedDevice.dmrId}
+                        </div>
+                      )}
                       <div className="text-[11px] text-slate-400 mt-1 break-all">
-                        DMR-ID: {selectedDevice.dmrId}
+                        Beispiel-SN: {selectedDevice.serial}
                       </div>
-                    )}
-                    <div className="text-xs text-slate-400 mt-1 break-all">
-                      Beispiel-SN: {selectedDevice.serial}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 break-all">
-                      UDI-DI: {selectedDevice.udiDi}
-                    </div>
-                    {selectedDevice.udiPi && (
-                      <div className="text-xs text-slate-300 mt-1 break-all">
-                        UDI-PI (Beispiel): {selectedDevice.udiPi}
+                      <div className="text-[11px] text-slate-500 mt-1 break-all">
+                        UDI-DI: {selectedDevice.udiDi}
                       </div>
-                    )}
-                  </div>
-                );
-              })()}
+                      {selectedDevice.udiPi && (
+                        <div className="text-[11px] text-slate-300 mt-1 break-all">
+                          UDI-PI (Beispiel): {selectedDevice.udiPi}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           </section>
         )}
@@ -1848,134 +1863,6 @@ if (!user) {
           </section>
         )}
 
-        {/* Archivierte Geräte der Gruppe */}
-        {selectedDevice && (
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
-            <h2 className="text-lg font-semibold">Archivierte Geräte (Stilllegung)</h2>
-            {archivedDevicesInSameGroup.length === 0 ? (
-              <p className="text-sm text-slate-400">Noch keine Geräte archiviert.</p>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {archivedDevicesInSameGroup.map((device) => {
-                  const isSelected = selectedDeviceId === device.id;
-                  return (
-                    <li key={device.id}>
-                      <button
-                        onClick={() => handleSelectDevice(device.id)}
-                        className={
-                          "w-full text-left px-4 py-3 rounded-xl border text-sm " +
-                          (isSelected
-                            ? "bg-slate-900 border-emerald-500"
-                            : "bg-slate-900 border-slate-700 hover:border-slate-500/70")
-                        }
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="font-medium">
-                            {device.name} – SN: {device.serial}
-                          </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-700/50 text-slate-200 border-slate-500/60">
-                            Archiviert / Stillgelegt
-                          </span>
-                        </div>
-                        {device.dmrId && (
-                          <div className="text-[11px] text-slate-400 mt-1 break-all">
-                            DMR-ID: {device.dmrId}
-                          </div>
-                        )}
-                        {device.archivedAt && (
-                          <div className="text-[11px] text-slate-500 mt-1">
-                            Archiviert am:{" "}
-                            {new Date(device.archivedAt).toLocaleString()}
-                          </div>
-                        )}
-                        {device.archiveReason && (
-                          <div className="text-[11px] text-slate-500 mt-1 break-all">
-                            Grund: {device.archiveReason}
-                          </div>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-        )}
-
-        {/* Abweichung / Quarantäne */}
-        {selectedDevice && (
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
-            <h2 className="text-lg font-semibold">
-              Abweichung / Quarantäne (Nonconformity)
-            </h2>
-            <div className="text-xs text-slate-400">
-              NC-ID wird automatisch vergeben, sobald eine Abweichung gepflegt wird.
-            </div>
-            <div className="text-[11px]">{selectedDevice.nonconformityId || "–"}</div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-              <div>
-                <div className="text-slate-400 text-[11px] mb-1">
-                  Kategorie der Abweichung
-                </div>
-                <input
-                  className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                  placeholder="z.B. mechanisch, elektrisch, Software…"
-                  value={selectedDevice.nonconformityCategory || ""}
-                  onChange={(e) =>
-                    handleUpdateDeviceMeta(selectedDevice.id, {
-                      nonconformityCategory: e.target.value,
-                    })
-                  }
-                />
-              </div>
-              <div>
-                <div className="text-slate-400 text-[11px] mb-1">Schweregrad</div>
-                <select
-                  className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                  value={selectedDevice.nonconformitySeverity || ""}
-                  onChange={(e) =>
-                    handleUpdateDeviceMeta(selectedDevice.id, {
-                      nonconformitySeverity: e.target.value,
-                    })
-                  }
-                >
-                  <option value="">–</option>
-                  <option value="nicht kritisch">nicht kritisch</option>
-                  <option value="kritisch">kritisch</option>
-                </select>
-              </div>
-              <div>
-                <div className="text-slate-400 text-[11px] mb-1">Verantwortlich</div>
-                <input
-                  className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                  placeholder="Name der verantwortlichen Person"
-                  value={selectedDevice.nonconformityResponsible || ""}
-                  onChange={(e) =>
-                    handleUpdateDeviceMeta(selectedDevice.id, {
-                      nonconformityResponsible: e.target.value,
-                    })
-                  }
-                />
-              </div>
-            </div>
-            <div>
-              <div className="text-slate-400 text-[11px] mb-1">
-                Sofortmaßnahmen / Korrekturmaßnahmen
-              </div>
-              <textarea
-                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 min-h-[50px] w-full"
-                placeholder="z.B. Gerät gesperrt, Kunde informiert, CAPA eröffnet…"
-                value={selectedDevice.nonconformityAction || ""}
-                onChange={(e) =>
-                  handleUpdateDeviceMeta(selectedDevice.id, {
-                    nonconformityAction: e.target.value,
-                  })
-                }
-              />
-            </div>
-          </section>
-        )}
-
         {/* Geräteakte */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex items-center justify-between gap-2">
@@ -2174,6 +2061,134 @@ if (!user) {
             </div>
           )}
         </section>
+
+        {/* Archivierte Geräte der Gruppe */}
+        {selectedDevice && (
+          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+            <h2 className="text-lg font-semibold">Archivierte Geräte (Stilllegung)</h2>
+            {archivedDevicesInSameGroup.length === 0 ? (
+              <p className="text-sm text-slate-400">Noch keine Geräte archiviert.</p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {archivedDevicesInSameGroup.map((device) => {
+                  const isSelected = selectedDeviceId === device.id;
+                  return (
+                    <li key={device.id}>
+                      <button
+                        onClick={() => handleSelectDevice(device.id)}
+                        className={
+                          "w-full text-left px-4 py-3 rounded-xl border text-sm " +
+                          (isSelected
+                            ? "bg-slate-900 border-emerald-500"
+                            : "bg-slate-900 border-slate-700 hover:border-slate-500/70")
+                        }
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-medium">
+                            {device.name} – SN: {device.serial}
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-700/50 text-slate-200 border-slate-500/60">
+                            Archiviert / Stillgelegt
+                          </span>
+                        </div>
+                        {device.dmrId && (
+                          <div className="text-[11px] text-slate-400 mt-1 break-all">
+                            DMR-ID: {device.dmrId}
+                          </div>
+                        )}
+                        {device.archivedAt && (
+                          <div className="text-[11px] text-slate-500 mt-1">
+                            Archiviert am:{" "}
+                            {new Date(device.archivedAt).toLocaleString()}
+                          </div>
+                        )}
+                        {device.archiveReason && (
+                          <div className="text-[11px] text-slate-500 mt-1 break-all">
+                            Grund: {device.archiveReason}
+                          </div>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {/* Abweichung / Quarantäne */}
+        {selectedDevice && (
+          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+            <h2 className="text-lg font-semibold">
+              Abweichung / Quarantäne (Nonconformity)
+            </h2>
+            <div className="text-xs text-slate-400">
+              NC-ID wird automatisch vergeben, sobald eine Abweichung gepflegt wird.
+            </div>
+            <div className="text-[11px]">{selectedDevice.nonconformityId || "–"}</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div>
+                <div className="text-slate-400 text-[11px] mb-1">
+                  Kategorie der Abweichung
+                </div>
+                <input
+                  className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="z.B. mechanisch, elektrisch, Software…"
+                  value={selectedDevice.nonconformityCategory || ""}
+                  onChange={(e) =>
+                    handleUpdateDeviceMeta(selectedDevice.id, {
+                      nonconformityCategory: e.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div>
+                <div className="text-slate-400 text-[11px] mb-1">Schweregrad</div>
+                <select
+                  className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                  value={selectedDevice.nonconformitySeverity || ""}
+                  onChange={(e) =>
+                    handleUpdateDeviceMeta(selectedDevice.id, {
+                      nonconformitySeverity: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">–</option>
+                  <option value="nicht kritisch">nicht kritisch</option>
+                  <option value="kritisch">kritisch</option>
+                </select>
+              </div>
+              <div>
+                <div className="text-slate-400 text-[11px] mb-1">Verantwortlich</div>
+                <input
+                  className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Name der verantwortlichen Person"
+                  value={selectedDevice.nonconformityResponsible || ""}
+                  onChange={(e) =>
+                    handleUpdateDeviceMeta(selectedDevice.id, {
+                      nonconformityResponsible: e.target.value,
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">
+                Sofortmaßnahmen / Korrekturmaßnahmen
+              </div>
+              <textarea
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 min-h-[50px] w-full"
+                placeholder="z.B. Gerät gesperrt, Kunde informiert, CAPA eröffnet…"
+                value={selectedDevice.nonconformityAction || ""}
+                onChange={(e) =>
+                  handleUpdateDeviceMeta(selectedDevice.id, {
+                    nonconformityAction: e.target.value,
+                  })
+                }
+              />
+            </div>
+          </section>
+        )}
 
         {/* Dokumente */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
