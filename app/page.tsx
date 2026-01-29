@@ -2095,11 +2095,97 @@ if (!user) {
             </p>
           )}
 
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Dokumentenname"
+              value={docName}
+              onChange={(e) => setDocName(e.target.value)}
+            />
+
+            <select
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              value={docCategory}
+              onChange={(e) => setDocCategory(e.target.value)}
+            >
+              {DOC_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="file"
+              onChange={handleFileChange}
+              className="text-sm text-slate-200"
+            />
+          </div>
+
+          {/* Dokumentenlenkung */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Version</div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="z.B. V1.0"
+                value={docVersion}
+                onChange={(e) => setDocVersion(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Revision</div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="z.B. Rev. 0"
+                value={docRevision}
+                onChange={(e) => setDocRevision(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Status</div>
+              <select
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                value={docStatus}
+                onChange={(e) => setDocStatus(e.target.value as DocStatus)}
+              >
+                {DOC_STATUS_OPTIONS.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">
+                Freigegeben von
+              </div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="Name QMB / Verantwortlicher"
+                value={docApprovedBy}
+                onChange={(e) => setDocApprovedBy(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleUploadDoc}
+            disabled={isUploading}
+            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
+          >
+            {isUploading ? "Upload läuft …" : "Dokument speichern"}
+          </button>
+
           {selectedDeviceId && (
             <div className="space-y-2">
+              <h3 className="text-sm font-semibold">
+                Dokumente für dieses Gerät (DHR-Dokumente)
+              </h3>
+
               {docsForDevice.length === 0 ? (
                 <p className="text-sm text-slate-400">
-                  Noch keine Dokumente verknüpft.
+                  Noch keine Dokumente gespeichert.
                 </p>
               ) : (
                 <ul className="space-y-2 text-sm">
