@@ -1107,7 +1107,7 @@ const handleUploadDoc = async () => {
       ? createPortal(
           <div className="fixed left-0 right-0 top-24 z-30 px-4 md:px-6">
             <div className="max-w-5xl mx-auto">
-              <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-4 md:p-5 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
+              <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-3 md:p-4 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
@@ -1332,12 +1332,7 @@ if (!user) {
 
  return (
   <main className="min-h-screen bg-slate-950 text-slate-100">
-    <div
-      className={
-        "w-full min-w-0 mx-auto px-0 py-10 space-y-8 " +
-        (selectedDevice ? "pt-28" : "")
-      }
-    >
+    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
       {/* HEADER */}
 <header
   className="
@@ -1478,6 +1473,8 @@ if (!user) {
             Geräte speichern
           </button>
         </section>
+
+        {selectedDevice && <div className="h-32 md:h-36" />}
 
         {/* Aktive Gruppen */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
