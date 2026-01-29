@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 import Lottie from "lottie-react";
@@ -382,7 +381,7 @@ export default function MedSafePage() {
 
   const [searchTerm, setSearchTerm] = useState("");
   const [udiPiSearch, setUdiPiSearch] = useState("");
-  const [isClient, setIsClient] = useState(false);
+  const [isGroupPinned, setIsGroupPinned] = useState(false);
 
   // ---------- AUTH ----------
 
@@ -494,9 +493,6 @@ export default function MedSafePage() {
     }
   }, [user]);
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
 
   // ---------- AUDIT ----------
 
@@ -1102,88 +1098,10 @@ const handleUploadDoc = async () => {
       )
     : [];
 
-  const pinnedGroupCard =
-    selectedDevice && isClient
-      ? createPortal(
-          <div className="fixed left-0 right-0 top-24 z-30 px-4 md:px-6">
-            <div className="max-w-5xl mx-auto">
-              <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-3 md:p-4 space-y-2 shadow-lg shadow-black/40 backdrop-blur-2xl">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
-                      AUSGEWÄHLTE GRUPPE
-                    </div>
-                    <div className="text-sm text-slate-200">
-                      Produkt / Charge – aktive Geräte
-                    </div>
-                  </div>
-                </div>
-                {(() => {
-                  const devicesOfGroup = devicesInSameGroup;
-                  const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
-                    return sum + docs.filter((doc) => doc.deviceId === d.id).length;
-                  }, 0);
-                  const statusSet = new Set(devicesOfGroup.map((d) => d.status));
-                  let statusLabel: string;
-                  if (statusSet.size === 1) {
-                    statusLabel = DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
-                  } else {
-                    statusLabel = "Gemischter Status";
-                  }
-                  const hasRiskStatus = devicesOfGroup.some(
-                    (d) => d.status === "blocked" || d.status === "recall"
-                  );
-                  const statusClass =
-                    statusLabel === "Gemischter Status"
-                      ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
-                      : hasRiskStatus
-                      ? "bg-red-600/20 text-red-300 border-red-500/40"
-                      : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
-                  return (
-                    <div className="mt-2 rounded-xl border border-emerald-500/30 bg-slate-900/60 px-4 py-3 text-sm">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-medium">
-                          {selectedDevice.name} – Charge: {selectedDevice.batch ?? "–"}{" "}
-                          <span className="text-slate-400">
-                            ({devicesOfGroup.length} aktive Gerät
-                            {devicesOfGroup.length !== 1 ? "e" : ""},{" "}
-                            {docCountForGroup} Dokument
-                            {docCountForGroup !== 1 ? "e" : ""})
-                          </span>
-                        </div>
-                        <span
-                          className={
-                            "text-[10px] px-2 py-0.5 rounded-full border " + statusClass
-                          }
-                        >
-                          {statusLabel}
-                        </span>
-                      </div>
-                      {selectedDevice.dmrId && (
-                        <div className="text-[11px] text-slate-400 mt-1 break-all">
-                          DMR-ID: {selectedDevice.dmrId}
-                        </div>
-                      )}
-                      <div className="text-xs text-slate-400 mt-1 break-all">
-                        Beispiel-SN: {selectedDevice.serial}
-                      </div>
-                      <div className="text-xs text-slate-500 mt-1 break-all">
-                        UDI-DI: {selectedDevice.udiDi}
-                      </div>
-                      {selectedDevice.udiPi && (
-                        <div className="text-xs text-slate-300 mt-1 break-all">
-                          UDI-PI (Beispiel): {selectedDevice.udiPi}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>,
-          document.body
-        )
-      : null;
+  const handleTogglePinnedGroup = () => {
+    if (!selectedDevice) return;
+    setIsGroupPinned((prev) => !prev);
+  };
 
   const handleExportJSON = () => {
     if (!devices.length) {
@@ -1474,8 +1392,6 @@ if (!user) {
           </button>
         </section>
 
-        {selectedDevice && <div className="h-32 md:h-36" />}
-
         {/* Aktive Gruppen */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1490,6 +1406,19 @@ if (!user) {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+              <button
+                className={
+                  "text-xs rounded-lg border px-3 py-2 transition " +
+                  (isGroupPinned
+                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100 shadow-[0_0_16px_rgba(56,189,248,0.55)]"
+                    : "border-white/10 bg-white/5 text-slate-200 hover:border-sky-400/70 hover:text-sky-100 hover:shadow-[0_0_12px_rgba(56,189,248,0.35)]")
+                }
+                onClick={handleTogglePinnedGroup}
+                disabled={!selectedDevice}
+                title={!selectedDevice ? "Bitte zuerst eine Gruppe auswählen" : ""}
+              >
+                {isGroupPinned ? "Pinned" : "Pin"}
+              </button>
             </div>
           </div>
 
@@ -1584,7 +1513,89 @@ if (!user) {
           )}
         </section>
 
-        {pinnedGroupCard}
+        {/* Ausgewählte Gruppe (Sticky) */}
+        {selectedDevice && isGroupPinned && (
+          <section className="sticky top-16 z-20">
+            <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-3 md:p-4 space-y-2 shadow-lg shadow-black/30 backdrop-blur-2xl">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
+                    AUSGEWÄHLTE GRUPPE
+                  </div>
+                  <div className="text-sm text-slate-200">
+                    Produkt / Charge – aktive Geräte
+                  </div>
+                </div>
+                <button
+                  className="text-[11px] rounded-md border border-sky-400/70 bg-sky-500/20 px-3 py-1 text-sky-100 shadow-[0_0_16px_rgba(56,189,248,0.55)]"
+                  onClick={handleTogglePinnedGroup}
+                >
+                  Pinned
+                </button>
+              </div>
+              {(() => {
+                const devicesOfGroup = devicesInSameGroup;
+                const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
+                  return sum + docs.filter((doc) => doc.deviceId === d.id).length;
+                }, 0);
+                const statusSet = new Set(devicesOfGroup.map((d) => d.status));
+                let statusLabel: string;
+                if (statusSet.size === 1) {
+                  statusLabel = DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
+                } else {
+                  statusLabel = "Gemischter Status";
+                }
+                const hasRiskStatus = devicesOfGroup.some(
+                  (d) => d.status === "blocked" || d.status === "recall"
+                );
+                const statusClass =
+                  statusLabel === "Gemischter Status"
+                    ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
+                    : hasRiskStatus
+                    ? "bg-red-600/20 text-red-300 border-red-500/40"
+                    : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
+                return (
+                  <div className="mt-2 rounded-xl border border-emerald-500/30 bg-slate-900/60 px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-medium">
+                        {selectedDevice.name} – Charge: {selectedDevice.batch ?? "–"}{" "}
+                        <span className="text-slate-400">
+                          ({devicesOfGroup.length} aktive Gerät
+                          {devicesOfGroup.length !== 1 ? "e" : ""},{" "}
+                          {docCountForGroup} Dokument
+                          {docCountForGroup !== 1 ? "e" : ""})
+                        </span>
+                      </div>
+                      <span
+                        className={
+                          "text-[10px] px-2 py-0.5 rounded-full border " + statusClass
+                        }
+                      >
+                        {statusLabel}
+                      </span>
+                    </div>
+                    {selectedDevice.dmrId && (
+                      <div className="text-[11px] text-slate-400 mt-1 break-all">
+                        DMR-ID: {selectedDevice.dmrId}
+                      </div>
+                    )}
+                    <div className="text-xs text-slate-400 mt-1 break-all">
+                      Beispiel-SN: {selectedDevice.serial}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 break-all">
+                      UDI-DI: {selectedDevice.udiDi}
+                    </div>
+                    {selectedDevice.udiPi && (
+                      <div className="text-xs text-slate-300 mt-1 break-all">
+                        UDI-PI (Beispiel): {selectedDevice.udiPi}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </section>
+        )}
 
         {/* Tabelle Gruppe */}
         {selectedDevice && devicesInSameGroup.length > 0 && (

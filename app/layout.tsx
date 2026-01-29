@@ -121,7 +121,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   </div>
 
                   {/* Seiteninhalt */}
-                  <main className="flex-1 overflow-hidden rounded-3xl border border-white/10 bg-black/40 p-4 shadow-inner shadow-slate-950/70 backdrop-blur-2xl sm:p-6">
+                  <main className="flex-1 overflow-visible rounded-3xl border border-white/10 bg-black/40 p-4 shadow-inner shadow-slate-950/70 backdrop-blur-2xl sm:p-6">
                     {children}
                   </main>
                 </div>
