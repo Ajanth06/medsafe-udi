@@ -366,7 +366,8 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
-  const createdByLabel = (user as any)?.user_metadata?.full_name ?? "—";
+  const createdByLabel =
+    (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -418,6 +419,17 @@ export default function MedSafePage() {
     authListener.subscription.unsubscribe();
   };
 }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const email = user.email ?? "";
+    const fullName = (user as any)?.user_metadata?.full_name ?? "";
+    if (email === "ajanth.r@live.de" && !fullName) {
+      supabase.auth
+        .updateUser({ data: { full_name: "Ajanth Ragunathan" } })
+        .catch((err) => console.error("Auth metadata update failed:", err));
+    }
+  }, [user]);
 
 
   const handleSendLoginLink = async (e: React.FormEvent) => {
