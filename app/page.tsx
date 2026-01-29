@@ -1636,17 +1636,31 @@ if (!user) {
                 />
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <div className="relative max-h-80 overflow-y-auto overflow-x-hidden rounded-xl border border-slate-800/80 bg-slate-900/40">
               <table className="w-full border-collapse text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-700">
-                    <th className="text-left py-1 pr-2">Seriennummer</th>
-                    <th className="text-left py-1 pr-2">UDI-PI</th>
-                    <th className="text-left py-1 pr-2">Status</th>
-                    <th className="text-left py-1 pr-2">Kommentar kurz</th>
-                    <th className="text-left py-1 pr-2">Verantwortlich</th>
-                    <th className="text-left py-1 pr-2">Angelegt am</th>
-                    <th className="text-left py-1 pr-2">Aktion</th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Seriennummer
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      UDI-PI
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Status
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Kommentar kurz
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Verantwortlich
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Angelegt am
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Aktion
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
