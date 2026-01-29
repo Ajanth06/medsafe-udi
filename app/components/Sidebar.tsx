@@ -36,6 +36,10 @@ export default function Sidebar() {
             Geräteübersicht <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
+            Risikoanalyse (ISO 14971){" "}
+            <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
             Dokumente <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
           </div>
         </div>
@@ -89,6 +93,16 @@ export default function Sidebar() {
           <span>Geräteübersicht</span>
           <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
             Aktiv
+          </span>
+        </a>
+
+        <a
+          href="/risk-analysis"
+          className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
+        >
+          <span>Risikoanalyse (ISO 14971)</span>
+          <span className="rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
+            Neu
           </span>
         </a>
 
