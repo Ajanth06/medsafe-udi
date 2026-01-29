@@ -70,14 +70,6 @@ type AuditEntry = {
   timestamp: string;
 };
 
-type RegulatoryMeta = {
-  mdrClass?: string;
-  mdrRule?: string;
-  intendedPurpose?: string;
-  internalRiskLevel?: string;
-  dmrLabel?: string;
-};
-
 // PIN nur UI-Schutz
 const ADMIN_PIN = "4837";
 
@@ -374,7 +366,6 @@ export default function MedSafePage() {
   } | null>(null);
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
-  const [regMeta, setRegMeta] = useState<RegulatoryMeta | null>(null);
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -391,108 +382,6 @@ export default function MedSafePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [udiPiSearch, setUdiPiSearch] = useState("");
   const [isGroupPinned, setIsGroupPinned] = useState(false);
-
-  const previewBatch = formatDateYYMMDD(new Date());
-  const previewDmrId = newProductName.trim()
-    ? `DMR-${previewBatch}-${slugifyName(newProductName)}`
-    : "";
-
-  useEffect(() => {
-    let isActive = true;
-
-    const loadRegulatoryMeta = async () => {
-      const name = newProductName.trim();
-      const dmrId = previewDmrId;
-
-      if (!name && !dmrId) {
-        if (isActive) setRegMeta(null);
-        return;
-      }
-
-      let meta: RegulatoryMeta = {};
-
-      if (name) {
-        try {
-          const { data, error } = await supabase
-            .from("products")
-            .select("*")
-            .eq("name", name)
-            .limit(1);
-
-          if (!error && data && data.length > 0) {
-            const row = data[0] as any;
-            meta = {
-              mdrClass: row.mdr_class ?? row.mdrClass ?? row.mdr_klasse ?? undefined,
-              mdrRule: row.mdr_rule ?? row.mdrRule ?? row.mdr_regel ?? undefined,
-              intendedPurpose:
-                row.intended_purpose ?? row.intendedPurpose ?? row.intended_use ?? undefined,
-              internalRiskLevel:
-                row.internal_risk_level ?? row.internalRiskLevel ?? row.risk_level ?? undefined,
-              dmrLabel: row.dmr_label ?? row.dmrLabel ?? undefined,
-            };
-          }
-        } catch (err) {
-          // Silent fail for optional metadata lookup
-        }
-      }
-
-      const needsDmrFallback =
-        !meta.mdrClass ||
-        !meta.mdrRule ||
-        !meta.intendedPurpose ||
-        !meta.internalRiskLevel ||
-        !meta.dmrLabel;
-
-      if (needsDmrFallback && dmrId) {
-        try {
-          const { data, error } = await supabase
-            .from("dmr")
-            .select("*")
-            .eq("id", dmrId)
-            .limit(1);
-
-          if (!error && data && data.length > 0) {
-            const row = data[0] as any;
-            meta = {
-              mdrClass: meta.mdrClass ?? row.mdr_class ?? row.mdrClass ?? undefined,
-              mdrRule: meta.mdrRule ?? row.mdr_rule ?? row.mdrRule ?? undefined,
-              intendedPurpose:
-                meta.intendedPurpose ??
-                row.intended_purpose ??
-                row.intendedPurpose ??
-                row.intended_use ??
-                undefined,
-              internalRiskLevel:
-                meta.internalRiskLevel ??
-                row.internal_risk_level ??
-                row.internalRiskLevel ??
-                row.risk_level ??
-                undefined,
-              dmrLabel: meta.dmrLabel ?? row.label ?? row.name ?? row.title ?? undefined,
-            };
-          }
-        } catch (err) {
-          // Silent fail for optional metadata lookup
-        }
-      }
-
-      if (isActive) {
-        const hasAnyMeta =
-          meta.mdrClass ||
-          meta.mdrRule ||
-          meta.intendedPurpose ||
-          meta.internalRiskLevel ||
-          meta.dmrLabel;
-        setRegMeta(hasAnyMeta ? meta : null);
-      }
-    };
-
-    loadRegulatoryMeta();
-
-    return () => {
-      isActive = false;
-    };
-  }, [newProductName, previewDmrId]);
 
   // ---------- AUTH ----------
 
@@ -528,17 +417,6 @@ export default function MedSafePage() {
     authListener.subscription.unsubscribe();
   };
 }, []);
-
-  const mdrClass = regMeta?.mdrClass?.toString().trim() ?? "";
-  const mdrRule = regMeta?.mdrRule?.toString().trim() ?? "";
-  const internalRiskLevel = regMeta?.internalRiskLevel?.toString().trim() ?? "";
-  const intendedPurpose = regMeta?.intendedPurpose?.toString().trim() ?? "";
-  const dmrLabel = regMeta?.dmrLabel?.toString().trim() ?? "";
-  const showMdrWarning = !mdrClass;
-  const displayCreatedBy =
-    (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
-  const displayTimestamp = new Date().toLocaleString();
-  const safeQuantity = Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : 1;
 
 
   const handleSendLoginLink = async (e: React.FormEvent) => {
@@ -1483,165 +1361,36 @@ if (!user) {
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neue Geräte anlegen</h2>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[2fr,1fr] gap-5 items-start">
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                <input
-                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                  placeholder="Produktname (z.B. FREEZO FZ-380)"
-                  value={newProductName}
-                  onChange={(e) => setNewProductName(e.target.value)}
-                />
-                <input
-                  type="number"
-                  min={1}
-                  max={999}
-                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                  placeholder="Anzahl"
-                  value={quantity}
-                  onChange={(e) =>
-                    setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
-                  }
-                />
-                <p className="text-xs text-slate-400">
-                  Es werden automatisch so viele Geräte mit derselben Charge angelegt
-                  (Freigegeben, inkl. DMR-/DHR-ID in Supabase).
-                </p>
-              </div>
-
-              <button
-                onClick={handleSaveDevice}
-                className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
-              >
-                Geräte speichern
-              </button>
-            </div>
-
-            <div className="lg:border-l lg:border-slate-800/70 lg:pl-5">
-              <div className="rounded-2xl bg-slate-900/80 border border-slate-800 p-4 md:p-5 space-y-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                <div>
-                  <div className="text-sm font-semibold text-slate-100">
-                    Regulatorische &amp; QMS-Daten
-                  </div>
-                  {showMdrWarning && (
-                    <div className="mt-2 text-xs text-amber-300/90">
-                      ⚠️ MDR-Klasse fehlt – bitte im Produkt/DMR pflegen.
-                    </div>
-                  )}
-                </div>
-
-                <div className="divide-y divide-slate-800/80 text-sm">
-                  <div className="pb-4">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      Medizinprodukt
-                    </div>
-                    <div className="mt-3 grid grid-cols-[140px,1fr] gap-2">
-                      <div className="text-slate-400 text-xs">MDR Klasse</div>
-                      <div>
-                        {mdrClass ? (
-                          <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
-                            MDR {mdrClass}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </div>
-
-                      <div className="text-slate-400 text-xs">MDR Regel</div>
-                      <div className="text-slate-200">{mdrRule || "—"}</div>
-
-                      <div className="text-slate-400 text-xs">
-                        Risikokategorie (intern)
-                      </div>
-                      <div className="text-slate-200">{internalRiskLevel || "—"}</div>
-
-                      <div className="text-slate-400 text-xs">Intended Purpose</div>
-                      <div className="text-slate-200 leading-snug line-clamp-2">
-                        {intendedPurpose || "—"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="py-4">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      QMS Verknüpfung
-                    </div>
-                    <div className="mt-3 grid grid-cols-[140px,1fr] gap-2">
-                      <div className="text-slate-400 text-xs">DMR</div>
-                      <div>
-                        {dmrLabel ? (
-                          <div className="space-y-1">
-                            <div className="text-slate-200">{dmrLabel}</div>
-                            {previewDmrId && (
-                              <div className="font-mono text-[11px] text-slate-400/90">
-                                {previewDmrId}
-                              </div>
-                            )}
-                          </div>
-                        ) : previewDmrId ? (
-                          <div className="font-mono text-[11px] text-slate-400/90">
-                            {previewDmrId}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </div>
-
-                      <div className="text-slate-400 text-xs">DHR</div>
-                      <div className="text-slate-200">automatisch pro Gerät</div>
-
-                      <div className="text-slate-400 text-xs">Status</div>
-                      <div>
-                        <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
-                          Freigegeben
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="py-4">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      Audit Trail
-                    </div>
-                    <div className="mt-3 grid grid-cols-[140px,1fr] gap-2">
-                      <div className="text-slate-400 text-xs">Angelegt von</div>
-                      <div className="text-slate-200">{displayCreatedBy}</div>
-
-                      <div className="text-slate-400 text-xs">Zeitpunkt</div>
-                      <div className="text-slate-200">{displayTimestamp}</div>
-
-                      <div className="text-slate-400 text-xs">Freigabe</div>
-                      <div className="text-slate-200">
-                        automatisch bei Erstellung
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-4">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      Identifikation
-                    </div>
-                    <div className="mt-3 grid grid-cols-[140px,1fr] gap-2">
-                      <div className="text-slate-400 text-xs">Charge</div>
-                      <div className="text-slate-200">{previewBatch || "—"}</div>
-
-                      <div className="text-slate-400 text-xs">Geräteanzahl</div>
-                      <div className="text-slate-200">{safeQuantity}</div>
-
-                      <div className="text-slate-400 text-xs">Seriennummern</div>
-                      <div className="text-slate-200">automatisch fortlaufend</div>
-
-                      <div className="text-slate-400 text-xs">UDI-PI</div>
-                      <div className="text-slate-200">auto (Charge + SN)</div>
-
-                      <div className="text-slate-400 text-xs">UDI-Hash</div>
-                      <div className="text-slate-200">SHA-256</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Produktname (z.B. FREEZO FZ-380)"
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
+            />
+            <input
+              type="number"
+              min={1}
+              max={999}
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Anzahl"
+              value={quantity}
+              onChange={(e) =>
+                setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
+              }
+            />
+            <p className="text-xs text-slate-400">
+              Es werden automatisch so viele Geräte mit derselben Charge angelegt
+              (Freigegeben, inkl. DMR-/DHR-ID in Supabase).
+            </p>
           </div>
+
+          <button
+            onClick={handleSaveDevice}
+            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+          >
+            Geräte speichern
+          </button>
         </section>
 
         {/* Aktive Gruppen */}
