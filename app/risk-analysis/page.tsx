@@ -305,6 +305,47 @@ export default function RiskAnalysisPage() {
     loadDevices();
   }, [user]);
 
+  useEffect(() => {
+    const restoreLastSelection = async () => {
+      if (!user || devices.length === 0) return;
+      if (selectedGroupKey || selectedDeviceId) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("risk_analyses")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (error || !data || data.length === 0) return;
+        const latest = data[0] as RiskAnalysis;
+
+        if (latest.scope_type === "device" && latest.device_id) {
+          setScope("device");
+          setSelectedDeviceId(latest.device_id);
+          return;
+        }
+
+        if (latest.scope_type === "product_group" && latest.group_id) {
+          const groupEntries = await Promise.all(
+            groupedDevices.map(async (group) => {
+              const id = await groupKeyToUuid(group.key);
+              return { key: group.key, id };
+            })
+          );
+          const match = groupEntries.find((g) => g.id === latest.group_id);
+          if (match) {
+            setScope("product_group");
+            setSelectedGroupKey(match.key);
+          }
+        }
+      } catch (err) {
+        console.error("Restore selection failed:", err);
+      }
+    };
+
+    restoreLastSelection();
+  }, [user, devices, groupedDevices, selectedGroupKey, selectedDeviceId]);
+
   const addRiskAudit = async (
     riskAnalysisId: string,
     action: string,
