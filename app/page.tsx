@@ -366,8 +366,7 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
-  const createdByLabel =
-    (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
+  const createdByLabel = (user as any)?.user_metadata?.full_name ?? "—";
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
