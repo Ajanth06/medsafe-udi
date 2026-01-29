@@ -924,7 +924,7 @@ export default function RiskAnalysisPage() {
 
   if (!user) {
     return (
-      <main className="min-h-screen text-slate-50">
+      <main className="min-h-screen w-full bg-slate-950 text-slate-50">
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-sm">
           Bitte einloggen, um die Risikoanalyse zu öffnen.
         </div>
@@ -933,7 +933,7 @@ export default function RiskAnalysisPage() {
   }
 
   return (
-    <main className="min-h-screen text-slate-100">
+    <main className="min-h-screen w-full bg-slate-950 text-slate-100">
       <div className="space-y-6">
         <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-lg shadow-black/20 backdrop-blur-2xl">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
