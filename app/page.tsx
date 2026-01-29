@@ -365,6 +365,7 @@ export default function MedSafePage() {
   } | null>(null);
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
+  const [newRiskClass, setNewRiskClass] = useState<string>("");
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -564,7 +565,7 @@ export default function MedSafePage() {
         productionDate,
         udiPi,
         status: "released",
-        riskClass: "",
+        riskClass: newRiskClass,
         blockComment: "",
         responsible: "",
         isArchived: false,
@@ -603,6 +604,7 @@ export default function MedSafePage() {
 
       setNewProductName("");
       setQuantity(1);
+      setNewRiskClass("");
       setSelectedDeviceId(newDevices[0]?.id ?? null);
 
       if (qty === 1) {
@@ -1358,13 +1360,24 @@ if (!user) {
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neue Geräte anlegen</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
               placeholder="Produktname (z.B. FREEZO FZ-380)"
               value={newProductName}
               onChange={(e) => setNewProductName(e.target.value)}
             />
+            <select
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              value={newRiskClass}
+              onChange={(e) => setNewRiskClass(e.target.value)}
+            >
+              <option value="">Risikoklasse (I / IIa / IIb / III)</option>
+              <option value="I">I</option>
+              <option value="IIa">IIa</option>
+              <option value="IIb">IIb</option>
+              <option value="III">III</option>
+            </select>
             <input
               type="number"
               min={1}
