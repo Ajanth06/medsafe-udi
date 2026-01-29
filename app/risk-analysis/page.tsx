@@ -122,6 +122,12 @@ const riskLevelFromRpn = (rpn: number) => {
   return "Low";
 };
 
+const acceptanceFromRpn = (rpn: number) => {
+  if (rpn >= 100) return "Nicht akzeptabel";
+  if (rpn >= 50) return "Review";
+  return "Akzeptabel";
+};
+
 const badgeClassForRisk = (level: string) => {
   switch (level) {
     case "Critical":
@@ -130,6 +136,17 @@ const badgeClassForRisk = (level: string) => {
       return "bg-amber-500/20 text-amber-200 border-amber-500/50";
     case "Medium":
       return "bg-sky-500/20 text-sky-200 border-sky-500/50";
+    default:
+      return "bg-emerald-500/15 text-emerald-200 border-emerald-500/40";
+  }
+};
+
+const badgeClassForAcceptance = (status: string) => {
+  switch (status) {
+    case "Nicht akzeptabel":
+      return "bg-rose-500/20 text-rose-200 border-rose-500/50";
+    case "Review":
+      return "bg-amber-500/20 text-amber-200 border-amber-500/50";
     default:
       return "bg-emerald-500/15 text-emerald-200 border-emerald-500/40";
   }
@@ -148,6 +165,7 @@ const toCsv = (rows: FmeaRow[]) => {
     "D",
     "RPN",
     "RiskLevel",
+    "RiskAcceptance",
     "RecommendedActions",
     "Owner",
     "DueDate",
@@ -171,6 +189,7 @@ const toCsv = (rows: FmeaRow[]) => {
       row.detection_d,
       row.rpn,
       row.risk_level,
+      acceptanceFromRpn(row.rpn),
       row.recommended_actions,
       row.action_owner || "",
       row.action_due || "",
@@ -1128,6 +1147,7 @@ export default function RiskAnalysisPage() {
                     <th className="py-2 pr-2">D</th>
                     <th className="py-2 pr-2">RPN</th>
                     <th className="py-2 pr-2">Risk</th>
+                    <th className="py-2 pr-2">Akzeptanz</th>
                     <th className="py-2 pr-2">Actions</th>
                     <th className="py-2 pr-2">Owner</th>
                     <th className="py-2 pr-2">Due</th>
@@ -1292,6 +1312,15 @@ export default function RiskAnalysisPage() {
                           )}`}
                         >
                           {row.risk_level}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${badgeClassForAcceptance(
+                            acceptanceFromRpn(row.rpn)
+                          )}`}
+                        >
+                          {acceptanceFromRpn(row.rpn)}
                         </span>
                       </td>
                       <td className="py-2 pr-2">
