@@ -233,7 +233,7 @@ function mapDeviceRowToDevice(row: any): Device {
     status: (row.status || "released") as DeviceStatus,
     riskClass: row.risk_class ?? "",
     blockComment: row.block_comment ?? "",
-    responsible: "",
+    responsible: row.responsible ?? "",
     isArchived: row.is_archived ?? false,
     dmrId: row.dmr_id ?? "",
     dhrId: row.dhr_id ?? "",
@@ -267,6 +267,7 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
     status: device.status,
     risk_class: device.riskClass ?? null,
     block_comment: device.blockComment ?? null,
+    responsible: device.responsible ?? null,
     is_archived: device.isArchived ?? false,
     dmr_id: device.dmrId ?? null,
     dhr_id: device.dhrId ?? null,
@@ -366,6 +367,7 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
+  const [newResponsible, setNewResponsible] = useState<string>("");
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
@@ -566,6 +568,7 @@ export default function MedSafePage() {
         udiPi,
         status: "released",
         riskClass: newRiskClass,
+        responsible: newResponsible.trim(),
         blockComment: "",
         responsible: "",
         isArchived: false,
@@ -605,6 +608,7 @@ export default function MedSafePage() {
       setNewProductName("");
       setQuantity(1);
       setNewRiskClass("");
+      setNewResponsible("");
       setSelectedDeviceId(newDevices[0]?.id ?? null);
 
       if (qty === 1) {
@@ -983,6 +987,8 @@ export default function MedSafePage() {
         dbPatch.risk_class = mergedUpdates.riskClass ?? null;
       if (mergedUpdates.blockComment !== undefined)
         dbPatch.block_comment = mergedUpdates.blockComment ?? null;
+      if (mergedUpdates.responsible !== undefined)
+        dbPatch.responsible = mergedUpdates.responsible ?? null;
       if (mergedUpdates.nonconformityCategory !== undefined)
         dbPatch.nonconformity_category = mergedUpdates.nonconformityCategory ?? null;
       if (mergedUpdates.nonconformitySeverity !== undefined)
@@ -1360,7 +1366,7 @@ if (!user) {
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neue Geräte anlegen</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
               placeholder="Produktname (z.B. FREEZO FZ-380)"
@@ -1378,6 +1384,12 @@ if (!user) {
               <option value="IIb">IIb</option>
               <option value="III">III</option>
             </select>
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Verantwortlich"
+              value={newResponsible}
+              onChange={(e) => setNewResponsible(e.target.value)}
+            />
             <input
               type="number"
               min={1}
