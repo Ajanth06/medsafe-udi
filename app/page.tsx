@@ -1705,6 +1705,9 @@ if (!user) {
                       Verantwortlich
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                      Dokumente
+                    </th>
+                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
                       Angelegt am
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
@@ -1731,6 +1734,9 @@ if (!user) {
                       }
                     })();
                     const isEditing = editRowId === d.id;
+                    const docCountForDevice = docs.filter(
+                      (doc) => doc.deviceId === d.id
+                    ).length;
                     return (
                       <>
                         <tr
@@ -1762,6 +1768,7 @@ if (!user) {
                                 (d.responsible.length > 30 ? "…" : "")
                               : "–"}
                           </td>
+                          <td className="py-1 pr-2">{docCountForDevice}</td>
                           <td className="py-1 pr-2">
                             {new Date(d.createdAt).toLocaleString()}
                           </td>
@@ -1796,7 +1803,7 @@ if (!user) {
                             }
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <td colSpan={7} className="py-2">
+                            <td colSpan={8} className="py-2">
                               <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-[11px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                                   <div>
