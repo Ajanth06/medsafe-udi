@@ -22,6 +22,10 @@ type Device = {
 
   status: DeviceStatus;
   riskClass?: string;
+  mdrClass?: string;
+  mdrRule?: string;
+  intendedPurpose?: string;
+  internalRiskLevel?: string;
   blockComment?: string;
   responsible?: string;
 
@@ -68,6 +72,14 @@ type AuditEntry = {
   action: string;
   message: string;
   timestamp: string;
+};
+
+type RegulatoryMeta = {
+  mdrClass?: string;
+  mdrRule?: string;
+  intendedPurpose?: string;
+  internalRiskLevel?: string;
+  source?: "products" | "dmr";
 };
 
 // PIN nur UI-Schutz
@@ -142,6 +154,10 @@ function devicesToCSV(devices: Device[]): string {
     "UDI-Hash",
     "Status",
     "RiskClass",
+    "MDRClass",
+    "MDRRule",
+    "IntendedPurpose",
+    "InternalRiskLevel",
     "BlockComment",
     "Responsible",
     "NonconformityCategory",
@@ -173,6 +189,10 @@ function devicesToCSV(devices: Device[]): string {
       d.udiHash || "",
       DEVICE_STATUS_LABELS[d.status] || d.status || "",
       d.riskClass || "",
+      d.mdrClass || "",
+      d.mdrRule || "",
+      d.intendedPurpose || "",
+      d.internalRiskLevel || "",
       d.blockComment || "",
       d.responsible || "",
       d.nonconformityCategory || "",
@@ -232,6 +252,10 @@ function mapDeviceRowToDevice(row: any): Device {
     udiPi: row.udi_pi ?? "",
     status: (row.status || "released") as DeviceStatus,
     riskClass: row.risk_class ?? "",
+    mdrClass: row.mdr_class ?? "",
+    mdrRule: row.mdr_rule ?? "",
+    intendedPurpose: row.intended_purpose ?? "",
+    internalRiskLevel: row.internal_risk_level ?? "",
     blockComment: row.block_comment ?? "",
     responsible: row.responsible ?? "",
     isArchived: row.is_archived ?? false,
@@ -266,6 +290,10 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
 
     status: device.status,
     risk_class: device.riskClass ?? null,
+    mdr_class: device.mdrClass ?? null,
+    mdr_rule: device.mdrRule ?? null,
+    intended_purpose: device.intendedPurpose ?? null,
+    internal_risk_level: device.internalRiskLevel ?? null,
     block_comment: device.blockComment ?? null,
     is_archived: device.isArchived ?? false,
     dmr_id: device.dmrId ?? null,
@@ -366,6 +394,7 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
+  const [regMeta, setRegMeta] = useState<RegulatoryMeta | null>(null);
   const createdByLabel =
     (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
 
@@ -384,6 +413,94 @@ export default function MedSafePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [udiPiSearch, setUdiPiSearch] = useState("");
   const [isGroupPinned, setIsGroupPinned] = useState(false);
+
+  const previewBatch = formatDateYYMMDD(new Date());
+  const previewDmrId = newProductName.trim()
+    ? `DMR-${previewBatch}-${slugifyName(newProductName)}`
+    : "";
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadRegulatoryMeta = async () => {
+      const name = newProductName.trim();
+      const dmrId = previewDmrId;
+
+      if (!name && !dmrId) {
+        if (isActive) setRegMeta(null);
+        return;
+      }
+
+      let meta: RegulatoryMeta = {};
+
+      if (name) {
+        try {
+          const { data, error } = await supabase
+            .from("products")
+            .select("mdr_class, mdr_rule, intended_purpose, internal_risk_level")
+            .eq("name", name)
+            .limit(1);
+
+          if (!error && data && data.length > 0) {
+            const row = data[0] as any;
+            meta = {
+              mdrClass: row.mdr_class ?? undefined,
+              mdrRule: row.mdr_rule ?? undefined,
+              intendedPurpose: row.intended_purpose ?? undefined,
+              internalRiskLevel: row.internal_risk_level ?? undefined,
+              source: "products",
+            };
+          }
+        } catch (err) {
+          // Silent fail for optional metadata lookup
+        }
+      }
+
+      const needsDmrFallback =
+        !meta.mdrClass &&
+        !meta.mdrRule &&
+        !meta.intendedPurpose &&
+        !meta.internalRiskLevel;
+
+      if (needsDmrFallback && dmrId) {
+        try {
+          const { data, error } = await supabase
+            .from("dmr")
+            .select("mdr_class, mdr_rule, intended_purpose, internal_risk_level")
+            .eq("id", dmrId)
+            .limit(1);
+
+          if (!error && data && data.length > 0) {
+            const row = data[0] as any;
+            meta = {
+              mdrClass: row.mdr_class ?? undefined,
+              mdrRule: row.mdr_rule ?? undefined,
+              intendedPurpose: row.intended_purpose ?? undefined,
+              internalRiskLevel: row.internal_risk_level ?? undefined,
+              source: "dmr",
+            };
+          }
+        } catch (err) {
+          // Silent fail for optional metadata lookup
+        }
+      }
+
+      if (isActive) {
+        const hasAnyMeta =
+          meta.mdrClass ||
+          meta.mdrRule ||
+          meta.intendedPurpose ||
+          meta.internalRiskLevel;
+        setRegMeta(hasAnyMeta ? meta : null);
+      }
+    };
+
+    loadRegulatoryMeta();
+
+    return () => {
+      isActive = false;
+    };
+  }, [newProductName, previewDmrId]);
 
   // ---------- AUTH ----------
 
@@ -579,6 +696,10 @@ export default function MedSafePage() {
         udiPi,
         status: "released",
         riskClass: newRiskClass,
+        mdrClass: regMeta?.mdrClass ?? "",
+        mdrRule: regMeta?.mdrRule ?? "",
+        intendedPurpose: regMeta?.intendedPurpose ?? "",
+        internalRiskLevel: regMeta?.internalRiskLevel ?? "",
         blockComment: "",
         responsible: "",
         isArchived: false,
@@ -1406,6 +1527,29 @@ if (!user) {
                 setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
               }
             />
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-slate-300">MDR-Daten (automatisch)</div>
+              <div className="text-slate-500">
+                Quelle: {regMeta?.source ?? "—"}
+              </div>
+            </div>
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
+              <div className="text-slate-400">MDR Klasse</div>
+              <div className="text-slate-100">{regMeta?.mdrClass ?? "—"}</div>
+              <div className="text-slate-400">MDR Regel</div>
+              <div className="text-slate-100">{regMeta?.mdrRule ?? "—"}</div>
+              <div className="text-slate-400">Intended Purpose</div>
+              <div className="text-slate-100 line-clamp-2">
+                {regMeta?.intendedPurpose ?? "—"}
+              </div>
+              <div className="text-slate-400">Risikokategorie (intern)</div>
+              <div className="text-slate-100">
+                {regMeta?.internalRiskLevel ?? "—"}
+              </div>
+            </div>
           </div>
 
           <button
