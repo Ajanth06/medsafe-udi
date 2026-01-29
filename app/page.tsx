@@ -23,6 +23,7 @@ type Device = {
   status: DeviceStatus;
   riskClass?: string;
   blockComment?: string;
+  responsible?: string;
 
   isArchived?: boolean;
   dmrId?: string;
@@ -142,6 +143,7 @@ function devicesToCSV(devices: Device[]): string {
     "Status",
     "RiskClass",
     "BlockComment",
+    "Responsible",
     "NonconformityCategory",
     "NonconformitySeverity",
     "NonconformityAction",
@@ -172,6 +174,7 @@ function devicesToCSV(devices: Device[]): string {
       DEVICE_STATUS_LABELS[d.status] || d.status || "",
       d.riskClass || "",
       d.blockComment || "",
+      d.responsible || "",
       d.nonconformityCategory || "",
       d.nonconformitySeverity || "",
       d.nonconformityAction || "",
@@ -215,6 +218,7 @@ function mapDeviceRowToDevice(row: any): Device {
     status: (row.status || "released") as DeviceStatus,
     riskClass: row.risk_class ?? "",
     blockComment: row.block_comment ?? "",
+    responsible: row.responsible ?? "",
     isArchived: row.is_archived ?? false,
     dmrId: row.dmr_id ?? "",
     dhrId: row.dhr_id ?? "",
@@ -248,6 +252,7 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
     status: device.status,
     risk_class: device.riskClass ?? null,
     block_comment: device.blockComment ?? null,
+    responsible: device.responsible ?? null,
     is_archived: device.isArchived ?? false,
     dmr_id: device.dmrId ?? null,
     dhr_id: device.dhrId ?? null,
@@ -342,6 +347,7 @@ export default function MedSafePage() {
     status: DeviceStatus;
     riskClass: string;
     blockComment: string;
+    responsible: string;
   } | null>(null);
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
@@ -543,6 +549,7 @@ export default function MedSafePage() {
         status: "released",
         riskClass: "",
         blockComment: "",
+        responsible: "",
         isArchived: false,
         dmrId: dmrIdForBatch,
         dhrId,
@@ -859,6 +866,12 @@ const handleUploadDoc = async () => {
         );
       }
       if (
+        mergedUpdates.responsible !== undefined &&
+        mergedUpdates.responsible !== deviceBefore.responsible
+      ) {
+        changes.push(`Verantwortlich gesetzt auf "${mergedUpdates.responsible || "–"}".`);
+      }
+      if (
         mergedUpdates.nonconformityCategory !== undefined &&
         mergedUpdates.nonconformityCategory !== deviceBefore.nonconformityCategory
       ) {
@@ -951,6 +964,8 @@ const handleUploadDoc = async () => {
         dbPatch.risk_class = mergedUpdates.riskClass ?? null;
       if (mergedUpdates.blockComment !== undefined)
         dbPatch.block_comment = mergedUpdates.blockComment ?? null;
+      if (mergedUpdates.responsible !== undefined)
+        dbPatch.responsible = mergedUpdates.responsible ?? null;
       if (mergedUpdates.nonconformityCategory !== undefined)
         dbPatch.nonconformity_category = mergedUpdates.nonconformityCategory ?? null;
       if (mergedUpdates.nonconformitySeverity !== undefined)
@@ -1467,6 +1482,237 @@ if (!user) {
           )}
         </section>
 
+        {/* Tabelle Gruppe */}
+        {selectedDevice && devicesInSameGroup.length > 0 && (
+          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-2">
+            <div className="font-semibold mb-1">
+              Geräte in dieser Produkt/Charge-Gruppe (inkl. Archiv)
+            </div>
+            <div className="text-[11px] text-slate-400 mb-1">
+              Klick auf eine Zeile, um dieses Gerät aktiv auszuwählen.
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[11px]">
+                <thead>
+                  <tr className="border-b border-slate-700">
+                    <th className="text-left py-1 pr-2">Seriennummer</th>
+                    <th className="text-left py-1 pr-2">UDI-PI</th>
+                    <th className="text-left py-1 pr-2">Status</th>
+                    <th className="text-left py-1 pr-2">Kommentar kurz</th>
+                    <th className="text-left py-1 pr-2">Verantwortlich</th>
+                    <th className="text-left py-1 pr-2">Angelegt am</th>
+                    <th className="text-left py-1 pr-2">Aktion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {devicesInSameGroup.map((d) => {
+                    const isRowSelected = selectedDeviceId === d.id;
+                    const statusLabel = DEVICE_STATUS_LABELS[d.status];
+                    const statusClass = (() => {
+                      switch (statusLabel) {
+                        case "Recall (Rückruf)":
+                          return "recall-row text-slate-100";
+                        case "Gesperrt / Quarantäne":
+                          return "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60";
+                        case "In Herstellung":
+                          return "bg-slate-900/60 shadow-[0_0_16px_rgba(251,146,60,0.5)] hover:bg-slate-900/60";
+                        case "Freigegeben (Inverkehrbringen)":
+                          return "bg-emerald-900/40 hover:bg-emerald-900/40";
+                        default:
+                          return "";
+                      }
+                    })();
+                    const isEditing = editRowId === d.id;
+                    return (
+                      <>
+                        <tr
+                          key={d.id}
+                          onClick={() => setSelectedDeviceId(d.id)}
+                          className={
+                            "border-b border-slate-800 last:border-b-0 cursor-pointer " +
+                            (statusClass
+                              ? statusClass
+                              : isRowSelected
+                              ? "bg-emerald-900/40"
+                              : d.isArchived
+                              ? "bg-slate-800/60"
+                              : "hover:bg-slate-800/60")
+                          }
+                        >
+                          <td className="py-1 pr-2 break-all">{d.serial}</td>
+                          <td className="py-1 pr-2 break-all">{d.udiPi}</td>
+                          <td className="py-1 pr-2">{statusLabel}</td>
+                          <td className="py-1 pr-2 break-all">
+                            {d.blockComment
+                              ? d.blockComment.slice(0, 40) +
+                                (d.blockComment.length > 40 ? "…" : "")
+                              : "–"}
+                          </td>
+                          <td className="py-1 pr-2 break-all">
+                            {d.responsible
+                              ? d.responsible.slice(0, 30) +
+                                (d.responsible.length > 30 ? "…" : "")
+                              : "–"}
+                          </td>
+                          <td className="py-1 pr-2">
+                            {new Date(d.createdAt).toLocaleString()}
+                          </td>
+                          <td className="py-1 pr-2">
+                            <button
+                              className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-200 hover:bg-white/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isEditing) {
+                                  setEditRowId(null);
+                                  setEditDraft(null);
+                                  return;
+                                }
+                                setEditRowId(d.id);
+                                setEditDraft({
+                                  status: d.status,
+                                  riskClass: d.riskClass || "",
+                                  blockComment: d.blockComment || "",
+                                  responsible: d.responsible || "",
+                                });
+                              }}
+                            >
+                              {isEditing ? "Schließen" : "Edit"}
+                            </button>
+                          </td>
+                        </tr>
+                        {isEditing && editDraft && (
+                          <tr
+                            className={
+                              "border-b border-slate-800 " +
+                              (statusClass ? statusClass : "")
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <td colSpan={7} className="py-2">
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-[11px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                  <div>
+                                    <div className="text-slate-400 text-[11px] mb-1">
+                                      Status
+                                    </div>
+                                    <select
+                                      className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                                      value={editDraft.status}
+                                      onChange={(e) =>
+                                        setEditDraft({
+                                          ...editDraft,
+                                          status: e.target.value as DeviceStatus,
+                                        })
+                                      }
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <option value="released">
+                                        Freigegeben (Inverkehrbringen)
+                                      </option>
+                                      <option value="blocked">
+                                        Gesperrt / Quarantäne
+                                      </option>
+                                      <option value="in_production">
+                                        In Herstellung
+                                      </option>
+                                      <option value="recall">
+                                        Recall (Rückruf)
+                                      </option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <div className="text-slate-400 text-[11px] mb-1">
+                                      Risikoklasse
+                                    </div>
+                                    <input
+                                      className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                                      placeholder="I, IIa, IIb, III"
+                                      value={editDraft.riskClass}
+                                      onChange={(e) =>
+                                        setEditDraft({
+                                          ...editDraft,
+                                          riskClass: e.target.value,
+                                        })
+                                      }
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="text-slate-400 text-[11px] mb-1">
+                                      Kommentar / Sperrgrund
+                                    </div>
+                                    <textarea
+                                      className="w-full min-h-[54px] bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                                      placeholder="z.B. Defekt, Sicherheitsrückruf…"
+                                      value={editDraft.blockComment}
+                                      onChange={(e) =>
+                                        setEditDraft({
+                                          ...editDraft,
+                                          blockComment: e.target.value,
+                                        })
+                                      }
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="text-slate-400 text-[11px] mb-1">
+                                      Verantwortlich
+                                    </div>
+                                    <input
+                                      className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                                      placeholder="Name / Abteilung"
+                                      value={editDraft.responsible}
+                                      onChange={(e) =>
+                                        setEditDraft({
+                                          ...editDraft,
+                                          responsible: e.target.value,
+                                        })
+                                      }
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="mt-3 flex items-center gap-2">
+                                  <button
+                                    className="rounded-md bg-emerald-600/90 px-3 py-1 text-[11px] font-medium text-white hover:bg-emerald-500"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpdateDeviceMeta(d.id, {
+                                        status: editDraft.status,
+                                        riskClass: editDraft.riskClass,
+                                        blockComment: editDraft.blockComment,
+                                        responsible: editDraft.responsible,
+                                      });
+                                      setEditRowId(null);
+                                      setEditDraft(null);
+                                    }}
+                                  >
+                                    Speichern
+                                  </button>
+                                  <button
+                                    className="rounded-md border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/10"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditRowId(null);
+                                      setEditDraft(null);
+                                    }}
+                                  >
+                                    Abbrechen
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         {/* Archiv */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Archivierte Geräte (Stilllegung)</h2>
@@ -1725,215 +1971,6 @@ if (!user) {
                   />
                 </div>
               </div>
-
-              {/* Tabelle Gruppe */}
-              {devicesInSameGroup.length > 0 && (
-                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs space-y-2">
-                  <div className="font-semibold mb-1">
-                    Geräte in dieser Produkt/Charge-Gruppe (inkl. Archiv)
-                  </div>
-                  <div className="text-[11px] text-slate-400 mb-1">
-                    Klick auf eine Zeile, um dieses Gerät aktiv auszuwählen.
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-[11px]">
-                      <thead>
-                        <tr className="border-b border-slate-700">
-                          <th className="text-left py-1 pr-2">Seriennummer</th>
-                          <th className="text-left py-1 pr-2">UDI-PI</th>
-                          <th className="text-left py-1 pr-2">Status</th>
-                          <th className="text-left py-1 pr-2">Archiv</th>
-                          <th className="text-left py-1 pr-2">Kommentar kurz</th>
-                          <th className="text-left py-1 pr-2">Angelegt am</th>
-                          <th className="text-left py-1 pr-2">Aktion</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {devicesInSameGroup.map((d) => {
-                          const isRowSelected = selectedDeviceId === d.id;
-                          const statusLabel = DEVICE_STATUS_LABELS[d.status];
-                          const statusClass = (() => {
-                            switch (statusLabel) {
-                              case "Recall (Rückruf)":
-                                return "recall-row text-slate-100";
-                              case "Gesperrt / Quarantäne":
-                                return "bg-rose-950/60 shadow-[0_0_14px_rgba(239,68,68,0.35)] hover:bg-rose-950/60";
-                              case "In Herstellung":
-                                return "bg-slate-900/60 shadow-[0_0_16px_rgba(251,146,60,0.5)] hover:bg-slate-900/60";
-                              case "Freigegeben (Inverkehrbringen)":
-                                return "bg-emerald-900/40 hover:bg-emerald-900/40";
-                              default:
-                                return "";
-                            }
-                          })();
-                          const isEditing = editRowId === d.id;
-                          return (
-                            <>
-                              <tr
-                                key={d.id}
-                                onClick={() => setSelectedDeviceId(d.id)}
-                                className={
-                                  "border-b border-slate-800 last:border-b-0 cursor-pointer " +
-                                  (statusClass
-                                    ? statusClass
-                                    : isRowSelected
-                                    ? "bg-emerald-900/40"
-                                    : d.isArchived
-                                    ? "bg-slate-800/60"
-                                    : "hover:bg-slate-800/60")
-                                }
-                              >
-                                <td className="py-1 pr-2 break-all">{d.serial}</td>
-                                <td className="py-1 pr-2 break-all">{d.udiPi}</td>
-                                <td className="py-1 pr-2">{statusLabel}</td>
-                                <td className="py-1 pr-2">
-                                  {d.isArchived ? "Archiviert" : "–"}
-                                </td>
-                                <td className="py-1 pr-2 break-all">
-                                  {d.blockComment
-                                    ? d.blockComment.slice(0, 40) +
-                                      (d.blockComment.length > 40 ? "…" : "")
-                                    : "–"}
-                                </td>
-                                <td className="py-1 pr-2">
-                                  {new Date(d.createdAt).toLocaleString()}
-                                </td>
-                                <td className="py-1 pr-2">
-                                  <button
-                                    className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-200 hover:bg-white/10"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (isEditing) {
-                                        setEditRowId(null);
-                                        setEditDraft(null);
-                                        return;
-                                      }
-                                      setEditRowId(d.id);
-                                      setEditDraft({
-                                        status: d.status,
-                                        riskClass: d.riskClass || "",
-                                        blockComment: d.blockComment || "",
-                                      });
-                                    }}
-                                  >
-                                    {isEditing ? "Schließen" : "Edit"}
-                                  </button>
-                                </td>
-                              </tr>
-                              {isEditing && editDraft && (
-                                <tr
-                                  className={
-                                    "border-b border-slate-800 " +
-                                    (statusClass ? statusClass : "")
-                                  }
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <td colSpan={7} className="py-2">
-                                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-[11px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                        <div>
-                                          <div className="text-slate-400 text-[11px] mb-1">
-                                            Status
-                                          </div>
-                                          <select
-                                            className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                                            value={editDraft.status}
-                                            onChange={(e) =>
-                                              setEditDraft({
-                                                ...editDraft,
-                                                status: e.target.value as DeviceStatus,
-                                              })
-                                            }
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            <option value="released">
-                                              Freigegeben (Inverkehrbringen)
-                                            </option>
-                                            <option value="blocked">
-                                              Gesperrt / Quarantäne
-                                            </option>
-                                            <option value="in_production">
-                                              In Herstellung
-                                            </option>
-                                            <option value="recall">
-                                              Recall (Rückruf)
-                                            </option>
-                                          </select>
-                                        </div>
-                                        <div>
-                                          <div className="text-slate-400 text-[11px] mb-1">
-                                            Risikoklasse
-                                          </div>
-                                          <input
-                                            className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                                            placeholder="I, IIa, IIb, III"
-                                            value={editDraft.riskClass}
-                                            onChange={(e) =>
-                                              setEditDraft({
-                                                ...editDraft,
-                                                riskClass: e.target.value,
-                                              })
-                                            }
-                                            onClick={(e) => e.stopPropagation()}
-                                          />
-                                        </div>
-                                        <div>
-                                          <div className="text-slate-400 text-[11px] mb-1">
-                                            Kommentar / Sperrgrund
-                                          </div>
-                                          <textarea
-                                            className="w-full min-h-[54px] bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                                            placeholder="z.B. Defekt, Sicherheitsrückruf…"
-                                            value={editDraft.blockComment}
-                                            onChange={(e) =>
-                                              setEditDraft({
-                                                ...editDraft,
-                                                blockComment: e.target.value,
-                                              })
-                                            }
-                                            onClick={(e) => e.stopPropagation()}
-                                          />
-                                        </div>
-                                      </div>
-                                      <div className="mt-3 flex items-center gap-2">
-                                        <button
-                                          className="rounded-md bg-emerald-600/90 px-3 py-1 text-[11px] font-medium text-white hover:bg-emerald-500"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleUpdateDeviceMeta(d.id, {
-                                              status: editDraft.status,
-                                              riskClass: editDraft.riskClass,
-                                              blockComment: editDraft.blockComment,
-                                            });
-                                            setEditRowId(null);
-                                            setEditDraft(null);
-                                          }}
-                                        >
-                                          Speichern
-                                        </button>
-                                        <button
-                                          className="rounded-md border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/10"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditRowId(null);
-                                            setEditDraft(null);
-                                          }}
-                                        >
-                                          Abbrechen
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
 
               {/* Service / PMS */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
