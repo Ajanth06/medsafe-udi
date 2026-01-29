@@ -267,7 +267,6 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
     status: device.status,
     risk_class: device.riskClass ?? null,
     block_comment: device.blockComment ?? null,
-    responsible: device.responsible ?? null,
     is_archived: device.isArchived ?? false,
     dmr_id: device.dmrId ?? null,
     dhr_id: device.dhrId ?? null,
@@ -984,8 +983,6 @@ export default function MedSafePage() {
         dbPatch.risk_class = mergedUpdates.riskClass ?? null;
       if (mergedUpdates.blockComment !== undefined)
         dbPatch.block_comment = mergedUpdates.blockComment ?? null;
-      if (mergedUpdates.responsible !== undefined)
-        dbPatch.responsible = mergedUpdates.responsible ?? null;
       if (mergedUpdates.nonconformityCategory !== undefined)
         dbPatch.nonconformity_category = mergedUpdates.nonconformityCategory ?? null;
       if (mergedUpdates.nonconformitySeverity !== undefined)
