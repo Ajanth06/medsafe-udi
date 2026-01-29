@@ -36,7 +36,8 @@ export default function Sidebar() {
             Geräteübersicht <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
-            Dokumente <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
+            Dokumente (DMR → DHR → NC → Audit){" "}
+            <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
           </div>
         </div>
 
@@ -81,7 +82,7 @@ export default function Sidebar() {
         Navigation
       </div>
 
-      <nav className="space-y-1 text-sm">
+      <nav className="space-y-3 text-sm">
         <a
           href="/"
           className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
@@ -92,15 +93,37 @@ export default function Sidebar() {
           </span>
         </a>
 
-        <a
-          href="/docs"
-          className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
-        >
-          <span>Dokumente</span>
-          <span className="rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
-            Aktiv
-          </span>
-        </a>
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-200/90">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300/80">
+            Dokumente – Process Hub
+          </div>
+          <div className="mt-2 space-y-2 text-[12px]">
+            <a className="block hover:text-white" href="/#dmr">
+              DMR – Design Master Record
+              <div className="text-[10px] text-slate-400">
+                Freigegebene Dokumente, SOP/IFU, Zeichnungen
+              </div>
+            </a>
+            <a className="block hover:text-white" href="/#dhr">
+              DHR – Device History Record
+              <div className="text-[10px] text-slate-400">
+                Gerätebezogene Dokumente, Service, Prüfprotokolle
+              </div>
+            </a>
+            <a className="block hover:text-white" href="/#nc">
+              NC – Nonconformity
+              <div className="text-[10px] text-slate-400">
+                Abweichungen mit Dokumentenbezug
+              </div>
+            </a>
+            <a className="block hover:text-white" href="/#audit">
+              Audit‑Trail
+              <div className="text-[10px] text-slate-400">
+                Revisionssichere Historie
+              </div>
+            </a>
+          </div>
+        </div>
       </nav>
 
       <div className="mt-2 rounded-2xl bg-black/40 px-3 py-3 text-[11px] text-slate-300/85">

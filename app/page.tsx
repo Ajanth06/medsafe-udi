@@ -45,16 +45,19 @@ type Device = {
   pmsNotes?: string;
 };
 
-type DocStatus = "Draft" | "Controlled" | "Final";
+type DocStatus = "Draft" | "Controlled" | "Obsolete" | "Final";
 
 type Doc = {
   id: string;
   deviceId: string;
+  dhrId?: string;
+  dmrId?: string;
   name: string;
-  cid: string;
-  url: string;
+  docType?: string;
+  storagePath?: string;
+  cid?: string;
+  url?: string;
   createdAt: string;
-  category?: string;
 
   version?: string;
   revision?: string;
@@ -73,18 +76,21 @@ type AuditEntry = {
 // PIN nur UI-Schutz
 const ADMIN_PIN = "4837";
 
-const DOC_CATEGORIES = [
-  "Konformität / Declaration of Conformity",
-  "Risikoanalyse",
+const DOC_TYPES = [
+  "Design Master Record (DMR)",
   "Gebrauchsanweisung / IFU",
+  "SOP / Prozess",
+  "Zeichnung / Spezifikation",
+  "Prüfprotokoll",
   "Servicebericht",
   "Wartungsprotokoll",
   "IQ/OQ/PQ",
+  "CAPA-Nachweis",
   "Firmware / Software",
   "Sonstiges",
 ];
 
-const DOC_STATUS_OPTIONS: DocStatus[] = ["Draft", "Controlled", "Final"];
+const DOC_STATUS_OPTIONS: DocStatus[] = ["Draft", "Controlled", "Obsolete"];
 
 const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
   released: "Freigegeben (Inverkehrbringen)",
@@ -294,11 +300,14 @@ function mapDocRowToDoc(row: any): Doc {
   return {
     id: row.id,
     deviceId: row.device_id,
+    dhrId: row.dhr_id ?? "",
+    dmrId: row.dmr_id ?? "",
     name: row.name,
-    cid: row.cid,
-    url: row.url,
+    docType: row.doc_type ?? row.category ?? "",
+    storagePath: row.storage_path ?? row.cid ?? "",
+    cid: row.cid ?? "",
+    url: row.url ?? "",
     createdAt: row.created_at,
-    category: row.category ?? "",
     version: row.version ?? "",
     revision: row.revision ?? "",
     docStatus: (row.doc_status || "Controlled") as DocStatus,
@@ -309,11 +318,15 @@ function mapDocRowToDoc(row: any): Doc {
 function mapDocToDb(doc: Doc | Partial<Doc>): any {
   return {
     device_id: doc.deviceId,
+    dhr_id: doc.dhrId ?? null,
+    dmr_id: doc.dmrId ?? null,
     name: doc.name,
-    cid: doc.cid,
-    url: doc.url,
+    doc_type: doc.docType ?? null,
+    category: doc.docType ?? null,
+    storage_path: doc.storagePath ?? doc.cid ?? null,
+    cid: doc.cid ?? null,
+    url: doc.url ?? null,
     created_at: doc.createdAt,
-    category: doc.category ?? null,
     version: doc.version ?? null,
     revision: doc.revision ?? null,
     doc_status: doc.docStatus ?? null,
@@ -368,12 +381,14 @@ export default function MedSafePage() {
   const [quantity, setQuantity] = useState<number>(1);
 
   const [docName, setDocName] = useState("");
-  const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
+  const [docType, setDocType] = useState<string>(DOC_TYPES[0]);
   const [docVersion, setDocVersion] = useState("");
   const [docRevision, setDocRevision] = useState("");
   const [docStatus, setDocStatus] = useState<DocStatus>("Controlled");
   const [docApprovedBy, setDocApprovedBy] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [docActionId, setDocActionId] = useState<string | null>(null);
+  const [ncDocIds, setNcDocIds] = useState<string[]>([]);
 
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -642,89 +657,75 @@ export default function MedSafePage() {
     setFile(f);
   };
 
-const handleUploadDoc = async () => {
-  if (!selectedDeviceId) {
-    setMessage("Bitte zuerst ein Gerät auswählen.");
-    return;
-  }
-  if (!file) {
-    setMessage("Bitte eine Datei auswählen.");
-    return;
-  }
-
-  setIsUploading(true);
-  setMessage("Upload läuft …");
-
-  try {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("deviceId", selectedDeviceId); // ⬅️ WICHTIG: Gerät mitsenden
-
-    const res = await fetch("/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.error || "Upload fehlgeschlagen");
+  const handleUploadDoc = async () => {
+    if (!selectedDeviceId) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
     }
-
-    const newDoc: Doc = {
-      id: crypto.randomUUID(),
-      deviceId: selectedDeviceId,
-      name: docName || file.name,
-      cid: data.cid,
-      url: data.url,
-      createdAt: new Date().toISOString(),
-      category: docCategory,
-      version: docVersion || "",
-      revision: docRevision || "",
-      docStatus: docStatus || "Controlled",
-      approvedBy: docApprovedBy || "",
-    };
-
-    const { error } = await supabase.from("docs").insert({
-      id: newDoc.id,
-      ...mapDocToDb(newDoc),
-    });
-
-    if (error) {
-      console.error("Supabase Docs Insert Error:", error);
-      setMessage(
-        "Fehler beim Speichern des Dokuments in Supabase: " + error.message
-      );
+    if (!file) {
+      setMessage("Bitte eine Datei auswählen.");
       return;
     }
 
-    setDocs((prev) => [newDoc, ...prev]);
+    const selectedDevice = devices.find((d) => d.id === selectedDeviceId) || null;
 
-    setDocName("");
-    setDocVersion("");
-    setDocRevision("");
-    setDocApprovedBy("");
-    setFile(null);
-    setMessage("Dokument erfolgreich gespeichert.");
+    setIsUploading(true);
+    setMessage("Upload läuft …");
 
-    const shortCid = String(newDoc.cid).slice(0, 10);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("deviceId", selectedDeviceId);
+      formData.append("dhrId", selectedDevice?.dhrId || "");
+      formData.append("dmrId", selectedDevice?.dmrId || "");
+      formData.append("name", docName || file.name);
+      formData.append("docType", docType || "");
+      formData.append("version", docVersion || "");
+      formData.append("revision", docRevision || "");
+      formData.append("status", docStatus || "Controlled");
+      formData.append("approvedBy", docApprovedBy || "");
 
-    addAuditEntry(
-      selectedDeviceId,
-      "document_uploaded",
-      `Dokument "${newDoc.name}" (${newDoc.category || "ohne Kategorie"}, Version: ${
-        newDoc.version || "-"
-      }, Revision: ${newDoc.revision || "-"}, Status: ${
-        newDoc.docStatus
-      }) hochgeladen (CID: ${shortCid}…).`
-    );
-  } catch (err: any) {
-    console.error(err);
-    setMessage(err.message || "Fehler beim Upload.");
-  } finally {
-    setIsUploading(false);
-  }
-};
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Upload fehlgeschlagen");
+      }
+
+      const insertedDoc = data?.doc ? mapDocRowToDoc(data.doc) : null;
+      if (!insertedDoc) {
+        throw new Error("Dokument konnte nicht geladen werden.");
+      }
+
+      setDocs((prev) => [insertedDoc, ...prev.filter((d) => d.id !== insertedDoc.id)]);
+
+      setDocName("");
+      setDocVersion("");
+      setDocRevision("");
+      setDocApprovedBy("");
+      setFile(null);
+      setMessage("Dokument erfolgreich gespeichert.");
+
+      addAuditEntry(
+        selectedDeviceId,
+        "document_uploaded",
+        `Dokument "${insertedDoc.name}" (${insertedDoc.docType || "ohne Typ"}, Version: ${
+          insertedDoc.version || "-"
+        }, Revision: ${insertedDoc.revision || "-"}, Status: ${
+          insertedDoc.docStatus || "Controlled"
+        }) hochgeladen.`
+      );
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err.message || "Fehler beim Upload.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
 
   const handleToggleArchiveDevice = (deviceId: string) => {
@@ -1024,6 +1025,144 @@ const handleUploadDoc = async () => {
     });
   };
 
+  const ensureNonconformityId = () => {
+    if (!selectedDevice) return null;
+    if (selectedDevice.nonconformityId) return selectedDevice.nonconformityId;
+    const newId = generateNonconformityId();
+    handleUpdateDeviceMeta(selectedDevice.id, { nonconformityId: newId });
+    return newId;
+  };
+
+  const loadNcDocLinks = async (device: Device | null) => {
+    if (!device?.nonconformityId) {
+      setNcDocIds([]);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("nc_documents")
+        .select("doc_id")
+        .eq("device_id", device.id)
+        .eq("nc_id", device.nonconformityId);
+      if (error) throw error;
+      setNcDocIds((data || []).map((row: any) => row.doc_id));
+    } catch (err) {
+      console.error("NC-Dokumente Laden Fehler:", err);
+      setNcDocIds([]);
+    }
+  };
+
+  const handleToggleNcDocLink = async (docId: string) => {
+    if (!selectedDevice) return;
+    const ncId = ensureNonconformityId();
+    if (!ncId) return;
+
+    const isLinked = ncDocIds.includes(docId);
+    setDocActionId(docId);
+    try {
+      if (isLinked) {
+        const { error } = await supabase
+          .from("nc_documents")
+          .delete()
+          .eq("device_id", selectedDevice.id)
+          .eq("doc_id", docId)
+          .eq("nc_id", ncId);
+        if (error) throw error;
+        setNcDocIds((prev) => prev.filter((id) => id !== docId));
+        addAuditEntry(
+          selectedDevice.id,
+          "nc_document_unlinked",
+          `Nachweis-Dokument von NC "${ncId}" entfernt.`
+        );
+      } else {
+        const { error } = await supabase.from("nc_documents").insert({
+          device_id: selectedDevice.id,
+          doc_id: docId,
+          nc_id: ncId,
+          created_at: new Date().toISOString(),
+        });
+        if (error) throw error;
+        setNcDocIds((prev) => [...prev, docId]);
+        addAuditEntry(
+          selectedDevice.id,
+          "nc_document_linked",
+          `Nachweis-Dokument mit NC "${ncId}" verknüpft.`
+        );
+      }
+    } catch (err) {
+      console.error("NC-Dokument Link Fehler:", err);
+      setMessage("NC-Dokument-Verknüpfung fehlgeschlagen.");
+    } finally {
+      setDocActionId(null);
+    }
+  };
+
+  const resolveStoragePath = (doc: Doc) => doc.storagePath || doc.cid || "";
+
+  const handleOpenDoc = async (doc: Doc) => {
+    const storagePath = resolveStoragePath(doc);
+    if (!storagePath) {
+      setMessage("Kein Storage-Pfad für dieses Dokument gefunden.");
+      return;
+    }
+
+    setDocActionId(doc.id);
+    try {
+      const res = await fetch(
+        `/api/documents/url?path=${encodeURIComponent(storagePath)}`
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "URL konnte nicht geladen werden.");
+      }
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err.message || "Dokument konnte nicht geöffnet werden.");
+    } finally {
+      setDocActionId(null);
+    }
+  };
+
+  const handleDeleteDoc = async (doc: Doc) => {
+    if (!selectedDeviceId) return;
+    const storagePath = resolveStoragePath(doc);
+    if (!storagePath) {
+      setMessage("Kein Storage-Pfad für dieses Dokument gefunden.");
+      return;
+    }
+    if (!window.confirm(`Dokument "${doc.name}" wirklich löschen?`)) return;
+
+    setDocActionId(doc.id);
+    try {
+      const res = await fetch("/api/documents", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: doc.id, storagePath }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Dokument konnte nicht gelöscht werden.");
+      }
+
+      setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      setNcDocIds((prev) => prev.filter((id) => id !== doc.id));
+      supabase.from("nc_documents").delete().eq("doc_id", doc.id);
+
+      addAuditEntry(
+        selectedDeviceId,
+        "document_deleted",
+        `Dokument "${doc.name}" gelöscht.`
+      );
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err.message || "Fehler beim Löschen des Dokuments.");
+    } finally {
+      setDocActionId(null);
+    }
+  };
+
   const docsForDevice = selectedDeviceId
     ? docs.filter((d) => d.deviceId === selectedDeviceId)
     : [];
@@ -1059,6 +1198,10 @@ const handleUploadDoc = async () => {
   const selectedDevice = selectedDeviceId
     ? devices.find((d) => d.id === selectedDeviceId) || null
     : null;
+
+  useEffect(() => {
+    loadNcDocLinks(selectedDevice);
+  }, [selectedDeviceId, selectedDevice?.nonconformityId]);
 
   const totalDevices = devices.length;
   const totalDocs = docs.length;
@@ -1878,7 +2021,10 @@ if (!user) {
         )}
 
         {/* Geräteakte */}
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+        <section
+          id="dhr"
+          className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4 scroll-mt-24"
+        >
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-semibold">Geräteakte – Detailansicht (DHR)</h2>
             {selectedDevice && (
@@ -2077,10 +2223,17 @@ if (!user) {
         </section>
 
         {/* Dokumente */}
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+        <section
+          id="dmr"
+          className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4 scroll-mt-24"
+        >
           <h2 className="text-lg font-semibold">
             Dokumente zum Gerät (DHR / DMR-Verknüpfung)
           </h2>
+          <p className="text-xs text-slate-400">
+            DMR (Design Master Record) enthält freigegebene Dokumente wie SOP/IFU und
+            Zeichnungen; DHR verknüpft gerätebezogene Dokumente mit DMR und NC.
+          </p>
 
           {selectedDeviceId ? (
             <p className="text-sm text-slate-400">
@@ -2105,12 +2258,12 @@ if (!user) {
 
             <select
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              value={docCategory}
-              onChange={(e) => setDocCategory(e.target.value)}
+              value={docType}
+              onChange={(e) => setDocType(e.target.value)}
             >
-              {DOC_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
+              {DOC_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
                 </option>
               ))}
             </select>
@@ -2171,14 +2324,14 @@ if (!user) {
 
           <button
             onClick={handleUploadDoc}
-            disabled={isUploading}
+            disabled={isUploading || !selectedDeviceId}
             className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
           >
             {isUploading ? "Upload läuft …" : "Dokument speichern"}
           </button>
 
           {selectedDeviceId && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <h3 className="text-sm font-semibold">
                 Dokumente für dieses Gerät (DHR-Dokumente)
               </h3>
@@ -2188,37 +2341,60 @@ if (!user) {
                   Noch keine Dokumente gespeichert.
                 </p>
               ) : (
-                <ul className="space-y-2 text-sm">
-                  {docsForDevice.map((doc) => (
-                    <li
-                      key={doc.id}
-                      className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
-                    >
-                      <div className="font-medium flex flex-wrap items-center gap-2">
-                        <span>{doc.name}</span>
-                        <span className="text-xs text-slate-400">
-                          ({doc.category ? doc.category : "ohne Kategorie"})
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-1">
-                        Version: {doc.version || "–"} | Revision: {doc.revision || "–"} |
-                        Status: {doc.docStatus || "Controlled"} | Freigegeben von:{" "}
-                        {doc.approvedBy || "–"}
-                      </div>
-                      <div className="text-xs text-slate-400 break-all">
-                        CID: {doc.cid}
-                      </div>
-                      <a
-                        href={doc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-emerald-400 underline mt-1 inline-block"
-                      >
-                        Öffnen
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+                <div className="rounded-xl border border-slate-800/80 bg-slate-900/40">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="border-b border-slate-700 text-left">
+                        <th className="py-2 px-3">Name / Typ</th>
+                        <th className="py-2 px-3">Version</th>
+                        <th className="py-2 px-3">Revision</th>
+                        <th className="py-2 px-3">Status</th>
+                        <th className="py-2 px-3">Freigegeben von</th>
+                        <th className="py-2 px-3">Datum</th>
+                        <th className="py-2 px-3">Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {docsForDevice.map((doc) => (
+                        <tr key={doc.id} className="border-b border-slate-800">
+                          <td className="py-2 px-3">
+                            <div className="font-medium">{doc.name}</div>
+                            <div className="text-[10px] text-slate-400">
+                              {doc.docType || "ohne Typ"}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3">{doc.version || "–"}</td>
+                          <td className="py-2 px-3">{doc.revision || "–"}</td>
+                          <td className="py-2 px-3">{doc.docStatus || "Controlled"}</td>
+                          <td className="py-2 px-3">{doc.approvedBy || "–"}</td>
+                          <td className="py-2 px-3">
+                            {doc.createdAt
+                              ? new Date(doc.createdAt).toLocaleString()
+                              : "–"}
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                className="rounded-md border border-emerald-500/60 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
+                                onClick={() => handleOpenDoc(doc)}
+                                disabled={docActionId === doc.id}
+                              >
+                                Öffnen
+                              </button>
+                              <button
+                                className="rounded-md border border-rose-500/60 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20 disabled:opacity-60"
+                                onClick={() => handleDeleteDoc(doc)}
+                                disabled={docActionId === doc.id}
+                              >
+                                Löschen
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           )}
@@ -2226,7 +2402,10 @@ if (!user) {
 
         {/* Abweichung / Quarantäne */}
         {selectedDevice && (
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+          <section
+            id="nc"
+            className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 scroll-mt-24"
+          >
             <h2 className="text-lg font-semibold">
               Abweichung / Quarantäne (Nonconformity)
             </h2>
@@ -2295,11 +2474,57 @@ if (!user) {
                 }
               />
             </div>
+            <div className="pt-2">
+              <div className="text-slate-400 text-[11px] mb-2">
+                Nachweis-Dokument(e) auswählen
+              </div>
+              {docsForDevice.length === 0 ? (
+                <div className="text-[11px] text-slate-400">
+                  Noch keine Dokumente gespeichert.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                  {docsForDevice.map((doc) => (
+                    <label
+                      key={doc.id}
+                      className="flex items-start gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={ncDocIds.includes(doc.id)}
+                        onChange={() => handleToggleNcDocLink(doc.id)}
+                        disabled={docActionId === doc.id}
+                      />
+                      <span>
+                        <span className="font-medium">{doc.name}</span>
+                        <span className="text-slate-400">
+                          {" "}
+                          ({doc.docType || "ohne Typ"})
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {ncDocIds.length > 0 && (
+                <div className="mt-2 text-[11px] text-emerald-200">
+                  Verknüpft:{" "}
+                  {docsForDevice
+                    .filter((doc) => ncDocIds.includes(doc.id))
+                    .map((doc) => doc.name)
+                    .join(", ")}
+                </div>
+              )}
+            </div>
           </section>
         )}
 
         {/* Audit-Log */}
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+        <section
+          id="audit"
+          className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 scroll-mt-24"
+        >
           <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
           <p className="text-xs text-slate-400">
             {selectedDeviceId
