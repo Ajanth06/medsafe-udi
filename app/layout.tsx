@@ -86,10 +86,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       <div className="mt-1 text-sm font-semibold text-slate-50">
                         Geräte &amp; UDI-Verwaltung
                       </div>
-                      <p className="mt-2 text-[11px] leading-relaxed text-slate-300/85">
-                        Deine zentrale Übersicht für UDI-DI, UDI-PI,
-                        Seriennummern, Chargen und verknüpfte Dokumente.
-                      </p>
                     </div>
 
                     <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm shadow-lg shadow-emerald-900/50 backdrop-blur-2xl">
@@ -99,10 +95,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       <div className="mt-1 text-sm font-semibold text-emerald-50">
                         UDI-Hash aktiv
                       </div>
-                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-100/85">
-                        Geräte werden mit kryptografischem Hash gespeichert –
-                        ideal für MDR-/ISO-13485-Audits.
-                      </p>
                     </div>
 
                     <div className="rounded-3xl border border-sky-500/25 bg-sky-500/10 p-4 text-sm shadow-lg shadow-sky-900/50 backdrop-blur-2xl">
@@ -112,10 +104,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       <div className="mt-1 text-sm font-semibold text-sky-50">
                         Cloud-Register
                       </div>
-                      <p className="mt-2 text-[11px] leading-relaxed text-sky-100/85">
-                        Supabase als sicheres Backend. Bereit für Recall-Logik,
-                        Blockierung und Archivierung.
-                      </p>
                     </div>
                   </div>
 
