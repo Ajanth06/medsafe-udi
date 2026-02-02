@@ -875,7 +875,7 @@ export default function RiskAnalysisPage() {
     }
 
     const payload = await response.json();
-    const saved = {
+    const saved: FmeaRowUi = {
       ...decorateRow(payload.row as FmeaRowDb),
       ui_status: "saved",
       ui_error: null,
