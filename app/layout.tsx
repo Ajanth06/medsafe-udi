@@ -87,9 +87,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                         Geräte &amp; UDI-Verwaltung
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-slate-300/85">
-                        Deine zentrale Übersicht für UDI-DI, UDI-PI,
-                        Seriennummern, Chargen und verknüpfte Dokumente.
+                        Zentrale Übersicht für UDI-DI/PI, Seriennummern und Chargen.
                       </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+                        <span className="rounded-full border border-white/15 bg-black/30 px-2 py-0.5 text-slate-200/80">
+                          MDR-ready
+                        </span>
+                        <span className="rounded-full border border-white/15 bg-black/30 px-2 py-0.5 text-slate-200/80">
+                          ISO-13485
+                        </span>
+                      </div>
                     </div>
 
                     <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm shadow-lg shadow-emerald-900/50 backdrop-blur-2xl">
@@ -99,12 +106,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       <div className="mt-1 text-sm font-semibold text-emerald-50">
                         UDI-Hash aktiv
                       </div>
-                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-100/85">
-                        Geräte werden mit kryptografischem Hash gespeichert –
-                        ideal für MDR-/ISO-13485-Audits.
-                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+                        <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-emerald-100">
+                          Hash ✅
+                        </span>
+                        <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-emerald-100">
+                          Audit-safe
+                        </span>
+                      </div>
                     </div>
-                    
 
                     <div className="rounded-3xl border border-sky-500/25 bg-sky-500/10 p-4 text-sm shadow-lg shadow-sky-900/50 backdrop-blur-2xl">
                       <div className="text-[11px] uppercase tracking-[0.22em] text-sky-100/90">
@@ -113,10 +123,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                       <div className="mt-1 text-sm font-semibold text-sky-50">
                         Cloud-Register
                       </div>
-                      <p className="mt-2 text-[11px] leading-relaxed text-sky-100/85">
-                        Supabase als sicheres Backend. Bereit für Recall-Logik,
-                        Blockierung und Archivierung.
-                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+                        <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-sky-100">
+                          Backend ✅
+                        </span>
+                        <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-sky-100">
+                          Recall-ready
+                        </span>
+                      </div>
                     </div>
                   </div>
 
