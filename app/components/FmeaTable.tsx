@@ -73,10 +73,18 @@ const fieldClass = (hasError: boolean, extra = "") =>
       : "border-slate-700 focus:border-emerald-500"
   } ${extra}`;
 
+const normalizeRow = (row: FmeaRowDb): FmeaRowDb => ({
+  ...row,
+  residual_severity_s: row.residual_severity_s ?? null,
+  residual_occurrence_o: row.residual_occurrence_o ?? null,
+  residual_detection_d: row.residual_detection_d ?? null,
+});
+
 const toUiRow = (row: FmeaRowDb): FmeaRowUi => {
-  const derived = computeDerived(row);
+  const normalized = normalizeRow(row);
+  const derived = computeDerived(normalized);
   return {
-    ...row,
+    ...normalized,
     rpn: derived.rpn,
     risk_level: derived.risk_level,
     residual_rpn: derived.residual_rpn,
@@ -114,6 +122,12 @@ export default function FmeaTable({ riskAnalysisId, initialRows }: FmeaTableProp
       })
     );
     setErrorsById((prev) => ({ ...prev, [rowId]: {} }));
+  };
+
+  const parseResidual = (value: string) => {
+    if (!value) return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? Math.round(num) : null;
   };
 
   const saveRow = async (row: FmeaRowUi) => {
@@ -398,9 +412,7 @@ export default function FmeaTable({ riskAnalysisId, initialRows }: FmeaTableProp
                           title={residualError}
                           onChange={(e) =>
                             updateRow(row.id!, {
-                              residual_severity_s: e.target.value
-                                ? Number(e.target.value)
-                                : null,
+                              residual_severity_s: parseResidual(e.target.value),
                             })
                           }
                         >
@@ -417,9 +429,7 @@ export default function FmeaTable({ riskAnalysisId, initialRows }: FmeaTableProp
                           title={residualError}
                           onChange={(e) =>
                             updateRow(row.id!, {
-                              residual_occurrence_o: e.target.value
-                                ? Number(e.target.value)
-                                : null,
+                              residual_occurrence_o: parseResidual(e.target.value),
                             })
                           }
                         >
@@ -436,9 +446,7 @@ export default function FmeaTable({ riskAnalysisId, initialRows }: FmeaTableProp
                           title={residualError}
                           onChange={(e) =>
                             updateRow(row.id!, {
-                              residual_detection_d: e.target.value
-                                ? Number(e.target.value)
-                                : null,
+                              residual_detection_d: parseResidual(e.target.value),
                             })
                           }
                         >
