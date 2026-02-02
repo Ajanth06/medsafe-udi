@@ -13,7 +13,15 @@ import {
   type RiskLevel,
 } from "../../utils/riskFmea";
 
-type FmeaRowUi = FmeaRowDb & { acceptability: Acceptability };
+type FmeaRowUi = Omit<
+  FmeaRowDb,
+  "rpn" | "risk_level" | "residual_rpn"
+> & {
+  rpn: number;
+  risk_level: RiskLevel;
+  residual_rpn: number | null;
+  acceptability: Acceptability;
+};
 
 type FmeaTableProps = {
   riskAnalysisId: string;
