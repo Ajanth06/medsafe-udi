@@ -3,6 +3,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
+import {
+  computeDerived,
+  getAcceptability,
+  validateRow,
+  type Acceptability,
+  type FmeaRowDb,
+  type ReassessmentReason,
+  type RiskLevel,
+} from "../../utils/riskFmea";
 
 type Device = {
   id: string;
@@ -28,6 +37,7 @@ type LifecyclePhase =
   | "Service"
   | "Decommission";
 type ActionStatus = "Open" | "In Progress" | "Done";
+type RowStatus = "idle" | "saving" | "saved" | "error";
 
 type RiskAnalysis = {
   id: string;
@@ -46,29 +56,17 @@ type RiskAnalysis = {
   updated_at: string | null;
 };
 
-type FmeaRow = {
-  id: string;
-  risk_analysis_id: string;
-  lifecycle_phase: LifecyclePhase;
-  process_step: string;
-  failure_mode: string;
-  effect: string;
-  cause: string;
-  existing_controls: string;
-  severity_s: number;
-  occurrence_o: number;
-  detection_d: number;
+type FmeaRowUi = Omit<
+  FmeaRowDb,
+  "rpn" | "risk_level" | "residual_rpn"
+> & {
   rpn: number;
-  risk_level: string;
-  recommended_actions: string;
-  action_owner: string | null;
-  action_due: string | null;
-  action_status: ActionStatus;
-  residual_severity_s: number | null;
-  residual_occurrence_o: number | null;
-  residual_detection_d: number | null;
+  risk_level: RiskLevel;
   residual_rpn: number | null;
-  created_at: string;
+  ui_id: string;
+  acceptability: Acceptability;
+  ui_status: RowStatus;
+  ui_error?: string | null;
 };
 
 type FishboneNode = {
@@ -107,41 +105,33 @@ const FISHBONE_BRANCHES = [
   "Environment",
 ];
 
-const clampScore = (value: number) => {
-  if (Number.isNaN(value)) return 1;
-  return Math.min(10, Math.max(1, Math.round(value)));
-};
+const SCORE_OPTIONS = Array.from({ length: 10 }, (_, idx) => idx + 1);
+const OWNER_ROLES = [
+  "Quality Manager",
+  "Design Engineering",
+  "Manufacturing",
+  "Service Lead",
+  "Regulatory",
+];
+const REASSESSMENT_REASONS: ReassessmentReason[] = [
+  "PMS data",
+  "Complaint trend",
+  "Design change",
+  "Other",
+];
 
-const computeRpn = (s: number, o: number, d: number) =>
-  clampScore(s) * clampScore(o) * clampScore(d);
-
-const riskLevelFromRpn = (rpn: number) => {
-  if (rpn >= 200) return "Critical";
-  if (rpn >= 100) return "High";
-  if (rpn >= 50) return "Medium";
-  return "Low";
-};
-
-const acceptanceFromRpn = (rpn: number) => {
-  if (rpn >= 100) return "Nicht akzeptabel";
-  if (rpn >= 50) return "Review";
-  return "Akzeptabel";
-};
-
-const badgeClassForRisk = (level: string) => {
+const badgeClassForRisk = (level: RiskLevel) => {
   switch (level) {
-    case "Critical":
-      return "bg-rose-500/20 text-rose-200 border-rose-500/50";
     case "High":
-      return "bg-amber-500/20 text-amber-200 border-amber-500/50";
+      return "bg-rose-500/20 text-rose-200 border-rose-500/50";
     case "Medium":
-      return "bg-sky-500/20 text-sky-200 border-sky-500/50";
+      return "bg-amber-500/20 text-amber-200 border-amber-500/50";
     default:
       return "bg-emerald-500/15 text-emerald-200 border-emerald-500/40";
   }
 };
 
-const badgeClassForAcceptance = (status: string) => {
+const badgeClassForAcceptance = (status: Acceptability) => {
   switch (status) {
     case "Nicht akzeptabel":
       return "bg-rose-500/20 text-rose-200 border-rose-500/50";
@@ -152,7 +142,14 @@ const badgeClassForAcceptance = (status: string) => {
   }
 };
 
-const toCsv = (rows: FmeaRow[]) => {
+const fieldClass = (hasError: boolean, extra = "") =>
+  `bg-slate-900/60 rounded px-1 py-0.5 outline-none border ${
+    hasError
+      ? "border-rose-500/80 focus:border-rose-400 text-rose-100"
+      : "border-slate-700 focus:border-emerald-500"
+  } ${extra}`;
+
+const toCsv = (rows: FmeaRowUi[]) => {
   const header = [
     "LifecyclePhase",
     "ProcessStep",
@@ -189,7 +186,7 @@ const toCsv = (rows: FmeaRow[]) => {
       row.detection_d,
       row.rpn,
       row.risk_level,
-      acceptanceFromRpn(row.rpn),
+      row.acceptability,
       row.recommended_actions,
       row.action_owner || "",
       row.action_due || "",
@@ -231,7 +228,10 @@ export default function RiskAnalysisPage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
 
   const [analysis, setAnalysis] = useState<RiskAnalysis | null>(null);
-  const [fmeaRows, setFmeaRows] = useState<FmeaRow[]>([]);
+  const [fmeaRows, setFmeaRows] = useState<FmeaRowUi[]>([]);
+  const [rowErrors, setRowErrors] = useState<Record<string, Record<string, string>>>(
+    {}
+  );
   const [fishboneNodes, setFishboneNodes] = useState<FishboneNode[]>([]);
   const [riskAudit, setRiskAudit] = useState<RiskAuditEntry[]>([]);
   const [fishboneProblem, setFishboneProblem] = useState(
@@ -239,6 +239,31 @@ export default function RiskAnalysisPage() {
   );
   const [branchInputs, setBranchInputs] = useState<Record<string, string>>({});
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const decorateRow = (row: FmeaRowDb): FmeaRowUi => {
+    const derived = computeDerived(row);
+    return {
+      ...row,
+      rpn: derived.rpn,
+      risk_level: derived.risk_level,
+      residual_rpn: derived.residual_rpn,
+      acceptability: getAcceptability(derived.risk_level),
+      ui_id: row.id || `temp-${Math.random().toString(36).slice(2)}`,
+      ui_status: "idle",
+      ui_error: null,
+    };
+  };
+
+  const parseScore = (value: string, fallback: number) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? Math.round(num) : fallback;
+  };
+
+  const parseResidual = (value: string) => {
+    if (!value) return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? Math.round(num) : null;
+  };
 
   const selectedDevice = useMemo(
     () => devices.find((d) => d.id === selectedDeviceId) || null,
@@ -405,7 +430,7 @@ export default function RiskAnalysisPage() {
             .order("created_at", { ascending: false }),
         ]);
 
-      setFmeaRows(fmea || []);
+      setFmeaRows((fmea || []).map((row: FmeaRowDb) => decorateRow(row)));
       setFishboneNodes(fishbone || []);
       setRiskAudit(audit || []);
 
@@ -614,12 +639,11 @@ export default function RiskAnalysisPage() {
         existing_controls: "NC Prozess, CAPA Review",
       }));
 
-      const fmeaPayload = [...baseFmea, ...extraFmea].map((row) => {
+      const fmeaPayload: FmeaRowDb[] = [...baseFmea, ...extraFmea].map((row) => {
         const s = 6;
         const o = 4;
         const d = 4;
-        const rpn = computeRpn(s, o, d);
-        return {
+        const base: FmeaRowDb = {
           risk_analysis_id: current.id,
           lifecycle_phase: row.lifecycle_phase as LifecyclePhase,
           process_step: row.process_step,
@@ -630,8 +654,8 @@ export default function RiskAnalysisPage() {
           severity_s: s,
           occurrence_o: o,
           detection_d: d,
-          rpn,
-          risk_level: riskLevelFromRpn(rpn),
+          rpn: null,
+          risk_level: null,
           recommended_actions: "Review and define mitigation",
           action_owner: null,
           action_due: null,
@@ -640,7 +664,20 @@ export default function RiskAnalysisPage() {
           residual_occurrence_o: null,
           residual_detection_d: null,
           residual_rpn: null,
+          reassessment_enabled: false,
+          reassessment_reason: null,
+          justification_text: null,
+          approved_by: null,
+          approval_date: null,
           created_at: now,
+          updated_at: now,
+        };
+        const derived = computeDerived(base);
+        return {
+          ...base,
+          rpn: derived.rpn,
+          risk_level: derived.risk_level,
+          residual_rpn: derived.residual_rpn,
         };
       });
 
@@ -662,10 +699,22 @@ export default function RiskAnalysisPage() {
         }));
       });
 
-      const { error: fmeaError } = await supabase
-        .from("fmea_rows")
-        .insert(fmeaPayload);
-      if (fmeaError) throw fmeaError;
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Auth required");
+      for (const row of fmeaPayload) {
+        const response = await fetch("/api/risk/fmea", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(row),
+        });
+        if (!response.ok) {
+          throw new Error("FMEA upsert failed");
+        }
+      }
 
       const { error: fishError } = await supabase
         .from("fishbone_nodes")
@@ -737,57 +786,134 @@ export default function RiskAnalysisPage() {
     await addRiskAudit(analysis.id, "status_changed", { status: next });
   };
 
-  const updateFmeaRow = async (rowId: string, patch: Partial<FmeaRow>) => {
-    const existing = fmeaRows.find((row) => row.id === rowId);
-    if (!existing || !analysis) return;
+  const updateFmeaRow = (rowId: string, patch: Partial<FmeaRowUi>) => {
+    setFmeaRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== rowId && row.ui_id !== rowId) return row;
+        const next = { ...row, ...patch } as FmeaRowUi;
+        const derived = computeDerived(next);
+        return {
+          ...next,
+          rpn: derived.rpn,
+          risk_level: derived.risk_level,
+          residual_rpn: derived.residual_rpn,
+          acceptability: getAcceptability(derived.risk_level),
+          ui_status: "idle",
+          ui_error: null,
+        };
+      })
+    );
+    setRowErrors((prev) => ({ ...prev, [rowId]: {} }));
+  };
 
-    const next = { ...existing, ...patch };
-    const s = clampScore(Number(next.severity_s));
-    const o = clampScore(Number(next.occurrence_o));
-    const d = clampScore(Number(next.detection_d));
-    const rpn = computeRpn(s, o, d);
-    const riskLevel = riskLevelFromRpn(rpn);
+  const saveFmeaRow = async (row: FmeaRowUi) => {
+    const dbRow: FmeaRowDb = { ...row };
+    delete (dbRow as any).acceptability;
+    delete (dbRow as any).ui_id;
+    delete (dbRow as any).ui_status;
+    delete (dbRow as any).ui_error;
 
-    let residualRpn: number | null = null;
-    const residualS = next.residual_severity_s;
-    const residualO = next.residual_occurrence_o;
-    const residualD = next.residual_detection_d;
-    if (
-      residualS !== null &&
-      residualO !== null &&
-      residualD !== null &&
-      residualS !== undefined &&
-      residualO !== undefined &&
-      residualD !== undefined
-    ) {
-      residualRpn = computeRpn(residualS, residualO, residualD);
+    const errors = validateRow(dbRow);
+    if (Object.keys(errors).length > 0) {
+      setRowErrors((prev) => ({ ...prev, [row.ui_id]: errors }));
+      setFmeaRows((prev) =>
+        prev.map((r) =>
+          r.ui_id === row.ui_id
+            ? { ...r, ui_status: "error", ui_error: Object.values(errors)[0] }
+            : r
+        )
+      );
+      return;
     }
-
-    const payload = {
-      ...patch,
-      severity_s: s,
-      occurrence_o: o,
-      detection_d: d,
-      rpn,
-      risk_level: riskLevel,
-      residual_rpn: residualRpn,
-    };
 
     setFmeaRows((prev) =>
-      prev.map((row) => (row.id === rowId ? { ...row, ...payload } : row))
+      prev.map((r) =>
+        r.ui_id === row.ui_id ? { ...r, ui_status: "saving", ui_error: null } : r
+      )
     );
 
-    const { error } = await supabase
-      .from("fmea_rows")
-      .update(payload)
-      .eq("id", rowId);
-    if (error) {
-      console.error("FMEA update error:", error);
-    } else {
-      await addRiskAudit(analysis.id, "fmea_row_updated", {
-        row_id: rowId,
-      });
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      setFmeaRows((prev) =>
+        prev.map((r) =>
+          r.ui_id === row.ui_id
+            ? { ...r, ui_status: "error", ui_error: "Bitte einloggen." }
+            : r
+        )
+      );
+      return;
     }
+
+    const response = await fetch("/api/risk/fmea", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(dbRow),
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setRowErrors((prev) => ({
+        ...prev,
+        [row.ui_id]: payload?.errors || {},
+      }));
+      setFmeaRows((prev) =>
+        prev.map((r) =>
+          r.ui_id === row.ui_id
+            ? {
+                ...r,
+                ui_status: "error",
+                ui_error: payload?.error || "Save fehlgeschlagen.",
+              }
+            : r
+        )
+      );
+      return;
+    }
+
+    const payload = await response.json();
+    const saved = {
+      ...decorateRow(payload.row as FmeaRowDb),
+      ui_status: "saved",
+      ui_error: null,
+    };
+    setFmeaRows((prev) =>
+      prev.map((r) => (r.ui_id === row.ui_id ? saved : r))
+    );
+  };
+
+  const deleteFmeaRow = async (row: FmeaRowUi) => {
+    const confirm = window.confirm("Diese FMEA-Zeile löschen?");
+    if (!confirm) return;
+    if (!row.id) {
+      setFmeaRows((prev) => prev.filter((r) => r.ui_id !== row.ui_id));
+      return;
+    }
+
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      setMessage("Bitte einloggen, um zu löschen.");
+      return;
+    }
+
+    const response = await fetch(`/api/risk/fmea?id=${row.id}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setMessage(payload?.error || "Delete fehlgeschlagen.");
+      return;
+    }
+
+    setFmeaRows((prev) => prev.filter((r) => r.ui_id !== row.ui_id));
   };
 
   const handleAddFishboneItem = async (branch: string) => {
@@ -879,8 +1005,7 @@ export default function RiskAnalysisPage() {
       const s = 5;
       const o = 5;
       const d = 5;
-      const rpn = computeRpn(s, o, d);
-      const payload = {
+      const base: FmeaRowDb = {
         risk_analysis_id: current.id,
         lifecycle_phase: "Use" as LifecyclePhase,
         process_step: "New process step",
@@ -891,8 +1016,8 @@ export default function RiskAnalysisPage() {
         severity_s: s,
         occurrence_o: o,
         detection_d: d,
-        rpn,
-        risk_level: riskLevelFromRpn(rpn),
+        rpn: null,
+        risk_level: null,
         recommended_actions: "Define mitigation",
         action_owner: null,
         action_due: null,
@@ -901,17 +1026,22 @@ export default function RiskAnalysisPage() {
         residual_occurrence_o: null,
         residual_detection_d: null,
         residual_rpn: null,
+        reassessment_enabled: false,
+        reassessment_reason: null,
+        justification_text: null,
+        approved_by: null,
+        approval_date: null,
         created_at: now,
+        updated_at: now,
       };
-
-      const { data, error } = await supabase
-        .from("fmea_rows")
-        .insert(payload)
-        .select("*")
-        .single();
-      if (error) throw error;
-      setFmeaRows((prev) => [...prev, data as FmeaRow]);
-      await addRiskAudit(current.id, "fmea_row_added", { row_id: data?.id });
+      const derived = computeDerived(base);
+      const row = decorateRow({
+        ...base,
+        rpn: derived.rpn,
+        risk_level: derived.risk_level,
+        residual_rpn: derived.residual_rpn,
+      });
+      setFmeaRows((prev) => [...prev, row]);
     } catch (err) {
       console.error("FMEA row add error:", err);
       setMessage("Neue FMEA-Zeile konnte nicht angelegt werden.");
@@ -1133,7 +1263,7 @@ export default function RiskAnalysisPage() {
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/70">
-              <table className="min-w-[1400px] w-full text-[11px]">
+              <table className="min-w-[1600px] w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-700 text-left">
                     <th className="py-2 pr-2">Phase</th>
@@ -1152,287 +1282,391 @@ export default function RiskAnalysisPage() {
                     <th className="py-2 pr-2">Owner</th>
                     <th className="py-2 pr-2">Due</th>
                     <th className="py-2 pr-2">Status</th>
-                    <th className="py-2 pr-2">Residual S/O/D</th>
+                    <th className="py-2 pr-2 min-w-[260px]">Residual S/O/D</th>
                     <th className="py-2 pr-2">Residual RPN</th>
+                    <th className="py-2 pr-2">Save</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {fmeaRows.map((row) => (
-                    <tr key={row.id} className="border-b border-slate-800">
-                      <td className="py-2 pr-2">
-                        <select
-                          className="bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.lifecycle_phase}
-                          onChange={(e) =>
-                            updateFmeaRow(row.id, {
-                              lifecycle_phase: e.target.value as LifecyclePhase,
-                            })
-                          }
-                        >
-                          {LIFECYCLE_PHASES.map((phase) => (
-                            <option key={phase} value={phase}>
-                              {phase}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-2 pr-2 min-w-[160px]">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
-                          value={row.process_step}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id
-                                  ? { ...r, process_step: e.target.value }
-                                  : r
-                              )
-                            )
-                          }
-                          onBlur={() =>
-                            updateFmeaRow(row.id, {
-                              process_step: row.process_step,
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2 min-w-[180px]">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
-                          value={row.failure_mode}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id
-                                  ? { ...r, failure_mode: e.target.value }
-                                  : r
-                              )
-                            )
-                          }
-                          onBlur={() =>
-                            updateFmeaRow(row.id, { failure_mode: row.failure_mode })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2 min-w-[180px]">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
-                          value={row.effect}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id ? { ...r, effect: e.target.value } : r
-                              )
-                            )
-                          }
-                          onBlur={() => updateFmeaRow(row.id, { effect: row.effect })}
-                        />
-                      </td>
-                      <td className="py-2 pr-2 min-w-[180px]">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
-                          value={row.cause}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id ? { ...r, cause: e.target.value } : r
-                              )
-                            )
-                          }
-                          onBlur={() => updateFmeaRow(row.id, { cause: row.cause })}
-                        />
-                      </td>
-                      <td className="py-2 pr-2 min-w-[200px]">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5 whitespace-normal break-words"
-                          value={row.existing_controls}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id
-                                  ? { ...r, existing_controls: e.target.value }
-                                  : r
-                              )
-                            )
-                          }
-                          onBlur={() =>
-                            updateFmeaRow(row.id, {
-                              existing_controls: row.existing_controls,
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          className="w-14 bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.severity_s}
-                          onChange={(e) =>
-                            updateFmeaRow(row.id, {
-                              severity_s: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          className="w-14 bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.occurrence_o}
-                          onChange={(e) =>
-                            updateFmeaRow(row.id, {
-                              occurrence_o: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          className="w-14 bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.detection_d}
-                          onChange={(e) =>
-                            updateFmeaRow(row.id, {
-                              detection_d: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">{row.rpn}</td>
-                      <td className="py-2 pr-2">
-                        <span
-                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${badgeClassForRisk(
-                            row.risk_level
-                          )}`}
-                        >
-                          {row.risk_level}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-2">
-                        <span
-                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${badgeClassForAcceptance(
-                            acceptanceFromRpn(row.rpn)
-                          )}`}
-                        >
-                          {acceptanceFromRpn(row.rpn)}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.recommended_actions}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id
-                                  ? { ...r, recommended_actions: e.target.value }
-                                  : r
-                              )
-                            )
-                          }
-                          onBlur={() =>
-                            updateFmeaRow(row.id, {
-                              recommended_actions: row.recommended_actions,
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.action_owner || ""}
-                          onChange={(e) =>
-                            setFmeaRows((prev) =>
-                              prev.map((r) =>
-                                r.id === row.id
-                                  ? { ...r, action_owner: e.target.value }
-                                  : r
-                              )
-                            )
-                          }
-                          onBlur={() =>
-                            updateFmeaRow(row.id, { action_owner: row.action_owner })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          type="date"
-                          className="bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.action_due || ""}
-                          onChange={(e) =>
-                            updateFmeaRow(row.id, { action_due: e.target.value })
-                          }
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <select
-                          className="bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                          value={row.action_status}
-                          onChange={(e) =>
-                            updateFmeaRow(row.id, {
-                              action_status: e.target.value as ActionStatus,
-                            })
-                          }
-                        >
-                          {["Open", "In Progress", "Done"].map((status) => (
-                            <option key={status} value={status}>
-                              {status}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-2 pr-2">
-                        <div className="flex gap-1">
-                          <input
-                            type="number"
-                            min={1}
-                            max={10}
-                            className="w-12 bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                            value={row.residual_severity_s ?? ""}
+                  {fmeaRows.map((row) => {
+                    const errors = rowErrors[row.ui_id] || {};
+                    const residualError =
+                      errors.residual_rpn ||
+                      errors.residual_severity_s ||
+                      errors.residual_occurrence_o ||
+                      errors.residual_detection_d;
+                    return (
+                      <tr key={row.ui_id} className="border-b border-slate-800 align-top">
+                        <td className="py-2 pr-2">
+                          <select
+                            className={fieldClass(Boolean(errors.lifecycle_phase))}
+                            value={row.lifecycle_phase}
+                            title={errors.lifecycle_phase}
                             onChange={(e) =>
-                              updateFmeaRow(row.id, {
-                                residual_severity_s: Number(e.target.value),
+                              updateFmeaRow(row.ui_id, {
+                                lifecycle_phase: e.target.value as LifecyclePhase,
+                              })
+                            }
+                          >
+                            {LIFECYCLE_PHASES.map((phase) => (
+                              <option key={phase} value={phase}>
+                                {phase}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2 min-w-[160px]">
+                          <input
+                            className={fieldClass(Boolean(errors.process_step), "w-full")}
+                            value={row.process_step}
+                            title={errors.process_step}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, { process_step: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="py-2 pr-2 min-w-[180px]">
+                          <input
+                            className={fieldClass(Boolean(errors.failure_mode), "w-full")}
+                            value={row.failure_mode}
+                            title={errors.failure_mode}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, { failure_mode: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="py-2 pr-2 min-w-[180px]">
+                          <input
+                            className={fieldClass(Boolean(errors.effect), "w-full")}
+                            value={row.effect}
+                            title={errors.effect}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, { effect: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="py-2 pr-2 min-w-[180px]">
+                          <input
+                            className={fieldClass(Boolean(errors.cause), "w-full")}
+                            value={row.cause}
+                            title={errors.cause}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, { cause: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="py-2 pr-2 min-w-[200px]">
+                          <input
+                            className={fieldClass(Boolean(errors.existing_controls), "w-full")}
+                            value={row.existing_controls}
+                            title={errors.existing_controls}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, {
+                                existing_controls: e.target.value,
                               })
                             }
                           />
-                          <input
-                            type="number"
-                            min={1}
-                            max={10}
-                            className="w-12 bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                            value={row.residual_occurrence_o ?? ""}
+                        </td>
+                        <td className="py-2 pr-2">
+                          <select
+                            className={fieldClass(Boolean(errors.severity_s), "w-14")}
+                            value={row.severity_s}
+                            title={errors.severity_s}
                             onChange={(e) =>
-                              updateFmeaRow(row.id, {
-                                residual_occurrence_o: Number(e.target.value),
+                              updateFmeaRow(row.ui_id, {
+                                severity_s: parseScore(e.target.value, row.severity_s),
+                              })
+                            }
+                          >
+                            {SCORE_OPTIONS.map((val) => (
+                              <option key={val} value={val}>
+                                {val}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <select
+                            className={fieldClass(Boolean(errors.occurrence_o), "w-14")}
+                            value={row.occurrence_o}
+                            title={errors.occurrence_o}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, {
+                                occurrence_o: parseScore(e.target.value, row.occurrence_o),
+                              })
+                            }
+                          >
+                            {SCORE_OPTIONS.map((val) => (
+                              <option key={val} value={val}>
+                                {val}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <select
+                            className={fieldClass(Boolean(errors.detection_d), "w-14")}
+                            value={row.detection_d}
+                            title={errors.detection_d}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, {
+                                detection_d: parseScore(e.target.value, row.detection_d),
+                              })
+                            }
+                          >
+                            {SCORE_OPTIONS.map((val) => (
+                              <option key={val} value={val}>
+                                {val}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2">{row.rpn}</td>
+                        <td className="py-2 pr-2">
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${badgeClassForRisk(
+                              row.risk_level
+                            )}`}
+                          >
+                            {row.risk_level}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${badgeClassForAcceptance(
+                              row.acceptability
+                            )}`}
+                          >
+                            {row.acceptability}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <input
+                            className={fieldClass(Boolean(errors.recommended_actions), "w-full")}
+                            value={row.recommended_actions}
+                            title={errors.recommended_actions}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, {
+                                recommended_actions: e.target.value,
                               })
                             }
                           />
-                          <input
-                            type="number"
-                            min={1}
-                            max={10}
-                            className="w-12 bg-slate-900/60 border border-slate-700 rounded px-1 py-0.5"
-                            value={row.residual_detection_d ?? ""}
+                        </td>
+                        <td className="py-2 pr-2">
+                          <select
+                            className={fieldClass(Boolean(errors.action_owner), "w-[170px]")}
+                            value={row.action_owner ?? ""}
+                            title={errors.action_owner}
                             onChange={(e) =>
-                              updateFmeaRow(row.id, {
-                                residual_detection_d: Number(e.target.value),
+                              updateFmeaRow(row.ui_id, {
+                                action_owner: e.target.value || null,
+                              })
+                            }
+                          >
+                            <option value="">–</option>
+                            {OWNER_ROLES.map((role) => (
+                              <option key={role} value={role}>
+                                {role}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <input
+                            type="date"
+                            className={fieldClass(Boolean(errors.action_due))}
+                            value={row.action_due || ""}
+                            title={errors.action_due}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, {
+                                action_due: e.target.value || null,
                               })
                             }
                           />
-                        </div>
-                      </td>
-                      <td className="py-2 pr-2">
-                        {row.residual_rpn ?? "–"}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-2 pr-2">
+                          <select
+                            className={fieldClass(Boolean(errors.action_status))}
+                            value={row.action_status}
+                            title={errors.action_status}
+                            onChange={(e) =>
+                              updateFmeaRow(row.ui_id, {
+                                action_status: e.target.value as ActionStatus,
+                              })
+                            }
+                          >
+                            {["Open", "In Progress", "Done"].map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2 min-w-[260px]">
+                          <div className="flex gap-1">
+                            <select
+                              className={fieldClass(Boolean(residualError), "w-12")}
+                              value={row.residual_severity_s ?? ""}
+                              title={residualError}
+                              onChange={(e) =>
+                                updateFmeaRow(row.ui_id, {
+                                  residual_severity_s: parseResidual(e.target.value),
+                                })
+                              }
+                            >
+                              <option value="">–</option>
+                              {SCORE_OPTIONS.map((val) => (
+                                <option key={val} value={val}>
+                                  {val}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              className={fieldClass(Boolean(residualError), "w-12")}
+                              value={row.residual_occurrence_o ?? ""}
+                              title={residualError}
+                              onChange={(e) =>
+                                updateFmeaRow(row.ui_id, {
+                                  residual_occurrence_o: parseResidual(e.target.value),
+                                })
+                              }
+                            >
+                              <option value="">–</option>
+                              {SCORE_OPTIONS.map((val) => (
+                                <option key={val} value={val}>
+                                  {val}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              className={fieldClass(Boolean(residualError), "w-12")}
+                              value={row.residual_detection_d ?? ""}
+                              title={residualError}
+                              onChange={(e) =>
+                                updateFmeaRow(row.ui_id, {
+                                  residual_detection_d: parseResidual(e.target.value),
+                                })
+                              }
+                            >
+                              <option value="">–</option>
+                              {SCORE_OPTIONS.map((val) => (
+                                <option key={val} value={val}>
+                                  {val}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <label className="mt-2 flex items-center gap-2 text-[10px] text-slate-300">
+                            <input
+                              type="checkbox"
+                              className="accent-emerald-500"
+                              checked={row.reassessment_enabled}
+                              onChange={(e) =>
+                                updateFmeaRow(row.ui_id, {
+                                  reassessment_enabled: e.target.checked,
+                                  ...(e.target.checked
+                                    ? {}
+                                    : {
+                                        reassessment_reason: null,
+                                        justification_text: null,
+                                        approved_by: null,
+                                        approval_date: null,
+                                      }),
+                                })
+                              }
+                            />
+                            Residual higher than initial? (PMS re-assessment)
+                          </label>
+                          {row.reassessment_enabled && (
+                            <div className="mt-2 grid grid-cols-1 gap-1">
+                              <select
+                                className={fieldClass(
+                                  Boolean(errors.reassessment_reason),
+                                  "w-full"
+                                )}
+                                value={row.reassessment_reason ?? ""}
+                                title={errors.reassessment_reason}
+                                onChange={(e) =>
+                                  updateFmeaRow(row.ui_id, {
+                                    reassessment_reason: e.target.value
+                                      ? (e.target.value as ReassessmentReason)
+                                      : null,
+                                  })
+                                }
+                              >
+                                <option value="">Reason auswählen …</option>
+                                {REASSESSMENT_REASONS.map((reason) => (
+                                  <option key={reason} value={reason}>
+                                    {reason}
+                                  </option>
+                                ))}
+                              </select>
+                              <textarea
+                                className={fieldClass(
+                                  Boolean(errors.justification_text),
+                                  "w-full min-h-[50px]"
+                                )}
+                                value={row.justification_text ?? ""}
+                                title={errors.justification_text}
+                                onChange={(e) =>
+                                  updateFmeaRow(row.ui_id, {
+                                    justification_text: e.target.value,
+                                  })
+                                }
+                              />
+                              <input
+                                className={fieldClass(Boolean(errors.approved_by), "w-full")}
+                                placeholder="Approved by (Quality)"
+                                value={row.approved_by ?? ""}
+                                title={errors.approved_by}
+                                onChange={(e) =>
+                                  updateFmeaRow(row.ui_id, {
+                                    approved_by: e.target.value,
+                                  })
+                                }
+                              />
+                              <input
+                                type="date"
+                                className={fieldClass(Boolean(errors.approval_date), "w-full")}
+                                value={row.approval_date ?? ""}
+                                title={errors.approval_date}
+                                onChange={(e) =>
+                                  updateFmeaRow(row.ui_id, {
+                                    approval_date: e.target.value || null,
+                                  })
+                                }
+                              />
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 pr-2">{row.residual_rpn ?? "–"}</td>
+                        <td className="py-2 pr-2">
+                          <div className="flex flex-col gap-1 min-w-[90px]">
+                            <button
+                              onClick={() => saveFmeaRow(row)}
+                              className="rounded-md border border-emerald-500/60 bg-emerald-500/15 px-2 py-1 text-[10px] text-emerald-100"
+                            >
+                              {row.ui_status === "saving" ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              onClick={() => deleteFmeaRow(row)}
+                              className="rounded-md border border-rose-500/50 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-100"
+                            >
+                              Delete
+                            </button>
+                            {row.ui_status === "saved" && (
+                              <span className="text-[10px] text-emerald-300">Saved</span>
+                            )}
+                            {row.ui_status === "error" && (
+                              <span className="text-[10px] text-rose-300">
+                                {row.ui_error || "Error"}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
