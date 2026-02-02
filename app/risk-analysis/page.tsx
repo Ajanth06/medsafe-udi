@@ -9,6 +9,8 @@ import {
   type ActionStatus,
   type FmeaRowInput,
   type ReassessmentReason,
+  type RiskLevel,
+  type Acceptability,
 } from "../../lib/risk/fmea";
 
 type Device = {
@@ -54,8 +56,8 @@ type FmeaRow = {
   o: number;
   d: number;
   rpn: number;
-  risk_level: string;
-  acceptability: string;
+  risk_level: RiskLevel;
+  acceptability: Acceptability;
   actions: string;
   owner_role: string | null;
   due_date: string | null;
@@ -729,8 +731,8 @@ export default function RiskAnalysisPage() {
     o: row.o,
     d: row.d,
     rpn: row.rpn,
-    risk_level: row.risk_level as any,
-    acceptability: row.acceptability as any,
+    risk_level: row.risk_level,
+    acceptability: row.acceptability,
     actions: row.actions,
     owner_role: row.owner_role,
     due_date: row.due_date,
