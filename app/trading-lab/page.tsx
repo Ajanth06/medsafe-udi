@@ -1154,26 +1154,6 @@ export default function TradingLabPage() {
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Binance Paper Account</span>
-                  <span
-                    className={`rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] ${
-                      binanceStatus?.configured
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                        : "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                    }`}
-                  >
-                    {binanceStatus?.configured ? "configured" : "missing"}
-                  </span>
-                </div>
-                <div className="mt-2 text-xs text-slate-400">
-                  {binanceStatus
-                    ? `Reachable: ${binanceStatus.reachable ? "yes" : "no"} / Mode: ${binanceStatus.mode}`
-                    : "Status unavailable"}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">
                 <div className="text-slate-500">Feed Errors</div>
                 <div className="mt-1">
                   {feedError || "No upstream error reported."}
