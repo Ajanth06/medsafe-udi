@@ -51,6 +51,8 @@ type SignalsResponse = {
   updatedAt: string;
   source?: string;
   error?: string;
+  hasLiveSignal?: boolean;
+  marketErrors?: Partial<Record<Instrument, string>>;
   signals: MarketSignal[];
 };
 
@@ -232,6 +234,7 @@ export default function TradingCfdPage() {
   const [source, setSource] = useState("Fallback");
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("idle");
   const [feedError, setFeedError] = useState("");
+  const [marketErrors, setMarketErrors] = useState<Partial<Record<Instrument, string>>>({});
   const [signalHistory, setSignalHistory] = useState<SignalHistoryEntry[]>([]);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [journalNotes, setJournalNotes] = useState("");
@@ -326,14 +329,20 @@ export default function TradingCfdPage() {
         if (!active) return;
 
         const nextSignals = data.signals.length > 0 ? data.signals : FALLBACK_SIGNALS;
+        const hasLiveSignal =
+          typeof data.hasLiveSignal === "boolean"
+            ? data.hasLiveSignal
+            : nextSignals.some((signal) => signal.price !== "unavailable");
         setSignals(nextSignals);
         setUpdatedAt(data.updatedAt);
         setSource(data.source || "Twelve Data");
-        setFeedStatus("live");
-        setFeedError("");
+        setMarketErrors(data.marketErrors || {});
+        setFeedStatus(hasLiveSignal ? "live" : "error");
+        setFeedError(data.error || "");
       } catch (error) {
         if (!active) return;
         setFeedStatus("error");
+        setMarketErrors({});
         setFeedError(error instanceof Error ? error.message : "cfd_signal_feed_unavailable");
       }
     };
@@ -643,6 +652,17 @@ export default function TradingCfdPage() {
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                 <div className="text-slate-500">Feed Errors</div>
                 <div className="mt-1 text-slate-300">{feedError || "No upstream error reported."}</div>
+                {Object.keys(marketErrors).length > 0 ? (
+                  <div className="mt-3 space-y-1 text-xs text-slate-400">
+                    {(Object.entries(marketErrors) as Array<[Instrument, string]>).map(
+                      ([instrument, error]) => (
+                        <div key={instrument}>
+                          <span className="text-slate-500">{instrument}:</span> {error}
+                        </div>
+                      )
+                    )}
+                  </div>
+                ) : null}
               </div>
             </div>
 

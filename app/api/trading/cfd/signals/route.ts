@@ -43,6 +43,40 @@ type SeriesResponse = {
   values?: SeriesValue[];
 };
 
+type MarketSignal = {
+  instrument: Instrument;
+  market: string;
+  symbol: string;
+  price: string;
+  rawPrice: number;
+  bid: number | null;
+  ask: number | null;
+  spread: number | null;
+  priceSource: string;
+  changePct: number;
+  signal: SignalSide;
+  regime: Regime;
+  ema20: number;
+  ema50: number;
+  atr: number;
+  atrPct: number;
+  momentumPct: number;
+  volumeRising: boolean;
+  volumeSource: string;
+  confidence: number;
+  session: string;
+  maxSpreadNote: string;
+  plus500ExecutionText: string;
+  catalyst: string;
+  thesis: string;
+  entryZone: string;
+  stopLoss: string;
+  takeProfit: string;
+  riskReward: string;
+  risk: RiskLevel;
+  updatedAt: string;
+};
+
 const CONFIGS: InstrumentConfig[] = [
   {
     instrument: "EUR/USD",
@@ -320,8 +354,45 @@ const buildSignal = (config: InstrumentConfig, quote: QuoteResponse, values: Ser
     updatedAt: candles[candles.length - 1]?.datetime || new Date().toISOString(),
     risk: riskFor(config.instrument, regime),
     ...buildLevels(config, signal, price, atr, ema20),
-  };
+  } satisfies MarketSignal;
 };
+
+const buildUnavailableSignal = (
+  config: InstrumentConfig,
+  message: string
+): MarketSignal => ({
+  instrument: config.instrument,
+  market: config.market,
+  symbol: config.symbol,
+  price: "unavailable",
+  rawPrice: 0,
+  bid: null,
+  ask: null,
+  spread: null,
+  priceSource: "Live feed unavailable",
+  changePct: 0,
+  signal: "WAIT",
+  regime: "Range",
+  ema20: 0,
+  ema50: 0,
+  atr: 0,
+  atrPct: 0,
+  momentumPct: 0,
+  volumeRising: false,
+  volumeSource: "none",
+  confidence: 0,
+  session: detectSession(),
+  maxSpreadNote: config.maxSpreadNote,
+  plus500ExecutionText: `Kein Live-${config.instrument}-Preis verfuegbar`,
+  catalyst: message,
+  thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
+  entryZone: "Unavailable",
+  stopLoss: "Unavailable",
+  takeProfit: "Unavailable",
+  riskReward: "Unavailable",
+  risk: riskFor(config.instrument, "Range"),
+  updatedAt: new Date().toISOString(),
+});
 
 export async function GET() {
   const apiKey = process.env.TWELVEDATA_API_KEY || process.env.TWELVE_DATA_API_KEY;
@@ -350,41 +421,65 @@ export async function GET() {
   }
 
   try {
-    const signals = await Promise.all(
+    const results = await Promise.all(
       CONFIGS.map(async (config) => {
-        const quotePromise =
-          config.instrument === "EUR/USD" && polygonApiKey
-            ? fetchPolygonForexQuote()
-            : polygonApiKey
-              ? fetchMassiveSnapshotQuote(config)
-              : null;
-        const seriesPromise: Promise<SeriesResponse> = fetchJson(
-          `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
-        ) as Promise<SeriesResponse>;
-        const quoteFallbackPromise = fetchJson(
-          `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
-        ) as Promise<QuoteResponse>;
+        try {
+          const quotePromise =
+            config.instrument === "EUR/USD" && polygonApiKey
+              ? fetchPolygonForexQuote()
+              : polygonApiKey
+                ? fetchMassiveSnapshotQuote(config)
+                : null;
+          const seriesPromise: Promise<SeriesResponse> = fetchJson(
+            `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
+          ) as Promise<SeriesResponse>;
+          const quoteFallbackPromise = fetchJson(
+            `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
+          ) as Promise<QuoteResponse>;
 
-        const [polygonQuote, quoteFallback, series] = await Promise.all([
-          quotePromise,
-          quoteFallbackPromise,
-          seriesPromise,
-        ]);
+          const [polygonQuote, quoteFallback, series] = await Promise.all([
+            quotePromise,
+            quoteFallbackPromise,
+            seriesPromise,
+          ]);
 
-        if (series.status === "error" || !series.values?.length) {
-          throw new Error(`${config.instrument}:${
-            series.message || "twelvedata_series_failed"
-          }`);
+          if (series.status === "error" || !series.values?.length) {
+            throw new Error(series.message || "twelvedata_series_failed");
+          }
+
+          return {
+            signal: buildSignal(config, polygonQuote || quoteFallback, series.values),
+            error: null,
+          };
+        } catch (error) {
+          const message =
+            error instanceof Error ? `${config.instrument}:${error.message}` : `${config.instrument}:cfd_signal_route_failed`;
+          return {
+            signal: buildUnavailableSignal(config, message),
+            error: message,
+          };
         }
-
-        return buildSignal(config, polygonQuote || quoteFallback, series.values);
       })
     );
+
+    const signals = results.map((entry) => entry.signal);
+    const errors = results
+      .map((entry) => entry.error)
+      .filter((entry): entry is string => Boolean(entry));
+    const marketErrors = Object.fromEntries(
+      results
+        .filter((entry) => entry.error)
+        .map((entry) => [entry.signal.instrument, entry.error])
+    );
+    const hasLiveSignal = signals.some((entry) => entry.price !== "unavailable");
 
     return NextResponse.json(
       {
         updatedAt: new Date().toISOString(),
         source: polygonApiKey ? "Polygon/Massive + Twelve Data" : "Twelve Data",
+        error: errors.length > 0 ? errors.join(" | ") : undefined,
+        marketErrors,
+        hasLiveSignal,
         signals,
       },
       { status: 200 }
