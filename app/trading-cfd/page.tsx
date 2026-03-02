@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "../../lib/supabaseClient";
 
 type Instrument = "EUR/USD" | "DAX" | "WTI";
 type SignalSide = "BUY" | "SELL" | "WAIT";
@@ -69,9 +71,6 @@ type JournalEntry = {
   notes: string;
   createdAt: string;
 };
-
-const HISTORY_KEY = "trading-cfd-signal-history";
-const JOURNAL_KEY = "trading-cfd-journal";
 
 const FALLBACK_SIGNALS: MarketSignal[] = [
   {
@@ -205,17 +204,8 @@ const parseNumeric = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const readStorage = <T,>(key: string, fallback: T): T => {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-};
-
 export default function TradingCfdPage() {
+  const [user, setUser] = useState<User | null>(null);
   const [sessionMode, setSessionMode] = useState<SessionMode>("Overlap");
   const [riskProfile, setRiskProfile] = useState<RiskProfile>("Balanced");
   const [signals, setSignals] = useState<MarketSignal[]>(FALLBACK_SIGNALS);
@@ -232,21 +222,76 @@ export default function TradingCfdPage() {
   const [journalStatus, setJournalStatus] = useState<JournalStatus>("planned");
 
   useEffect(() => {
-    setSignalHistory(readStorage<SignalHistoryEntry[]>(HISTORY_KEY, []));
-    setJournal(readStorage<JournalEntry[]>(JOURNAL_KEY, []));
+    const loadUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (!error) {
+        setUser(data.user ?? null);
+      }
+    };
+
+    loadUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(signalHistory));
+    if (!user) {
+      setSignalHistory([]);
+      setJournal([]);
+      return;
     }
-  }, [signalHistory]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(JOURNAL_KEY, JSON.stringify(journal));
-    }
-  }, [journal]);
+    const loadPersistedData = async () => {
+      const [{ data: historyData }, { data: journalData }] = await Promise.all([
+        supabase
+          .from("cfd_signal_history")
+          .select("id, instrument, signal, confidence, regime, price, signal_timestamp")
+          .eq("user_id", user.id)
+          .order("signal_timestamp", { ascending: false })
+          .limit(40),
+        supabase
+          .from("cfd_trade_journal")
+          .select("id, instrument, signal, entry, stop_loss, take_profit, status, notes, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(50),
+      ]);
+
+      setSignalHistory(
+        (historyData || []).map((entry) => ({
+          id: entry.id,
+          instrument: entry.instrument as Instrument,
+          signal: entry.signal as SignalSide,
+          confidence: entry.confidence,
+          regime: entry.regime as Regime,
+          price: entry.price,
+          updatedAt: entry.signal_timestamp,
+        }))
+      );
+
+      setJournal(
+        (journalData || []).map((entry) => ({
+          id: entry.id,
+          instrument: entry.instrument as Instrument,
+          signal: entry.signal as SignalSide,
+          entry: entry.entry,
+          stopLoss: entry.stop_loss,
+          takeProfit: entry.take_profit,
+          status: entry.status as JournalStatus,
+          notes: entry.notes,
+          createdAt: entry.created_at,
+        }))
+      );
+    };
+
+    void loadPersistedData();
+  }, [user]);
 
   useEffect(() => {
     let active = true;
@@ -287,36 +332,57 @@ export default function TradingCfdPage() {
   }, []);
 
   useEffect(() => {
-    if (signals.length === 0) return;
+    if (!user || signals.length === 0) return;
 
-    setSignalHistory((previous) => {
-      const additions = signals
-        .filter(
-          (signal) =>
-            !previous.some(
-              (entry) =>
-                entry.instrument === signal.instrument &&
-                entry.updatedAt === signal.updatedAt &&
-                entry.signal === signal.signal
-            )
-        )
-        .map((signal) => ({
-          id: `${signal.instrument}-${signal.updatedAt}-${signal.signal}`,
-          instrument: signal.instrument,
-          signal: signal.signal,
-          confidence: signal.confidence,
-          regime: signal.regime,
-          price: signal.price,
-          updatedAt: signal.updatedAt,
-        }));
+    const syncSignalHistory = async () => {
+      const payload = signals.map((signal) => ({
+        user_id: user.id,
+        instrument: signal.instrument,
+        signal: signal.signal,
+        confidence: signal.confidence,
+        regime: signal.regime,
+        price: signal.price,
+        signal_timestamp: signal.updatedAt,
+      }));
 
-      if (additions.length === 0) {
-        return previous;
+      const { data } = await supabase
+        .from("cfd_signal_history")
+        .upsert(payload, {
+          onConflict: "user_id,instrument,signal,signal_timestamp",
+          ignoreDuplicates: true,
+        })
+        .select("id");
+
+      if (!data) {
+        return;
       }
 
-      return [...additions.reverse(), ...previous].slice(0, 40);
-    });
-  }, [signals]);
+      const { data: historyData } = await supabase
+        .from("cfd_signal_history")
+        .select("id, instrument, signal, confidence, regime, price, signal_timestamp")
+        .eq("user_id", user.id)
+        .order("signal_timestamp", { ascending: false })
+        .limit(40);
+
+      if (!historyData) {
+        return;
+      }
+
+      setSignalHistory(
+        historyData.map((entry) => ({
+          id: entry.id,
+          instrument: entry.instrument as Instrument,
+          signal: entry.signal as SignalSide,
+          confidence: entry.confidence,
+          regime: entry.regime as Regime,
+          price: entry.price,
+          updatedAt: entry.signal_timestamp,
+        }))
+      );
+    };
+
+    void syncSignalHistory();
+  }, [signals, user]);
 
   const profileConfig = useMemo(() => {
     if (riskProfile === "Conservative") {
@@ -386,22 +452,43 @@ export default function TradingCfdPage() {
     };
   }, [accountSize, riskPercent, selectedSignal]);
 
-  const addJournalEntry = () => {
-    if (!selectedSignal) return;
+  const addJournalEntry = async () => {
+    if (!selectedSignal || !user) return;
 
-    const entry: JournalEntry = {
-      id: `${selectedSignal.instrument}-${Date.now()}`,
+    const payload = {
+      user_id: user.id,
       instrument: selectedSignal.instrument,
       signal: selectedSignal.signal,
       entry: selectedSignal.entryZone,
-      stopLoss: selectedSignal.stopLoss,
-      takeProfit: selectedSignal.takeProfit,
+      stop_loss: selectedSignal.stopLoss,
+      take_profit: selectedSignal.takeProfit,
       status: journalStatus,
       notes: journalNotes.trim(),
-      createdAt: new Date().toISOString(),
     };
 
-    setJournal((previous) => [entry, ...previous].slice(0, 50));
+    const { data, error } = await supabase
+      .from("cfd_trade_journal")
+      .insert(payload)
+      .select("id, instrument, signal, entry, stop_loss, take_profit, status, notes, created_at")
+      .single();
+
+    if (error || !data) {
+      return;
+    }
+
+    const nextEntry: JournalEntry = {
+      id: data.id,
+      instrument: data.instrument as Instrument,
+      signal: data.signal as SignalSide,
+      entry: data.entry,
+      stopLoss: data.stop_loss,
+      takeProfit: data.take_profit,
+      status: data.status as JournalStatus,
+      notes: data.notes,
+      createdAt: data.created_at,
+    };
+
+    setJournal((previous) => [nextEntry, ...previous].slice(0, 50));
     setJournalNotes("");
     setJournalStatus("planned");
   };
@@ -459,6 +546,12 @@ export default function TradingCfdPage() {
             </div>
 
             <div className="mt-5 grid gap-3 text-sm">
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                <div className="text-slate-500">Persistence</div>
+                <div className="mt-1 font-semibold text-slate-100">
+                  {user ? "Supabase synced" : "Login required for history and journal"}
+                </div>
+              </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                 <div className="text-slate-500">Source</div>
                 <div className="mt-1 font-semibold text-slate-100">{source}</div>
@@ -700,7 +793,7 @@ export default function TradingCfdPage() {
                 <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Journal</div>
                 <h2 className="mt-1 text-xl font-semibold">Manual Plus500 Entries</h2>
               </div>
-              <span className="text-xs text-slate-500">Persistiert im Browser</span>
+              <span className="text-xs text-slate-500">Persistiert in Supabase</span>
             </div>
 
             {selectedSignal && (
@@ -732,10 +825,16 @@ export default function TradingCfdPage() {
                 </label>
                 <button
                   onClick={addJournalEntry}
+                  disabled={!user}
                   className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500"
                 >
                   Save Journal Entry
                 </button>
+                {!user && (
+                  <div className="text-xs text-amber-200">
+                    Zum Speichern musst du eingeloggt sein, damit der Eintrag in Supabase deinem User zugeordnet wird.
+                  </div>
+                )}
               </div>
             )}
           </article>
