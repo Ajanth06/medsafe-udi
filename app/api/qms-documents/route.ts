@@ -1,7 +1,7 @@
 // app/api/qms-documents/route.ts
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "../../../lib/supabaseServerClient";
+import { getSupabaseAdmin } from "../../../lib/supabaseServerClient";
 import crypto from "crypto";
 
 export const runtime = "nodejs";
@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    const supabaseAdmin = getSupabaseAdmin();
     const formData = await req.formData();
     const file = formData.get("file");
     const documentKey = formData.get("documentKey") as string | null;
@@ -29,15 +30,15 @@ export async function POST(req: Request) {
       );
     }
 
-    const anyFile = file as any;
+    const uploadedFile = file as Blob & { name?: string; type?: string };
     const originalName: string =
-      typeof anyFile.name === "string"
-        ? anyFile.name
+      typeof uploadedFile.name === "string"
+        ? uploadedFile.name
         : `upload-${Date.now()}.bin`;
 
     const mimeType: string =
-      typeof anyFile.type === "string" && anyFile.type.length > 0
-        ? anyFile.type
+      typeof uploadedFile.type === "string" && uploadedFile.type.length > 0
+        ? uploadedFile.type
         : "application/octet-stream";
 
     const safeName = originalName.replace(/[^a-zA-Z0-9.\-_]/g, "_");

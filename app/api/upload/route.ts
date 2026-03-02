@@ -1,13 +1,14 @@
 // app/api/upload/route.ts
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "../../../lib/supabaseServerClient";
+import { getSupabaseAdmin } from "../../../lib/supabaseServerClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    const supabaseAdmin = getSupabaseAdmin();
     const formData = await req.formData();
     const file = formData.get("file");
     const deviceId = formData.get("deviceId") as string | null;
@@ -20,10 +21,10 @@ export async function POST(req: Request) {
     }
 
     // Name aus dem hochgeladenen File ziehen
-    const anyFile = file as any;
+    const uploadedFile = file as Blob & { name?: string; type?: string };
     const originalName: string =
-      typeof anyFile.name === "string"
-        ? anyFile.name
+      typeof uploadedFile.name === "string"
+        ? uploadedFile.name
         : `upload-${Date.now()}.pdf`;
 
     const safeName = originalName.replace(/[^a-zA-Z0-9.\-_]/g, "_");
@@ -41,7 +42,7 @@ export async function POST(req: Request) {
     const { error: uploadError } = await supabaseAdmin.storage
       .from("docs")
       .upload(path, buffer, {
-        contentType: anyFile.type || "application/octet-stream",
+        contentType: uploadedFile.type || "application/octet-stream",
         upsert: false,
       });
 
