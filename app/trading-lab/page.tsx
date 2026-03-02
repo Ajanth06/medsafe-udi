@@ -798,6 +798,32 @@ export default function TradingLabPage() {
         .slice(0, 6),
     [market]
   );
+  const binanceBots = useMemo(
+    () =>
+      bots.filter(
+        (bot) => bot.buyExchange === "Binance" || bot.sellExchange === "Binance"
+      ),
+    [bots]
+  );
+  const runningBinanceBots = binanceBots.filter(
+    (bot) => bot.status === "running"
+  ).length;
+  const binancePnlUsdt = binanceBots.reduce(
+    (sum, bot) => sum + bot.cumulativePnlUsd,
+    0
+  );
+  const binanceTradeCount = binanceBots.reduce(
+    (sum, bot) => sum + bot.totalTrades,
+    0
+  );
+  const binanceOpportunities = useMemo(
+    () =>
+      topOpportunities.filter(
+        (entry) =>
+          entry.buyExchange === "Binance" || entry.sellExchange === "Binance"
+      ),
+    [topOpportunities]
+  );
 
   const updateBot = (
     botId: string,
@@ -892,6 +918,171 @@ export default function TradingLabPage() {
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <article className="rounded-3xl border border-amber-400/20 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(15,23,42,0.92))] p-5 shadow-xl shadow-black/20">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-amber-200/80">
+                  Binance Trading Lab
+                </div>
+                <h2 className="mt-1 text-2xl font-semibold text-white">
+                  Binance Execution Desk
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm text-slate-300">
+                  Eigenstaendiger Bereich fuer Binance-Paper-Execution, Venue-Health,
+                  aktive Bot-Kapazitaet und spaetere Erweiterung auf Testnet oder
+                  Live-Orders mit serverseitigen Guards.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-amber-100">
+                  Binance
+                </span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-200">
+                  Paper
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                <div className="text-xs text-slate-400">Binance Bots</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-100">
+                  {binanceBots.length}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                <div className="text-xs text-slate-400">Running</div>
+                <div className="mt-1 text-2xl font-semibold text-emerald-300">
+                  {runningBinanceBots}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                <div className="text-xs text-slate-400">Trades</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-100">
+                  {binanceTradeCount}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                <div className="text-xs text-slate-400">PnL</div>
+                <div className="mt-1 text-2xl font-semibold text-amber-200">
+                  {formatUsdt(binancePnlUsdt)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                  Venue Status
+                </div>
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-3">
+                    <span className="text-slate-400">API Credentials</span>
+                    <span className={binanceStatus?.configured ? "text-emerald-300" : "text-amber-200"}>
+                      {binanceStatus?.configured ? "Configured" : "Missing"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-3">
+                    <span className="text-slate-400">Exchange Reachability</span>
+                    <span className={binanceStatus?.reachable ? "text-emerald-300" : "text-slate-300"}>
+                      {binanceStatus?.reachable ? "Online" : "Unknown"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-3">
+                    <span className="text-slate-400">Execution Profile</span>
+                    <span className="text-amber-200">Paper Trading</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-slate-950/70 px-3 py-3">
+                    <span className="text-slate-400">WebSocket Feed</span>
+                    <span className={socketStatus === "live" ? "text-emerald-300" : "text-slate-300"}>
+                      {socketStatus}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                  Binance Opportunities
+                </div>
+                <div className="mt-3 space-y-3">
+                  {binanceOpportunities.length === 0 ? (
+                    <div className="rounded-2xl border border-white/8 bg-slate-950/70 px-4 py-4 text-sm text-slate-400">
+                      Aktuell keine Binance-bezogenen Routen im Opportunity-Feed.
+                    </div>
+                  ) : (
+                    binanceOpportunities.slice(0, 3).map((entry) => (
+                      <div
+                        key={`${entry.pair}-${entry.buyExchange}-${entry.sellExchange}-binance`}
+                        className="rounded-2xl border border-white/8 bg-slate-950/70 px-4 py-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="font-medium text-slate-100">{entry.pair}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              Buy {entry.buyExchange} / Sell {entry.sellExchange}
+                            </div>
+                          </div>
+                          <div className="text-sm font-semibold text-emerald-300">
+                            {formatPctWithBps(entry.grossSpreadPct)}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
+              Binance Focus
+            </div>
+            <h2 className="mt-1 text-xl font-semibold">Venue-bound Bots</h2>
+
+            <div className="mt-5 space-y-3">
+              {binanceBots.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm text-slate-400">
+                  Noch keine Bots mit Binance als Buy- oder Sell-Exchange vorhanden.
+                </div>
+              ) : (
+                binanceBots.map((bot) => (
+                  <div
+                    key={`binance-focus-${bot.id}`}
+                    className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-slate-100">{bot.name}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {bot.pair} / {bot.buyExchange} {"->"} {bot.sellExchange}
+                        </div>
+                      </div>
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] ${botStatusClass(bot.status)}`}>
+                        {bot.status}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-xl border border-white/8 bg-slate-950/70 px-3 py-3">
+                        <div className="text-slate-500">Signal</div>
+                        <div className="mt-1 text-slate-200">{bot.lastSignal}</div>
+                      </div>
+                      <div className="rounded-xl border border-white/8 bg-slate-950/70 px-3 py-3">
+                        <div className="text-slate-500">PnL</div>
+                        <div className="mt-1 text-amber-200">
+                          {formatUsdt(bot.cumulativePnlUsd)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </article>
         </section>
 
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.85fr]">
