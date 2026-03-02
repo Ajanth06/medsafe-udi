@@ -86,7 +86,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     bid: null,
     ask: null,
     spread: null,
-    priceSource: "Live feed unavailable",
+    priceSource: "Twelve Data unavailable",
     changePct: 0,
     signal: "WAIT",
     regime: "Range",
@@ -101,7 +101,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     session: "Off Hours",
     maxSpreadNote: "Max 1.2 pip",
     plus500ExecutionText: "Kein Live-Forex-Preis verfuegbar",
-    catalyst: "Polygon/Massive Feed liefert aktuell keinen gueltigen EUR/USD Quote.",
+    catalyst: "Twelve Data liefert aktuell keinen gueltigen EUR/USD Wert.",
     thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
     entryZone: "Unavailable",
     stopLoss: "Unavailable",
@@ -118,7 +118,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     bid: null,
     ask: null,
     spread: null,
-    priceSource: "Live feed unavailable",
+    priceSource: "Twelve Data unavailable",
     changePct: 0,
     signal: "WAIT",
     regime: "Range",
@@ -133,7 +133,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     session: "Off Hours",
     maxSpreadNote: "Max 2.5 points",
     plus500ExecutionText: "Kein Live-DAX-Preis verfuegbar",
-    catalyst: "Massive Feed liefert aktuell keinen gueltigen DAX Quote.",
+    catalyst: "Twelve Data liefert aktuell keinen gueltigen DAX Wert.",
     thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
     entryZone: "Unavailable",
     stopLoss: "Unavailable",
@@ -150,7 +150,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     bid: null,
     ask: null,
     spread: null,
-    priceSource: "Live feed unavailable",
+    priceSource: "Twelve Data unavailable",
     changePct: 0,
     signal: "WAIT",
     regime: "Range",
@@ -165,7 +165,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     session: "Off Hours",
     maxSpreadNote: "Max 0.06 USD",
     plus500ExecutionText: "Kein Live-WTI-Preis verfuegbar",
-    catalyst: "Massive/TwelveData Feed liefert aktuell keinen gueltigen WTI Quote.",
+    catalyst: "Twelve Data liefert aktuell keinen gueltigen WTI Wert.",
     thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
     entryZone: "Unavailable",
     stopLoss: "Unavailable",
@@ -227,7 +227,7 @@ export default function TradingCfdPage() {
   const [accountSize, setAccountSize] = useState(10000);
   const [riskPercent, setRiskPercent] = useState(0.8);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [source, setSource] = useState("Fallback");
+  const [source, setSource] = useState("Twelve Data");
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("idle");
   const [feedError, setFeedError] = useState("");
   const [marketErrors, setMarketErrors] = useState<Partial<Record<Instrument, string>>>({});
@@ -344,7 +344,7 @@ export default function TradingCfdPage() {
     };
 
     void loadSignals();
-    const intervalId = window.setInterval(loadSignals, 10000);
+    const intervalId = window.setInterval(loadSignals, 60000);
 
     return () => {
       active = false;
@@ -630,7 +630,7 @@ export default function TradingCfdPage() {
                 <div className="mt-1 font-semibold text-slate-100">{source}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Massive Coverage</div>
+                <div className="text-slate-500">Price Coverage</div>
                 <div className="mt-1 font-semibold text-slate-100">
                   {signals
                     .map((entry) => `${entry.instrument}: ${entry.priceSource}`)
@@ -718,7 +718,7 @@ export default function TradingCfdPage() {
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signal Board</div>
               <h2 className="mt-1 text-xl font-semibold">EUR/USD, DAX, WTI</h2>
             </div>
-            <div className="text-xs text-slate-500">Polling every 10 seconds via `/api/trading/cfd/signals`.</div>
+            <div className="text-xs text-slate-500">Polling every 60 seconds via `/api/trading/cfd/signals`.</div>
           </div>
 
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
