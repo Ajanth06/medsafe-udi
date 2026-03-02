@@ -59,9 +59,11 @@ type TradeEntry = {
   buyExchange: Exchange;
   sellExchange: Exchange;
   grossSpreadPct: number;
+  feeImpactPct: number;
+  slippageImpactPct: number;
   netEdgePct: number;
-  notionalUsd: number;
-  pnlUsd: number;
+  notionalUsdt: number;
+  pnlUsdt: number;
   createdAt: string;
   mode: BotMode;
 };
@@ -76,25 +78,25 @@ type BacktestResult = {
 };
 
 const EXCHANGES: Exchange[] = ["Binance", "Coinbase", "Kraken"];
-const PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD"] as const;
+const PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"] as const;
 
 const BINANCE_STREAMS: Record<string, string> = {
-  "BTC/USD": "btcusdt@bookTicker",
-  "ETH/USD": "ethusdt@bookTicker",
-  "SOL/USD": "solusdt@bookTicker",
+  "BTC/USDT": "btcusdt@bookTicker",
+  "ETH/USDT": "ethusdt@bookTicker",
+  "SOL/USDT": "solusdt@bookTicker",
 };
 
 const BINANCE_SYMBOL_TO_PAIR: Record<string, string> = {
-  BTCUSDT: "BTC/USD",
-  ETHUSDT: "ETH/USD",
-  SOLUSDT: "SOL/USD",
+  BTCUSDT: "BTC/USDT",
+  ETHUSDT: "ETH/USDT",
+  SOLUSDT: "SOL/USDT",
 };
 
 const INITIAL_BOTS: BotConfig[] = [
   {
     id: "bot-btc-binance-kraken",
     name: "BTC Cross-Exchange",
-    pair: "BTC/USD",
+    pair: "BTC/USDT",
     buyExchange: "Binance",
     sellExchange: "Kraken",
     mode: "Live",
@@ -111,7 +113,7 @@ const INITIAL_BOTS: BotConfig[] = [
   {
     id: "bot-eth-coinbase-binance",
     name: "ETH Spread Hunter",
-    pair: "ETH/USD",
+    pair: "ETH/USDT",
     buyExchange: "Coinbase",
     sellExchange: "Binance",
     mode: "Paper",
@@ -128,7 +130,7 @@ const INITIAL_BOTS: BotConfig[] = [
   {
     id: "bot-sol-kraken-binance",
     name: "SOL Rebalance Bot",
-    pair: "SOL/USD",
+    pair: "SOL/USDT",
     buyExchange: "Kraken",
     sellExchange: "Binance",
     mode: "Manual",
@@ -144,12 +146,11 @@ const INITIAL_BOTS: BotConfig[] = [
   },
 ];
 
-const formatUsd = (value: number) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+const formatUsdt = (value: number) =>
+  `${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(value)} USDT`;
 
 const formatPct = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 
@@ -167,6 +168,25 @@ const buildEmptyMarket = (): MarketResponse => ({
     errors: {},
   })),
 });
+
+const computeNetMetrics = (
+  buyAsk: number,
+  sellBid: number,
+  feeBps: number,
+  slippageBps: number
+) => {
+  const gross = (sellBid - buyAsk) / buyAsk;
+  const fees = feeBps / 10000;
+  const slippage = slippageBps / 10000;
+  const net = gross - fees * 2 - slippage * 2;
+
+  return {
+    grossSpreadPct: Number((gross * 100).toFixed(4)),
+    feeImpactPct: Number((fees * 2 * 100).toFixed(4)),
+    slippageImpactPct: Number((slippage * 2 * 100).toFixed(4)),
+    netEdgePct: Number((net * 100).toFixed(4)),
+  };
+};
 
 const buildOpportunities = (
   quotes: Partial<Record<Exchange, Quote>>
@@ -212,56 +232,83 @@ const computeBotEdge = (bot: BotConfig, market: MarketResponse | null) => {
     return null;
   }
 
-  const grossSpreadPct = ((sellQuote.bid - buyQuote.ask) / buyQuote.ask) * 100;
-  const costPct = (bot.feeBps * 2 + bot.slippageBps) / 100;
-  const netEdgePct = grossSpreadPct - costPct;
+  const metrics = computeNetMetrics(
+    buyQuote.ask,
+    sellQuote.bid,
+    bot.feeBps,
+    bot.slippageBps
+  );
 
   return {
     buyPrice: buyQuote.ask,
     sellPrice: sellQuote.bid,
-    grossSpreadPct: Number(grossSpreadPct.toFixed(4)),
-    netEdgePct: Number(netEdgePct.toFixed(4)),
+    ...metrics,
   };
 };
 
-const buildBacktest = (
-  bot: BotConfig,
-  market: MarketResponse | null
-): BacktestResult => {
-  const liveEdge = computeBotEdge(bot, market)?.netEdgePct ?? 0.18;
+const buildBacktest = (bot: BotConfig, market: MarketResponse | null): BacktestResult => {
+  const pairState = findPairState(market, bot.pair);
+  const liveBuyAsk =
+    pairState?.quotes[bot.buyExchange]?.ask ||
+    pairState?.quotes.Binance?.ask ||
+    100;
+  const liveSellBid =
+    pairState?.quotes[bot.sellExchange]?.bid ||
+    pairState?.quotes.Kraken?.bid ||
+    liveBuyAsk * 1.002;
   let runningEquity = 0;
   let peak = 0;
   let maxDrawdown = 0;
   let wins = 0;
   let sumEdges = 0;
   let totalPnl = 0;
+  let trades = 0;
 
   for (let index = 0; index < 14; index += 1) {
-    const cycle = Math.sin(index * 1.13 + bot.name.length) * 0.38;
-    const drift = liveEdge * 0.72;
-    const netEdgePct = Number((drift + cycle).toFixed(3));
-    const notionalUsd =
-      bot.maxCapitalUsd * (0.45 + ((index + 1) % 4) * 0.12);
-    const pnlUsd = Number((notionalUsd * (netEdgePct / 100)).toFixed(2));
+    const buyAsk = Number(
+      (liveBuyAsk * (1 + Math.sin(index * 0.87 + bot.name.length) * 0.0025)).toFixed(
+        6
+      )
+    );
+    const sellBid = Number(
+      (
+        liveSellBid *
+        (1 + Math.cos(index * 0.63 + bot.feeBps) * 0.0022)
+      ).toFixed(6)
+    );
+    const metrics = computeNetMetrics(
+      buyAsk,
+      sellBid,
+      bot.feeBps,
+      bot.slippageBps
+    );
 
-    sumEdges += netEdgePct;
-    totalPnl += pnlUsd;
-    runningEquity += pnlUsd;
+    if (metrics.netEdgePct <= bot.minNetSpreadPct) {
+      continue;
+    }
+
+    const notionalUsdt = bot.maxCapitalUsd * (0.45 + ((index + 1) % 4) * 0.12);
+    const pnlUsdt = Number((notionalUsdt * (metrics.netEdgePct / 100)).toFixed(2));
+
+    trades += 1;
+    sumEdges += metrics.netEdgePct;
+    totalPnl += pnlUsdt;
+    runningEquity += pnlUsdt;
     peak = Math.max(peak, runningEquity);
     maxDrawdown = Math.max(maxDrawdown, peak - runningEquity);
 
-    if (pnlUsd > 0) {
+    if (pnlUsdt > 0) {
       wins += 1;
     }
   }
 
   return {
     botId: bot.id,
-    trades: 14,
-    winRatePct: Number(((wins / 14) * 100).toFixed(1)),
+    trades,
+    winRatePct: Number((trades === 0 ? 0 : (wins / trades) * 100).toFixed(1)),
     totalPnlUsd: Number(totalPnl.toFixed(2)),
     maxDrawdownUsd: Number(maxDrawdown.toFixed(2)),
-    avgEdgePct: Number((sumEdges / 14).toFixed(3)),
+    avgEdgePct: Number((trades === 0 ? 0 : sumEdges / trades).toFixed(3)),
   };
 };
 
@@ -358,7 +405,7 @@ export default function TradingLabPage() {
     };
 
     loadMarket();
-    const intervalId = window.setInterval(loadMarket, 15000);
+    const intervalId = window.setInterval(loadMarket, 4000);
 
     return () => {
       active = false;
@@ -484,7 +531,7 @@ export default function TradingLabPage() {
 
       const tradeCooldown = 20000;
       const lastTradeAt = lastTradeAtRef.current[bot.id] || 0;
-      const isExecutable = edge.netEdgePct >= bot.minNetSpreadPct;
+      const isExecutable = edge.netEdgePct > bot.minNetSpreadPct;
 
       if (!isExecutable) {
         signalMap[bot.id] = {
@@ -502,8 +549,10 @@ export default function TradingLabPage() {
 
       lastTradeAtRef.current[bot.id] = now;
 
-      const notionalUsd = Number((bot.maxCapitalUsd * 0.55).toFixed(2));
-      const pnlUsd = Number((notionalUsd * (edge.netEdgePct / 100)).toFixed(2));
+      const notionalUsdt = Number((bot.maxCapitalUsd * 0.55).toFixed(2));
+      const pnlUsdt = Number(
+        (notionalUsdt * (edge.netEdgePct / 100)).toFixed(2)
+      );
 
       tradeBatch.push({
         id: `${bot.id}-${now}`,
@@ -513,16 +562,18 @@ export default function TradingLabPage() {
         buyExchange: bot.buyExchange,
         sellExchange: bot.sellExchange,
         grossSpreadPct: edge.grossSpreadPct,
+        feeImpactPct: edge.feeImpactPct,
+        slippageImpactPct: edge.slippageImpactPct,
         netEdgePct: edge.netEdgePct,
-        notionalUsd,
-        pnlUsd,
+        notionalUsdt,
+        pnlUsdt,
         createdAt: new Date(now).toISOString(),
         mode: bot.mode,
       });
 
       signalMap[bot.id] = {
         signal: `Executed ${formatPct(edge.netEdgePct)} net`,
-        pnlUsd,
+        pnlUsd: pnlUsdt,
         traded: true,
       };
     }
@@ -669,7 +720,7 @@ export default function TradingLabPage() {
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                 <div className="text-slate-400">Realized PnL</div>
                 <div className="mt-1 text-2xl font-semibold text-emerald-300">
-                  {formatUsd(totalPnlUsd)}
+                  {formatUsdt(totalPnlUsd)}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
@@ -844,7 +895,7 @@ export default function TradingLabPage() {
                       </label>
 
                       <label className="text-xs text-slate-400">
-                        Max Capital USD
+                        Max Capital USDT
                         <input
                           type="number"
                           step="100"
@@ -889,7 +940,27 @@ export default function TradingLabPage() {
                       </label>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                      <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
+                        <div className="text-xs text-slate-500">Gross Spread</div>
+                        <div className="mt-1 text-lg font-semibold text-sky-200">
+                          {edge ? formatPct(edge.grossSpreadPct) : "-"}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
+                        <div className="text-xs text-slate-500">Fees</div>
+                        <div className="mt-1 text-lg font-semibold text-amber-200">
+                          {edge ? `-${formatPct(edge.feeImpactPct).replace("+", "")}` : "-"}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
+                        <div className="text-xs text-slate-500">Slippage</div>
+                        <div className="mt-1 text-lg font-semibold text-rose-200">
+                          {edge
+                            ? `-${formatPct(edge.slippageImpactPct).replace("+", "")}`
+                            : "-"}
+                        </div>
+                      </div>
                       <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
                         <div className="text-xs text-slate-500">Net Edge</div>
                         <div className="mt-1 text-lg font-semibold text-emerald-300">
@@ -899,14 +970,14 @@ export default function TradingLabPage() {
                       <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
                         <div className="text-xs text-slate-500">Trades / PnL</div>
                         <div className="mt-1 text-sm font-semibold text-slate-100">
-                          {bot.totalTrades} / {formatUsd(bot.cumulativePnlUsd)}
+                          {bot.totalTrades} / {formatUsdt(bot.cumulativePnlUsd)}
                         </div>
                       </div>
                       <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
                         <div className="text-xs text-slate-500">Backtest</div>
                         <div className="mt-1 text-sm font-semibold text-slate-100">
                           {backtest
-                            ? `${formatUsd(backtest.totalPnlUsd)} / ${backtest.winRatePct}% win`
+                            ? `${formatUsdt(backtest.totalPnlUsd)} / ${backtest.winRatePct}% win`
                             : "not run"}
                         </div>
                       </div>
@@ -1089,7 +1160,7 @@ export default function TradingLabPage() {
                         <div className="rounded-xl border border-white/8 bg-slate-950/80 px-3 py-3">
                           <div className="text-slate-500">PnL</div>
                           <div className="mt-1 font-semibold text-emerald-300">
-                            {formatUsd(result.totalPnlUsd)}
+                            {formatUsdt(result.totalPnlUsd)}
                           </div>
                         </div>
                         <div className="rounded-xl border border-white/8 bg-slate-950/80 px-3 py-3">
@@ -1107,7 +1178,7 @@ export default function TradingLabPage() {
                         <div className="rounded-xl border border-white/8 bg-slate-950/80 px-3 py-3">
                           <div className="text-slate-500">Max Drawdown</div>
                           <div className="mt-1 font-semibold text-rose-200">
-                            {formatUsd(result.maxDrawdownUsd)}
+                            {formatUsdt(result.maxDrawdownUsd)}
                           </div>
                         </div>
                       </div>
@@ -1178,9 +1249,9 @@ export default function TradingLabPage() {
                       <td className="px-4 py-3 text-emerald-300">
                         {formatPct(trade.netEdgePct)}
                       </td>
-                      <td className="px-4 py-3">{formatUsd(trade.notionalUsd)}</td>
+                      <td className="px-4 py-3">{formatUsdt(trade.notionalUsdt)}</td>
                       <td className="px-4 py-3 text-emerald-300">
-                        {formatUsd(trade.pnlUsd)}
+                        {formatUsdt(trade.pnlUsdt)}
                       </td>
                     </tr>
                   ))

@@ -26,19 +26,43 @@ type Opportunity = {
 };
 
 const PAIRS: PairConfig[] = [
-  { pair: "BTC/USD", binance: "BTCUSDT", coinbase: "BTC-USD", kraken: "XBTUSD" },
-  { pair: "ETH/USD", binance: "ETHUSDT", coinbase: "ETH-USD", kraken: "ETHUSD" },
-  { pair: "SOL/USD", binance: "SOLUSDT", coinbase: "SOL-USD", kraken: "SOLUSD" },
+  {
+    pair: "BTC/USDT",
+    binance: "BTCUSDT",
+    coinbase: "BTC-USDT",
+    kraken: "XBTUSDT",
+  },
+  {
+    pair: "ETH/USDT",
+    binance: "ETHUSDT",
+    coinbase: "ETH-USDT",
+    kraken: "ETHUSDT",
+  },
+  {
+    pair: "SOL/USDT",
+    binance: "SOLUSDT",
+    coinbase: "SOL-USDT",
+    kraken: "SOLUSDT",
+  },
 ];
 
 const fetchJson = async (url: string) => {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "medsafe-trading-lab",
-    },
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "medsafe-trading-lab",
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(`upstream_error:${response.status}`);
