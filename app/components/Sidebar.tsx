@@ -48,6 +48,9 @@ export default function Sidebar() {
           <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
             Binance Trading Lab <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
           </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
+            Trading CFD <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
@@ -138,6 +141,16 @@ export default function Sidebar() {
         >
           <span>Binance Trading Lab</span>
           <span className="rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
+            Neu
+          </span>
+        </a>
+
+        <a
+          href="/trading-cfd"
+          className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
+        >
+          <span>Trading CFD</span>
+          <span className="rounded-full bg-rose-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
             Neu
           </span>
         </a>
