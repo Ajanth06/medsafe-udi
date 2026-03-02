@@ -29,7 +29,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
     }
 
-    if (body.buyExchange === body.sellExchange) {
+    if (
+      body.buyExchange === body.sellExchange &&
+      body.buyExchange !== "Binance"
+    ) {
       return NextResponse.json({ error: "invalid_route" }, { status: 400 });
     }
 
