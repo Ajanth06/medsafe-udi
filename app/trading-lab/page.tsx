@@ -437,6 +437,10 @@ export default function TradingLabPage() {
             return data;
           }
 
+          if (!previous) {
+            return buildEmptyMarket();
+          }
+
           return {
             updatedAt: data.updatedAt,
             pairs: data.pairs.map((pair) => {
