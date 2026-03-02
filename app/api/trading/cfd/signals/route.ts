@@ -37,6 +37,12 @@ type SeriesValue = {
   volume?: string;
 };
 
+type SeriesResponse = {
+  status?: string;
+  message?: string;
+  values?: SeriesValue[];
+};
+
 const CONFIGS: InstrumentConfig[] = [
   {
     instrument: "EUR/USD",
@@ -336,11 +342,11 @@ export async function GET() {
           : polygonApiKey
             ? fetchMassiveSnapshotQuote(config)
             : null;
-      const seriesPromise = apiKey
+      const seriesPromise: Promise<SeriesResponse> = apiKey
         ? (fetchJson(
             `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
-          ) as Promise<{ status?: string; message?: string; values?: SeriesValue[] }>)
-        : Promise.resolve({ values: undefined });
+          ) as Promise<SeriesResponse>)
+        : Promise.resolve({ status: "error", message: "missing_twelvedata_api_key", values: undefined });
       const quoteFallbackPromise = apiKey
         ? (fetchJson(
             `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
