@@ -1219,7 +1219,7 @@ if (!user) {
           Partner • Healthcare &amp; Pharma
         </span>
 
-        <div className="flex flex-wrap items-center justify-center gap-6 opacity-80">
+        <div className="logo-glide flex flex-wrap items-center justify-center gap-6 opacity-80">
           <img
             src="/partners/novartis.png"
             className="h-10 w-auto object-contain"

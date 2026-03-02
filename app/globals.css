@@ -58,22 +58,20 @@ body {
   }
 }
 
-.logo-ticker {
-  position: relative;
-  overflow: hidden;
+@keyframes logo-glide {
+  0% {
+    transform: translateX(-4%);
+  }
+  50% {
+    transform: translateX(4%);
+  }
+  100% {
+    transform: translateX(-4%);
+  }
 }
 
-.logo-ticker-sizer {
-  visibility: hidden;
-}
-
-.logo-ticker-track {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: flex;
-  width: max-content;
-  animation: logo-ticker 18s linear infinite;
+.logo-glide {
+  animation: logo-glide 10s ease-in-out infinite;
   will-change: transform;
 }
 
