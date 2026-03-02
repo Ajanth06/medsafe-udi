@@ -12,7 +12,6 @@ type SessionTag = "London" | "New York" | "Overlap" | "Off Hours";
 type InstrumentConfig = {
   instrument: Instrument;
   symbol: string;
-  market: string;
   maxSpreadNote: string;
   plus500MarketName: string;
   atrStopMultiplier: number;
@@ -45,7 +44,6 @@ type SeriesResponse = {
 
 type MarketSignal = {
   instrument: Instrument;
-  market: string;
   symbol: string;
   price: string;
   rawPrice: number;
@@ -81,7 +79,6 @@ const CONFIGS: InstrumentConfig[] = [
   {
     instrument: "EUR/USD",
     symbol: "EUR/USD",
-    market: "FX Major",
     maxSpreadNote: "Max 1.2 pip",
     plus500MarketName: "EUR/USD CFD",
     atrStopMultiplier: 1.3,
@@ -90,7 +87,6 @@ const CONFIGS: InstrumentConfig[] = [
   {
     instrument: "DAX",
     symbol: "DE40",
-    market: "Index CFD",
     maxSpreadNote: "Max 2.5 points",
     plus500MarketName: "Germany 40 CFD",
     atrStopMultiplier: 1.4,
@@ -100,7 +96,6 @@ const CONFIGS: InstrumentConfig[] = [
   {
     instrument: "WTI",
     symbol: "WTI",
-    market: "Commodity CFD",
     maxSpreadNote: "Max 0.06 USD",
     plus500MarketName: "Oil CFD",
     atrStopMultiplier: 1.5,
@@ -314,7 +309,6 @@ const buildSignal = (config: InstrumentConfig, quote: QuoteResponse, values: Ser
 
   return {
     instrument: config.instrument,
-    market: config.market,
     symbol: config.symbol,
     price: formatPrice(config.instrument, price),
     rawPrice: Number(price.toFixed(6)),
@@ -362,7 +356,6 @@ const buildUnavailableSignal = (
   message: string
 ): MarketSignal => ({
   instrument: config.instrument,
-  market: config.market,
   symbol: config.symbol,
   price: "unavailable",
   rawPrice: 0,

@@ -15,7 +15,6 @@ type JournalStatus = "planned" | "executed" | "closed";
 
 type MarketSignal = {
   instrument: Instrument;
-  market: string;
   symbol: string;
   price: string;
   rawPrice: number;
@@ -81,7 +80,6 @@ type JournalEntry = {
 const FALLBACK_SIGNALS: MarketSignal[] = [
   {
     instrument: "EUR/USD",
-    market: "FX Major",
     symbol: "EUR/USD",
     price: "unavailable",
     rawPrice: 0,
@@ -114,7 +112,6 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
   },
   {
     instrument: "DAX",
-    market: "Index CFD",
     symbol: "DE40",
     price: "unavailable",
     rawPrice: 0,
@@ -147,7 +144,6 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
   },
   {
     instrument: "WTI",
-    market: "Commodity CFD",
     symbol: "WTI",
     price: "unavailable",
     rawPrice: 0,
@@ -734,7 +730,7 @@ export default function TradingCfdPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                      {signal.market} / {signal.symbol}
+                      {signal.symbol === signal.instrument ? "Live Setup" : signal.symbol}
                     </div>
                     <h3 className="mt-1 text-2xl font-semibold">{signal.instrument}</h3>
                     <div className="mt-1 text-sm text-slate-400">
