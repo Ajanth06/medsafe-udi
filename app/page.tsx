@@ -1219,55 +1219,18 @@ if (!user) {
           Partner • Healthcare &amp; Pharma
         </span>
 
-        <div className="logo-ticker opacity-80">
-          <div className="flex items-center gap-6 logo-ticker-sizer">
-            <img
-              src="/partners/novartis.png"
-              className="h-10 w-auto object-contain"
-              alt="Novartis"
-            />
-            <img src="/partners/roche.png" className="h-6" alt="Roche" />
-            <img src="/partners/pfizer.png" className="h-10" alt="Pfizer" />
-            <img src="/partners/johnson.png" className="h-5" alt="Merck" />
-            <img src="/partners/bayer.png" className="h-7" alt="Thalheimer" />
-          </div>
-          <div className="logo-ticker-track gap-6">
-            <div className="flex items-center gap-6">
-              <img
-                src="/partners/novartis.png"
-                className="h-10 w-auto object-contain"
-                alt="Novartis"
-              />
-              <img src="/partners/roche.png" className="h-6" alt="Roche" />
-              <img src="/partners/pfizer.png" className="h-6" alt="Pfizer" />
-              <img src="/partners/johnson.png" className="h-5" alt="Merck" />
-              <img src="/partners/bayer.png" className="h-7" alt="Thalheimer" />
-            </div>
-            <div className="flex items-center gap-6" aria-hidden="true">
-              <img
-                src="/partners/novartis.png"
-                className="h-10 w-auto object-contain"
-                alt="Novartis"
-              />
-              <img src="/partners/roche.png" className="h-6" alt="Roche" />
-              <img src="/partners/pfizer.png" className="h-6" alt="Pfizer" />
-              <img src="/partners/johnson.png" className="h-5" alt="Merck" />
-              <img src="/partners/bayer.png" className="h-7" alt="Thalheimer" />
-            </div>
-          </div>
+        <div className="flex flex-wrap items-center justify-center gap-6 opacity-80">
+          <img
+            src="/partners/novartis.png"
+            className="h-10 w-auto object-contain"
+            alt="Novartis"
+          />
+          <img src="/partners/roche.png" className="h-6" alt="Roche" />
+          <img src="/partners/pfizer.png" className="h-10" alt="Pfizer" />
+          <img src="/partners/johnson.png" className="h-5" alt="Merck" />
+          <img src="/partners/bayer.png" className="h-7" alt="Thalheimer" />
         </div>
       </div>
-    </main>
-  );
-}
-
-
-
-
-if (!user) {
-  return (
-    <main className="relative min-h-screen text-slate-50 overflow-hidden">
-      {/* Hier absichtlich leer – keine Grafik, kein Vogel */}
     </main>
   );
 }
