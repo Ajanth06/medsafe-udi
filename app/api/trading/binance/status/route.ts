@@ -4,14 +4,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const apiKey = process.env.BINANCE_API_KEY;
-  const apiSecret = process.env.BINANCE_API_SECRET;
+  const apiKey = process.env.BINANCE_TESTNET_API_KEY;
+  const apiSecret = process.env.BINANCE_TESTNET_API_SECRET;
   const configured = Boolean(apiKey && apiSecret);
 
   let reachable = false;
 
   try {
-    const response = await fetch("https://api.binance.com/api/v3/ping", {
+    const response = await fetch("https://testnet.binance.vision/api/v3/ping", {
       cache: "no-store",
     });
     reachable = response.ok;
@@ -22,7 +22,8 @@ export async function GET() {
   return NextResponse.json(
     {
       exchange: "Binance",
-      mode: "paper",
+      mode: "testnet",
+      environment: "testnet",
       configured,
       reachable,
     },

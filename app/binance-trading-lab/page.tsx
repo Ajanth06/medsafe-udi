@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Pair = "BTC/USDT" | "ETH/USDT" | "SOL/USDT";
-type BotMode = "Paper" | "Manual";
+type BotMode = "Paper" | "Testnet" | "Manual";
 type BotStatus = "running" | "stopped";
 type FeedStatus = "idle" | "live" | "error";
 type SocketStatus = "connecting" | "live" | "closed" | "error";
@@ -18,6 +18,7 @@ type Quote = {
 type ExchangeStatus = {
   exchange: string;
   mode: string;
+  environment?: string;
   configured: boolean;
   reachable: boolean;
 };
@@ -55,6 +56,12 @@ type PaperTrade = {
   mode: BotMode;
   executionMode?: string;
   provider?: string;
+  order?: {
+    orderId?: number;
+    status?: string;
+    executedQty?: string;
+    cummulativeQuoteQty?: string;
+  };
 };
 
 type BacktestResult = {
@@ -233,6 +240,7 @@ export default function BinanceTradingLabPage() {
   const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
   const [binanceStatus, setBinanceStatus] = useState<ExchangeStatus | null>(null);
   const [feedError, setFeedError] = useState("");
+  const [executionError, setExecutionError] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const lastTradeAtRef = useRef<Record<string, number>>({});
@@ -241,6 +249,63 @@ export default function BinanceTradingLabPage() {
   useEffect(() => {
     botsRef.current = bots;
   }, [bots]);
+
+  const executeBinanceTrade = async (
+    bot: BinanceBot,
+    notionalUsdt: number
+  ): Promise<PaperTrade | null> => {
+    const route =
+      bot.mode === "Testnet"
+        ? "/api/trading/binance/testnet/order"
+        : "/api/trading/paper/execute";
+
+    const payload =
+      bot.mode === "Testnet"
+        ? {
+            botId: bot.id,
+            botName: bot.name,
+            pair: bot.pair,
+            notionalUsdt,
+            mode: "Testnet" as const,
+          }
+        : {
+            id: `${bot.id}-${Date.now()}`,
+            botId: bot.id,
+            botName: bot.name,
+            pair: bot.pair,
+            buyExchange: "Binance",
+            sellExchange: "Binance",
+            grossSpreadPct: 0,
+            feeImpactPct: 0,
+            slippageImpactPct: 0,
+            latencyBufferPct: 0,
+            netEdgePct: 0,
+            notionalUsdt,
+            mode: bot.mode,
+          };
+
+    try {
+      const response = await fetch(route, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setExecutionError(data?.error || "execution_failed");
+        return null;
+      }
+
+      setExecutionError("");
+      return data as PaperTrade;
+    } catch (error) {
+      setExecutionError(error instanceof Error ? error.message : "execution_failed");
+      return null;
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -455,26 +520,12 @@ export default function BinanceTradingLabPage() {
       void (async () => {
         const executed = await Promise.all(
           pendingTrades.map(async (trade) => {
-            try {
-              const response = await fetch("/api/trading/paper/execute", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  ...trade,
-                  buyExchange: "Binance",
-                  sellExchange: "Binance",
-                }),
-              });
-              if (!response.ok) {
-                return trade;
-              }
-              const payload = (await response.json()) as PaperTrade;
-              return { ...trade, ...payload };
-            } catch {
+            const bot = botsRef.current.find((entry) => entry.id === trade.botId);
+            if (!bot) {
               return trade;
             }
+            const payload = await executeBinanceTrade(bot, trade.notionalUsdt);
+            return payload ? { ...trade, ...payload } : trade;
           })
         );
         setTradeHistory((previous) => [...executed, ...previous].slice(0, 50));
@@ -510,6 +561,67 @@ export default function BinanceTradingLabPage() {
       })),
     [market]
   );
+
+  const runTestnetBuy = async (botId: string) => {
+    const bot = bots.find((entry) => entry.id === botId);
+    if (!bot) {
+      return;
+    }
+
+    const notionalUsdt = Number((bot.maxCapitalUsdt * 0.25).toFixed(2));
+    const payload = await executeBinanceTrade(
+      { ...bot, mode: "Testnet" },
+      notionalUsdt
+    );
+
+    if (!payload) {
+      return;
+    }
+
+    const quote = market[bot.pair];
+    const metrics = quote
+      ? computeMoveMetrics(quote.bid, quote.ask, bot.feeBps, bot.slippageBps)
+      : {
+          grossSpreadPct: 0,
+          feeImpactPct: 0,
+          slippageImpactPct: 0,
+          netEdgePct: 0,
+        };
+
+    const trade: PaperTrade = {
+      id: payload.id || `${bot.id}-${Date.now()}`,
+      botId: bot.id,
+      botName: bot.name,
+      pair: bot.pair,
+      grossSpreadPct: metrics.grossSpreadPct,
+      feeImpactPct: metrics.feeImpactPct,
+      slippageImpactPct: metrics.slippageImpactPct,
+      netEdgePct: metrics.netEdgePct,
+      notionalUsdt,
+      pnlUsdt: Number((notionalUsdt * (metrics.netEdgePct / 100)).toFixed(2)),
+      createdAt: payload.createdAt || new Date().toISOString(),
+      mode: "Testnet",
+      executionMode: payload.executionMode,
+      provider: payload.provider,
+      order: payload.order,
+    };
+
+    setTradeHistory((previous) => [trade, ...previous].slice(0, 50));
+    setBots((previous) =>
+      previous.map((entry) =>
+        entry.id === bot.id
+          ? {
+              ...entry,
+              totalTrades: entry.totalTrades + 1,
+              cumulativePnlUsdt: Number(
+                (entry.cumulativePnlUsdt + trade.pnlUsdt).toFixed(2)
+              ),
+              lastSignal: "Manual testnet buy executed",
+            }
+          : entry
+      )
+    );
+  };
 
   const runBacktest = (botId: string) => {
     const bot = bots.find((entry) => entry.id === botId);
@@ -608,6 +720,12 @@ export default function BinanceTradingLabPage() {
                 </span>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 flex items-center justify-between">
+                <span className="text-slate-400">Environment</span>
+                <span className="text-amber-200">
+                  {binanceStatus?.environment || "testnet"}
+                </span>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 flex items-center justify-between">
                 <span className="text-slate-400">REST Feed</span>
                 <span className={`rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] ${feedStatusClass(restStatus)}`}>
                   {restStatus}
@@ -622,6 +740,10 @@ export default function BinanceTradingLabPage() {
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-slate-300">
                 <div className="text-slate-500">Feed Errors</div>
                 <div className="mt-1 text-sm">{feedError || "No upstream error reported."}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-slate-300">
+                <div className="text-slate-500">Execution Errors</div>
+                <div className="mt-1 text-sm">{executionError || "No execution error reported."}</div>
               </div>
             </div>
           </article>
@@ -694,6 +816,13 @@ export default function BinanceTradingLabPage() {
                         >
                           Backtest
                         </button>
+                        <button
+                          onClick={() => runTestnetBuy(bot.id)}
+                          disabled={!binanceStatus?.configured}
+                          className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-100 transition hover:border-amber-300 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Testnet Buy
+                        </button>
                       </div>
                     </div>
 
@@ -718,6 +847,7 @@ export default function BinanceTradingLabPage() {
                           className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-500"
                         >
                           <option value="Paper">Paper</option>
+                          <option value="Testnet">Testnet</option>
                           <option value="Manual">Manual</option>
                         </select>
                       </label>
@@ -830,9 +960,9 @@ export default function BinanceTradingLabPage() {
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
                 Execution Ledger
               </div>
-              <h2 className="mt-1 text-xl font-semibold">Binance Paper Trades</h2>
+              <h2 className="mt-1 text-xl font-semibold">Binance Executions</h2>
             </div>
-            <div className="text-xs text-slate-500">Venue-scoped history for Binance-only bots.</div>
+            <div className="text-xs text-slate-500">Venue-scoped history for Binance-only paper and testnet bots.</div>
           </div>
           <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
             <table className="min-w-full text-sm">
