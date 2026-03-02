@@ -11,20 +11,13 @@ type SessionTag = "London" | "New York" | "Overlap" | "Off Hours";
 
 type InstrumentConfig = {
   instrument: Instrument;
-  symbol: string;
+  symbolCandidates: string[];
   maxSpreadNote: string;
   plus500MarketName: string;
   atrStopMultiplier: number;
   atrTakeMultiplier: number;
-};
-
-type QuoteResponse = {
-  close?: string;
-  percent_change?: string;
-  bid?: number;
-  ask?: number;
-  source?: string;
-  sourceLabel?: string;
+  minPrice: number;
+  maxPrice: number;
 };
 type SeriesValue = {
   datetime: string;
@@ -77,27 +70,41 @@ type MarketSignal = {
 const CONFIGS: InstrumentConfig[] = [
   {
     instrument: "EUR/USD",
-    symbol: "EUR/USD",
+    symbolCandidates: ["EUR/USD"],
     maxSpreadNote: "Max 1.2 pip",
     plus500MarketName: "EUR/USD CFD",
     atrStopMultiplier: 1.3,
     atrTakeMultiplier: 2.6,
+    minPrice: 0.8,
+    maxPrice: 1.5,
   },
   {
     instrument: "DAX",
-    symbol: "DE40",
+    symbolCandidates: [
+      process.env.TWELVEDATA_DAX_SYMBOL || "",
+      "DAX",
+      "DE40",
+    ].filter(Boolean),
     maxSpreadNote: "Max 2.5 points",
     plus500MarketName: "Germany 40 CFD",
     atrStopMultiplier: 1.4,
     atrTakeMultiplier: 2.8,
+    minPrice: 10000,
+    maxPrice: 25000,
   },
   {
     instrument: "WTI",
-    symbol: "WTI",
+    symbolCandidates: [
+      process.env.TWELVEDATA_WTI_SYMBOL || "",
+      "XTI/USD",
+      "WTI",
+    ].filter(Boolean),
     maxSpreadNote: "Max 0.06 USD",
     plus500MarketName: "Oil CFD",
     atrStopMultiplier: 1.5,
     atrTakeMultiplier: 3,
+    minPrice: 20,
+    maxPrice: 120,
   },
 ];
 
@@ -127,6 +134,42 @@ const toNumber = (value: unknown) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error("invalid_number");
   return parsed;
+};
+
+const isPricePlausible = (config: InstrumentConfig, price: number) =>
+  price >= config.minPrice && price <= config.maxPrice;
+
+const fetchSeriesForConfig = async (config: InstrumentConfig, apiKey: string) => {
+  const errors: string[] = [];
+
+  for (const symbol of config.symbolCandidates) {
+    try {
+      const series = (await fetchJson(
+        `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
+      )) as SeriesResponse;
+
+      if (series.status === "error" || !series.values?.length) {
+        throw new Error(series.message || "twelvedata_series_failed");
+      }
+
+      const latestClose = toNumber(series.values[0]?.close);
+
+      if (!isPricePlausible(config, latestClose)) {
+        throw new Error(`implausible_price:${latestClose}`);
+      }
+
+      return {
+        symbol,
+        values: series.values,
+      };
+    } catch (error) {
+      errors.push(
+        `${symbol}:${error instanceof Error ? error.message : "twelvedata_series_failed"}`
+      );
+    }
+  }
+
+  throw new Error(errors.join(" | "));
 };
 
 const detectSession = (): SessionTag => {
@@ -213,12 +256,16 @@ const buildLevels = (
   };
 };
 
-const buildSignal = (config: InstrumentConfig, quote: QuoteResponse, values: SeriesValue[]) => {
+const buildSignal = (
+  config: InstrumentConfig,
+  symbol: string,
+  values: SeriesValue[]
+) => {
   if (values.length < 55) throw new Error("insufficient_series");
 
   const candles = [...values].reverse();
   const closes = candles.map((entry) => toNumber(entry.close));
-  const price = quote.close ? toNumber(quote.close) : closes[closes.length - 1];
+  const price = closes[closes.length - 1];
   const previous = closes[closes.length - 2];
   const ema20 = computeEma(closes.slice(-20), 20);
   const ema50 = computeEma(closes.slice(-50), 50);
@@ -250,19 +297,14 @@ const buildSignal = (config: InstrumentConfig, quote: QuoteResponse, values: Ser
 
   return {
     instrument: config.instrument,
-    symbol: config.symbol,
+    symbol,
     price: formatPrice(config.instrument, price),
     rawPrice: Number(price.toFixed(6)),
-    bid: quote.bid ? Number(quote.bid.toFixed(config.instrument === "EUR/USD" ? 5 : 2)) : null,
-    ask: quote.ask ? Number(quote.ask.toFixed(config.instrument === "EUR/USD" ? 5 : 2)) : null,
-    spread:
-      quote.bid && quote.ask
-        ? Number((quote.ask - quote.bid).toFixed(config.instrument === "EUR/USD" ? 5 : 2))
-        : null,
-    priceSource: quote.sourceLabel || "Twelve Data candle close",
-    changePct: Number(
-      (quote.percent_change ? toNumber(quote.percent_change) : ((price - previous) / previous) * 100).toFixed(2)
-    ),
+    bid: null,
+    ask: null,
+    spread: null,
+    priceSource: `Twelve Data (${symbol})`,
+    changePct: Number((((price - previous) / previous) * 100).toFixed(2)),
     signal,
     regime,
     ema20: Number(ema20.toFixed(6)),
@@ -297,7 +339,7 @@ const buildUnavailableSignal = (
   message: string
 ): MarketSignal => ({
   instrument: config.instrument,
-  symbol: config.symbol,
+  symbol: config.symbolCandidates[0] || config.instrument,
   price: "unavailable",
   rawPrice: 0,
   bid: null,
@@ -346,17 +388,10 @@ export async function GET() {
     const results = await Promise.all(
       CONFIGS.map(async (config) => {
         try {
-          const seriesPromise: Promise<SeriesResponse> = fetchJson(
-            `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
-          ) as Promise<SeriesResponse>;
-          const series = await seriesPromise;
-
-          if (series.status === "error" || !series.values?.length) {
-            throw new Error(series.message || "twelvedata_series_failed");
-          }
+          const series = await fetchSeriesForConfig(config, apiKey);
 
           return {
-            signal: buildSignal(config, {}, series.values),
+            signal: buildSignal(config, series.symbol, series.values),
             error: null,
           };
         } catch (error) {
