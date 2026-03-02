@@ -91,7 +91,7 @@ const fetchJson = async (url: string) => {
   }
 
   if (!response.ok) {
-    throw new Error(`upstream_error:${response.status}`);
+    throw new Error(`upstream_error:${response.status}:${new URL(url).hostname}`);
   }
 
   return response.json();
@@ -329,50 +329,74 @@ export async function GET() {
 
   if (!apiKey && !polygonApiKey) {
     return NextResponse.json(
-      { updatedAt: new Date().toISOString(), error: "missing_market_data_api_key", signals: [] },
+      {
+        updatedAt: new Date().toISOString(),
+        error: "missing_polygon_api_key_and_twelvedata_api_key",
+        signals: [],
+      },
       { status: 500 }
     );
   }
 
-  const signals = await Promise.all(
-    CONFIGS.map(async (config) => {
-      const quotePromise =
-        config.instrument === "EUR/USD" && polygonApiKey
-          ? fetchPolygonForexQuote()
-          : polygonApiKey
-            ? fetchMassiveSnapshotQuote(config)
-            : null;
-      const seriesPromise: Promise<SeriesResponse> = apiKey
-        ? (fetchJson(
-            `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
-          ) as Promise<SeriesResponse>)
-        : Promise.resolve({ status: "error", message: "missing_twelvedata_api_key", values: undefined });
-      const quoteFallbackPromise = apiKey
-        ? (fetchJson(
-            `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
-          ) as Promise<QuoteResponse>)
-        : Promise.resolve({});
+  if (!apiKey) {
+    return NextResponse.json(
+      {
+        updatedAt: new Date().toISOString(),
+        error: "missing_twelvedata_api_key_for_signal_engine",
+        signals: [],
+      },
+      { status: 500 }
+    );
+  }
 
-      const [polygonQuote, quoteFallback, series] = await Promise.all([
-        quotePromise,
-        quoteFallbackPromise,
-        seriesPromise,
-      ]);
+  try {
+    const signals = await Promise.all(
+      CONFIGS.map(async (config) => {
+        const quotePromise =
+          config.instrument === "EUR/USD" && polygonApiKey
+            ? fetchPolygonForexQuote()
+            : polygonApiKey
+              ? fetchMassiveSnapshotQuote(config)
+              : null;
+        const seriesPromise: Promise<SeriesResponse> = fetchJson(
+          `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
+        ) as Promise<SeriesResponse>;
+        const quoteFallbackPromise = fetchJson(
+          `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
+        ) as Promise<QuoteResponse>;
 
-      if (series.status === "error" || !series.values?.length) {
-        throw new Error(series.message || "twelvedata_series_failed");
-      }
+        const [polygonQuote, quoteFallback, series] = await Promise.all([
+          quotePromise,
+          quoteFallbackPromise,
+          seriesPromise,
+        ]);
 
-      return buildSignal(config, polygonQuote || quoteFallback, series.values);
-    })
-  );
+        if (series.status === "error" || !series.values?.length) {
+          throw new Error(`${config.instrument}:${
+            series.message || "twelvedata_series_failed"
+          }`);
+        }
 
-  return NextResponse.json(
-    {
-      updatedAt: new Date().toISOString(),
-      source: polygonApiKey ? "Polygon/Massive + Twelve Data" : "Twelve Data",
-      signals,
-    },
-    { status: 200 }
-  );
+        return buildSignal(config, polygonQuote || quoteFallback, series.values);
+      })
+    );
+
+    return NextResponse.json(
+      {
+        updatedAt: new Date().toISOString(),
+        source: polygonApiKey ? "Polygon/Massive + Twelve Data" : "Twelve Data",
+        signals,
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        updatedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "cfd_signal_route_failed",
+        signals: [],
+      },
+      { status: 500 }
+    );
+  }
 }
