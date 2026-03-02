@@ -623,6 +623,15 @@ export default function BinanceTradingLabPage() {
     );
   };
 
+  const updateBot = (
+    botId: string,
+    patch: Partial<Omit<BinanceBot, "id" | "totalTrades" | "cumulativePnlUsdt">>
+  ) => {
+    setBots((previous) =>
+      previous.map((bot) => (bot.id === botId ? { ...bot, ...patch } : bot))
+    );
+  };
+
   const runBacktest = (botId: string) => {
     const bot = bots.find((entry) => entry.id === botId);
     if (!bot) {
@@ -634,29 +643,37 @@ export default function BinanceTradingLabPage() {
     }));
   };
 
-  const toggleBot = (botId: string) => {
+  const toggleBot = async (botId: string) => {
+    const currentBot = bots.find((entry) => entry.id === botId);
+    if (!currentBot) {
+      return;
+    }
+
+    const nextStatus: BotStatus =
+      currentBot.status === "running" ? "stopped" : "running";
+
     setBots((previous) =>
       previous.map((bot) =>
         bot.id === botId
           ? {
               ...bot,
-              status: bot.status === "running" ? "stopped" : "running",
+              status: nextStatus,
               lastStartedAt:
-                bot.status === "stopped" ? new Date().toISOString() : bot.lastStartedAt,
-              lastSignal: bot.status === "stopped" ? "Bot armed and waiting" : "Bot stopped",
+                nextStatus === "running" ? new Date().toISOString() : bot.lastStartedAt,
+              lastSignal:
+                nextStatus === "running"
+                  ? currentBot.mode === "Testnet"
+                    ? "Bot armed and sending first testnet order"
+                    : "Bot armed and waiting"
+                  : "Bot stopped",
             }
           : bot
       )
     );
-  };
 
-  const updateBot = (
-    botId: string,
-    patch: Partial<Omit<BinanceBot, "id" | "totalTrades" | "cumulativePnlUsdt">>
-  ) => {
-    setBots((previous) =>
-      previous.map((bot) => (bot.id === botId ? { ...bot, ...patch } : bot))
-    );
+    if (nextStatus === "running" && currentBot.mode === "Testnet") {
+      await runTestnetBuy(botId);
+    }
   };
 
   return (
