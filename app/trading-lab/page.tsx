@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Exchange = "Binance" | "Coinbase" | "Kraken";
 type BotMode = "Live" | "Paper" | "Manual";
@@ -31,6 +31,18 @@ type PairState = {
 type MarketResponse = {
   updatedAt: string;
   pairs: PairState[];
+};
+
+type QuoteSnapshot = {
+  capturedAt: string;
+  pairs: PairState[];
+};
+
+type ExchangeStatus = {
+  exchange: string;
+  mode: string;
+  configured: boolean;
+  reachable: boolean;
 };
 
 type BotConfig = {
@@ -66,6 +78,8 @@ type TradeEntry = {
   pnlUsdt: number;
   createdAt: string;
   mode: BotMode;
+  executionMode?: string;
+  provider?: string;
 };
 
 type BacktestResult = {
@@ -153,6 +167,8 @@ const formatUsdt = (value: number) =>
   }).format(value)} USDT`;
 
 const formatPct = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+const formatPctWithBps = (value: number) =>
+  `${formatPct(value)} (${Math.round(value * 100)} bps)`;
 
 const formatDateTime = (value: string | null) => {
   if (!value) return "-";
@@ -178,13 +194,15 @@ const computeNetMetrics = (
   const gross = (sellBid - buyAsk) / buyAsk;
   const fees = feeBps / 10000;
   const slippage = slippageBps / 10000;
-  const net = gross - fees * 2 - slippage * 2;
+  const latencyBuffer = 0.0005;
+  const net = gross - fees * 2 - slippage * 2 - latencyBuffer;
 
   return {
     grossSpreadPct: Number((gross * 100).toFixed(4)),
     feeImpactPct: Number((fees * 2 * 100).toFixed(4)),
     slippageImpactPct: Number((slippage * 2 * 100).toFixed(4)),
     netEdgePct: Number((net * 100).toFixed(4)),
+    latencyBufferPct: Number((latencyBuffer * 100).toFixed(4)),
   };
 };
 
@@ -219,7 +237,14 @@ const buildOpportunities = (
 const findPairState = (market: MarketResponse | null, pair: string) =>
   market?.pairs.find((entry) => entry.pair === pair) || null;
 
+const isBotMisconfigured = (bot: BotConfig) =>
+  bot.buyExchange === bot.sellExchange;
+
 const computeBotEdge = (bot: BotConfig, market: MarketResponse | null) => {
+  if (isBotMisconfigured(bot)) {
+    return null;
+  }
+
   const pairState = findPairState(market, bot.pair);
   if (!pairState) {
     return null;
@@ -246,16 +271,16 @@ const computeBotEdge = (bot: BotConfig, market: MarketResponse | null) => {
   };
 };
 
-const buildBacktest = (bot: BotConfig, market: MarketResponse | null): BacktestResult => {
-  const pairState = findPairState(market, bot.pair);
-  const liveBuyAsk =
-    pairState?.quotes[bot.buyExchange]?.ask ||
-    pairState?.quotes.Binance?.ask ||
-    100;
-  const liveSellBid =
-    pairState?.quotes[bot.sellExchange]?.bid ||
-    pairState?.quotes.Kraken?.bid ||
-    liveBuyAsk * 1.002;
+const buildBacktest = (
+  bot: BotConfig,
+  market: MarketResponse | null,
+  quoteHistory: QuoteSnapshot[]
+): BacktestResult => {
+  const snapshots = quoteHistory
+    .map((snapshot) =>
+      findPairState({ updatedAt: snapshot.capturedAt, pairs: snapshot.pairs }, bot.pair)
+    )
+    .filter((entry): entry is PairState => Boolean(entry));
   let runningEquity = 0;
   let peak = 0;
   let maxDrawdown = 0;
@@ -264,18 +289,22 @@ const buildBacktest = (bot: BotConfig, market: MarketResponse | null): BacktestR
   let totalPnl = 0;
   let trades = 0;
 
-  for (let index = 0; index < 14; index += 1) {
-    const buyAsk = Number(
-      (liveBuyAsk * (1 + Math.sin(index * 0.87 + bot.name.length) * 0.0025)).toFixed(
-        6
-      )
-    );
-    const sellBid = Number(
-      (
-        liveSellBid *
-        (1 + Math.cos(index * 0.63 + bot.feeBps) * 0.0022)
-      ).toFixed(6)
-    );
+  const sourceSnapshots =
+    snapshots.length > 0
+      ? snapshots
+      : (() => {
+          const pairState = findPairState(market, bot.pair);
+          return pairState ? [pairState] : [];
+        })();
+
+  for (const [index, snapshot] of sourceSnapshots.entries()) {
+    const buyAsk = snapshot.quotes[bot.buyExchange]?.ask;
+    const sellBid = snapshot.quotes[bot.sellExchange]?.bid;
+
+    if (!buyAsk || !sellBid) {
+      continue;
+    }
+
     const metrics = computeNetMetrics(
       buyAsk,
       sellBid,
@@ -287,8 +316,10 @@ const buildBacktest = (bot: BotConfig, market: MarketResponse | null): BacktestR
       continue;
     }
 
-    const notionalUsdt = bot.maxCapitalUsd * (0.45 + ((index + 1) % 4) * 0.12);
-    const pnlUsdt = Number((notionalUsdt * (metrics.netEdgePct / 100)).toFixed(2));
+    const notionalUsdt = bot.maxCapitalUsd * (0.45 + (((index + 1) % 4) * 0.12));
+    const pnlUsdt = Number(
+      (notionalUsdt * (metrics.netEdgePct / 100)).toFixed(2)
+    );
 
     trades += 1;
     sumEdges += metrics.netEdgePct;
@@ -332,18 +363,53 @@ const feedStatusClass = (status: FeedStatus | SocketStatus) => {
 export default function TradingLabPage() {
   const [bots, setBots] = useState(INITIAL_BOTS);
   const [market, setMarket] = useState<MarketResponse | null>(null);
+  const [quoteHistory, setQuoteHistory] = useState<QuoteSnapshot[]>([]);
   const [tradeHistory, setTradeHistory] = useState<TradeEntry[]>([]);
   const [backtests, setBacktests] = useState<Record<string, BacktestResult>>({});
   const [restStatus, setRestStatus] = useState<FeedStatus>("idle");
   const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
   const [feedError, setFeedError] = useState<string>("");
+  const [binanceStatus, setBinanceStatus] = useState<ExchangeStatus | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   const lastTradeAtRef = useRef<Record<string, number>>({});
   const botsRef = useRef(INITIAL_BOTS);
+  const marketRef = useRef<MarketResponse | null>(null);
 
   useEffect(() => {
     botsRef.current = bots;
   }, [bots]);
+
+  useEffect(() => {
+    marketRef.current = market;
+  }, [market]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadExchangeStatus = async () => {
+      try {
+        const response = await fetch("/api/trading/binance/status", {
+          cache: "no-store",
+        });
+        const data = (await response.json()) as ExchangeStatus;
+
+        if (active && response.ok) {
+          setBinanceStatus(data);
+        }
+      } catch {
+        if (active) {
+          setBinanceStatus(null);
+        }
+      }
+    };
+
+    void loadExchangeStatus();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -353,18 +419,21 @@ export default function TradingLabPage() {
         const response = await fetch("/api/trading/quotes", {
           cache: "no-store",
         });
-        const data = (await response.json()) as MarketResponse;
-
-        if (!response.ok) {
-          throw new Error("feed_unavailable");
-        }
+        const previousMarket = marketRef.current;
+        const data = response.ok
+          ? ((await response.json()) as MarketResponse)
+          : previousMarket;
 
         if (!active) {
           return;
         }
 
+        if (!data) {
+          throw new Error("feed_unavailable");
+        }
+
         setMarket((previous) => {
-          if (!previous) {
+          if (!previous && data) {
             return data;
           }
 
@@ -388,6 +457,13 @@ export default function TradingLabPage() {
               };
             }),
           };
+        });
+        setQuoteHistory((previous) => {
+          const nextSnapshot = {
+            capturedAt: data.updatedAt,
+            pairs: data.pairs,
+          };
+          return [nextSnapshot, ...previous].slice(0, 120);
         });
         setRestStatus("live");
         setFeedError("");
@@ -414,9 +490,7 @@ export default function TradingLabPage() {
   }, []);
 
   useEffect(() => {
-    const streams = Array.from(
-      new Set(botsRef.current.map((bot) => BINANCE_STREAMS[bot.pair]))
-    )
+    const streams = Array.from(new Set(botsRef.current.map((bot) => BINANCE_STREAMS[bot.pair])))
       .filter(Boolean)
       .join("/");
 
@@ -425,78 +499,105 @@ export default function TradingLabPage() {
       return;
     }
 
-    setSocketStatus("connecting");
+    let cancelled = false;
 
-    const socket = new WebSocket(
-      `wss://stream.binance.com:9443/stream?streams=${streams}`
-    );
+    const connectSocket = () => {
+      if (cancelled) {
+        return;
+      }
 
-    socket.onopen = () => {
-      setSocketStatus("live");
-    };
+      setSocketStatus("connecting");
 
-    socket.onerror = () => {
-      setSocketStatus("error");
-    };
+      const socket = new WebSocket(
+        `wss://stream.binance.com:9443/stream?streams=${streams}`
+      );
 
-    socket.onclose = () => {
-      setSocketStatus("closed");
-    };
-
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as {
-        data?: { s?: string; b?: string; a?: string };
+      socket.onopen = () => {
+        setSocketStatus("live");
       };
 
-      const symbol = payload.data?.s;
-      const pair = symbol ? BINANCE_SYMBOL_TO_PAIR[symbol] : null;
+      socket.onerror = () => {
+        setSocketStatus("error");
+      };
 
-      if (!pair) {
-        return;
-      }
+      socket.onclose = () => {
+        setSocketStatus("closed");
+        if (!cancelled) {
+          reconnectTimeoutRef.current = window.setTimeout(connectSocket, 2000);
+        }
+      };
 
-      const bid = Number(payload.data?.b);
-      const ask = Number(payload.data?.a);
-
-      if (!Number.isFinite(bid) || !Number.isFinite(ask)) {
-        return;
-      }
-
-      setMarket((previous) => {
-        const base = previous || buildEmptyMarket();
-        const nextPairs = base.pairs.map((entry) => {
-          if (entry.pair !== pair) {
-            return entry;
-          }
-
-          const quotes = {
-            ...entry.quotes,
-            Binance: {
-              bid,
-              ask,
-              updatedAt: new Date().toISOString(),
-              source: "ws" as const,
-            },
-          };
-
-          return {
-            ...entry,
-            quotes,
-            opportunities: buildOpportunities(quotes),
-          };
-        });
-
-        return {
-          updatedAt: new Date().toISOString(),
-          pairs: nextPairs,
+      socket.onmessage = (event) => {
+        const payload = JSON.parse(event.data) as {
+          data?: { s?: string; b?: string; a?: string };
         };
-      });
+
+        const symbol = payload.data?.s;
+        const pair = symbol ? BINANCE_SYMBOL_TO_PAIR[symbol] : null;
+
+        if (!pair) {
+          return;
+        }
+
+        const bid = Number(payload.data?.b);
+        const ask = Number(payload.data?.a);
+
+        if (!Number.isFinite(bid) || !Number.isFinite(ask)) {
+          return;
+        }
+
+        setMarket((previous) => {
+          const base = previous || buildEmptyMarket();
+          const nextPairs = base.pairs.map((entry) => {
+            if (entry.pair !== pair) {
+              return entry;
+            }
+
+            const quotes = {
+              ...entry.quotes,
+              Binance: {
+                bid,
+                ask,
+                updatedAt: new Date().toISOString(),
+                source: "ws" as const,
+              },
+            };
+
+            return {
+              ...entry,
+              quotes,
+              opportunities: buildOpportunities(quotes),
+            };
+          });
+
+          const nextMarket = {
+            updatedAt: new Date().toISOString(),
+            pairs: nextPairs,
+          };
+
+          setQuoteHistory((previousHistory) => [
+            {
+              capturedAt: nextMarket.updatedAt,
+              pairs: nextPairs,
+            },
+            ...previousHistory,
+          ].slice(0, 120));
+
+          return nextMarket;
+        });
+      };
+
+      socketRef.current = socket;
     };
 
-    socketRef.current = socket;
+    connectSocket();
 
     return () => {
-      socket.close();
+      cancelled = true;
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+      }
+      socketRef.current?.close();
       socketRef.current = null;
     };
   }, []);
@@ -515,6 +616,11 @@ export default function TradingLabPage() {
     const now = Date.now();
 
     for (const bot of botList) {
+      if (isBotMisconfigured(bot)) {
+        signalMap[bot.id] = { signal: "Invalid config: buy and sell exchange identical" };
+        continue;
+      }
+
       const edge = computeBotEdge(bot, market);
 
       if (!edge) {
@@ -524,32 +630,45 @@ export default function TradingLabPage() {
 
       if (bot.status !== "running") {
         signalMap[bot.id] = {
-          signal: `Ready ${formatPct(edge.netEdgePct)} net`,
+          signal: `Ready ${formatPctWithBps(edge.netEdgePct)} net`,
         };
         continue;
       }
 
-      const tradeCooldown = 20000;
+      const tradeCooldown = 45000;
       const lastTradeAt = lastTradeAtRef.current[bot.id] || 0;
       const isExecutable = edge.netEdgePct > bot.minNetSpreadPct;
+      const notionalUsdt = Number((bot.maxCapitalUsd * 0.55).toFixed(2));
 
       if (!isExecutable) {
         signalMap[bot.id] = {
-          signal: `Watching ${formatPct(edge.netEdgePct)} net`,
+          signal: `Watching ${formatPctWithBps(edge.netEdgePct)} net`,
+        };
+        continue;
+      }
+
+      if (Math.abs(edge.grossSpreadPct) < 0.02) {
+        signalMap[bot.id] = {
+          signal: `Rejected low gross spread ${formatPctWithBps(edge.grossSpreadPct)}`,
+        };
+        continue;
+      }
+
+      if (notionalUsdt > 50000) {
+        signalMap[bot.id] = {
+          signal: "Rejected notional above 50,000 USDT limit",
         };
         continue;
       }
 
       if (now - lastTradeAt < tradeCooldown) {
         signalMap[bot.id] = {
-          signal: `Cooldown after ${formatPct(edge.netEdgePct)} trigger`,
+          signal: `Cooldown after ${formatPctWithBps(edge.netEdgePct)} trigger`,
         };
         continue;
       }
 
       lastTradeAtRef.current[bot.id] = now;
-
-      const notionalUsdt = Number((bot.maxCapitalUsd * 0.55).toFixed(2));
       const pnlUsdt = Number(
         (notionalUsdt * (edge.netEdgePct / 100)).toFixed(2)
       );
@@ -572,14 +691,44 @@ export default function TradingLabPage() {
       });
 
       signalMap[bot.id] = {
-        signal: `Executed ${formatPct(edge.netEdgePct)} net`,
+        signal: `Executed ${formatPctWithBps(edge.netEdgePct)} net`,
         pnlUsd: pnlUsdt,
         traded: true,
       };
     }
 
     if (tradeBatch.length > 0) {
-      setTradeHistory((previous) => [...tradeBatch, ...previous].slice(0, 24));
+      void (async () => {
+        const executedTrades = await Promise.all(
+          tradeBatch.map(async (trade) => {
+            try {
+              const response = await fetch("/api/trading/paper/execute", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(trade),
+              });
+
+              if (!response.ok) {
+                return trade;
+              }
+
+              const executed = (await response.json()) as TradeEntry;
+              return {
+                ...trade,
+                ...executed,
+              };
+            } catch {
+              return trade;
+            }
+          })
+        );
+
+        setTradeHistory((previous) =>
+          [...executedTrades, ...previous].slice(0, 50)
+        );
+      })();
     }
 
     setBots((previous) =>
@@ -617,26 +766,34 @@ export default function TradingLabPage() {
     }
 
     const initialResults = Object.fromEntries(
-      botsRef.current.map((bot) => [bot.id, buildBacktest(bot, market)])
+      botsRef.current.map((bot) => [bot.id, buildBacktest(bot, market, quoteHistory)])
     );
     setBacktests(initialResults);
-  }, [market, backtests]);
+  }, [market, backtests, quoteHistory]);
 
-  const totalPnlUsd = bots.reduce(
-    (sum, bot) => sum + bot.cumulativePnlUsd,
-    0
+  const botEdges = useMemo(
+    () =>
+      Object.fromEntries(
+        bots.map((bot) => [bot.id, computeBotEdge(bot, market)])
+      ) as Record<string, ReturnType<typeof computeBotEdge>>,
+    [bots, market]
   );
+  const totalPnlUsd = bots.reduce((sum, bot) => sum + bot.cumulativePnlUsd, 0);
   const runningBots = bots.filter((bot) => bot.status === "running").length;
   const totalTrades = bots.reduce((sum, bot) => sum + bot.totalTrades, 0);
-  const topOpportunities = (market?.pairs || [])
-    .flatMap((pair) =>
-      pair.opportunities.slice(0, 2).map((opportunity) => ({
-        pair: pair.pair,
-        ...opportunity,
-      }))
-    )
-    .sort((a, b) => b.grossSpreadPct - a.grossSpreadPct)
-    .slice(0, 6);
+  const topOpportunities = useMemo(
+    () =>
+      (market?.pairs || [])
+        .flatMap((pair) =>
+          pair.opportunities.slice(0, 2).map((opportunity) => ({
+            pair: pair.pair,
+            ...opportunity,
+          }))
+        )
+        .sort((a, b) => b.grossSpreadPct - a.grossSpreadPct)
+        .slice(0, 6),
+    [market]
+  );
 
   const updateBot = (
     botId: string,
@@ -677,14 +834,14 @@ export default function TradingLabPage() {
 
     setBacktests((previous) => ({
       ...previous,
-      [botId]: buildBacktest(bot, market),
+      [botId]: buildBacktest(bot, market, quoteHistory),
     }));
   };
 
   const runAllBacktests = () => {
     setBacktests(
       Object.fromEntries(
-        botsRef.current.map((bot) => [bot.id, buildBacktest(bot, market)])
+        botsRef.current.map((bot) => [bot.id, buildBacktest(bot, market, quoteHistory)])
       )
     );
   };
@@ -752,8 +909,9 @@ export default function TradingLabPage() {
 
             <div className="mt-5 grid gap-4">
               {bots.map((bot) => {
-                const edge = computeBotEdge(bot, market);
+                const edge = botEdges[bot.id];
                 const backtest = backtests[bot.id];
+                const misconfigured = isBotMisconfigured(bot);
 
                 return (
                   <div
@@ -781,13 +939,19 @@ export default function TradingLabPage() {
                         <div className="mt-1 text-sm text-slate-300">
                           Signal: {bot.lastSignal}
                         </div>
+                        {misconfigured && (
+                          <div className="mt-1 text-sm text-rose-300">
+                            Buy and sell exchange must be different.
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex gap-2">
                         <button
                           onClick={() => toggleBot(bot.id)}
+                          disabled={misconfigured}
                           className={
-                            "rounded-xl px-4 py-2 text-sm font-medium transition " +
+                            "rounded-xl px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 " +
                             (bot.status === "running"
                               ? "bg-rose-600 text-white hover:bg-rose-500"
                               : "bg-emerald-600 text-white hover:bg-emerald-500")
@@ -964,7 +1128,7 @@ export default function TradingLabPage() {
                       <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
                         <div className="text-xs text-slate-500">Net Edge</div>
                         <div className="mt-1 text-lg font-semibold text-emerald-300">
-                          {edge ? formatPct(edge.netEdgePct) : "-"}
+                          {edge ? formatPctWithBps(edge.netEdgePct) : "-"}
                         </div>
                       </div>
                       <div className="rounded-2xl border border-white/8 bg-slate-950/80 px-3 py-3">
@@ -1018,6 +1182,26 @@ export default function TradingLabPage() {
                   >
                     {socketStatus}
                   </span>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Binance Paper Account</span>
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] ${
+                      binanceStatus?.configured
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    }`}
+                  >
+                    {binanceStatus?.configured ? "configured" : "missing"}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-slate-400">
+                  {binanceStatus
+                    ? `Reachable: ${binanceStatus.reachable ? "yes" : "no"} / Mode: ${binanceStatus.mode}`
+                    : "Status unavailable"}
                 </div>
               </div>
 
@@ -1172,7 +1356,7 @@ export default function TradingLabPage() {
                         <div className="rounded-xl border border-white/8 bg-slate-950/80 px-3 py-3">
                           <div className="text-slate-500">Avg Edge</div>
                           <div className="mt-1 font-semibold text-sky-200">
-                            {formatPct(result.avgEdgePct)}
+                            {formatPctWithBps(result.avgEdgePct)}
                           </div>
                         </div>
                         <div className="rounded-xl border border-white/8 bg-slate-950/80 px-3 py-3">
@@ -1238,7 +1422,11 @@ export default function TradingLabPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium">{trade.botName}</div>
-                        <div className="text-xs text-slate-500">{trade.mode}</div>
+                        <div className="text-xs text-slate-500">
+                          {trade.mode}
+                          {trade.executionMode ? ` / ${trade.executionMode}` : ""}
+                          {trade.provider ? ` / ${trade.provider}` : ""}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         {trade.pair}: {trade.buyExchange} {"->"} {trade.sellExchange}
@@ -1247,7 +1435,7 @@ export default function TradingLabPage() {
                         {formatPct(trade.grossSpreadPct)}
                       </td>
                       <td className="px-4 py-3 text-emerald-300">
-                        {formatPct(trade.netEdgePct)}
+                        {formatPctWithBps(trade.netEdgePct)}
                       </td>
                       <td className="px-4 py-3">{formatUsdt(trade.notionalUsdt)}</td>
                       <td className="px-4 py-3 text-emerald-300">
