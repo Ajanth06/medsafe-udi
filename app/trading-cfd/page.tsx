@@ -19,6 +19,10 @@ type MarketSignal = {
   symbol: string;
   price: string;
   rawPrice: number;
+  bid: number | null;
+  ask: number | null;
+  spread: number | null;
+  priceSource: string;
   changePct: number;
   signal: SignalSide;
   regime: Regime;
@@ -79,6 +83,10 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     symbol: "EUR/USD",
     price: "1.0842",
     rawPrice: 1.0842,
+    bid: 1.08415,
+    ask: 1.08425,
+    spread: 0.0001,
+    priceSource: "Polygon bid/ask",
     changePct: 0.34,
     signal: "BUY",
     regime: "Trend",
@@ -108,6 +116,10 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     symbol: "DE40",
     price: "18,742",
     rawPrice: 18742,
+    bid: null,
+    ask: null,
+    spread: null,
+    priceSource: "Reference price",
     changePct: -0.21,
     signal: "SELL",
     regime: "Trend",
@@ -137,6 +149,10 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     symbol: "WTI",
     price: "78.62",
     rawPrice: 78.62,
+    bid: null,
+    ask: null,
+    spread: null,
+    priceSource: "Reference price",
     changePct: 0.11,
     signal: "WAIT",
     regime: "Range",
@@ -414,6 +430,58 @@ export default function TradingCfdPage() {
     [signals]
   );
 
+  const intelligencePanel = useMemo(
+    () =>
+      signals.map((signal) => {
+        const trendStrength = Math.min(
+          100,
+          Math.round((Math.abs(signal.ema20 - signal.ema50) / Math.max(signal.rawPrice, Number.EPSILON)) * 10000)
+        );
+        const liquidityQuality = signal.volumeRising
+          ? signal.bid !== null && signal.ask !== null
+            ? "Tradable"
+            : "Proxy only"
+          : "Thin";
+
+        return {
+          instrument: signal.instrument,
+          spreadLabel: signal.spread !== null ? `${signal.spread}` : signal.maxSpreadNote,
+          volatilityLabel: `${signal.atr} ATR / ${formatPct(signal.atrPct)}`,
+          trendStrength,
+          liquidityQuality,
+        };
+      }),
+    [signals]
+  );
+
+  const volatilityScanner = useMemo(
+    () =>
+      [...signals]
+        .sort((a, b) => b.atrPct - a.atrPct || Math.abs(b.momentumPct) - Math.abs(a.momentumPct))
+        .map((signal, index) => ({
+          rank: index + 1,
+          instrument: signal.instrument,
+          atrPct: signal.atrPct,
+          momentumPct: signal.momentumPct,
+          regime: signal.regime,
+        })),
+    [signals]
+  );
+
+  const breakoutDetector = useMemo(
+    () =>
+      signals
+        .filter(
+          (signal) =>
+            signal.regime === "Trend" &&
+            signal.confidence >= 70 &&
+            signal.volumeRising &&
+            Math.abs(signal.momentumPct) >= 0.04
+        )
+        .sort((a, b) => b.confidence - a.confidence),
+    [signals]
+  );
+
   const selectedSignal =
     signals.find((entry) => entry.instrument === selectedInstrument) || signals[0];
 
@@ -557,6 +625,14 @@ export default function TradingCfdPage() {
                 <div className="mt-1 font-semibold text-slate-100">{source}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                <div className="text-slate-500">Massive Coverage</div>
+                <div className="mt-1 font-semibold text-slate-100">
+                  {signals
+                    .map((entry) => `${entry.instrument}: ${entry.priceSource}`)
+                    .join(" | ")}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                 <div className="text-slate-500">Feed Snapshot</div>
                 <div className="mt-1 font-semibold text-slate-100">{formatDateTime(updatedAt)}</div>
               </div>
@@ -660,6 +736,10 @@ export default function TradingCfdPage() {
                 </div>
 
                 <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3 col-span-2">
+                    <div className="text-slate-500">Price Source</div>
+                    <div className="mt-1 font-semibold text-slate-100">{signal.priceSource}</div>
+                  </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Entry Zone</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.entryZone}</div>
@@ -684,6 +764,18 @@ export default function TradingCfdPage() {
                     <div className="text-slate-500">ATR</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.atr} ({formatPct(signal.atrPct)})</div>
                   </div>
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-slate-500">Bid / Ask</div>
+                    <div className="mt-1 font-semibold text-slate-100">
+                      {signal.bid !== null && signal.ask !== null ? `${signal.bid} / ${signal.ask}` : "n/a"}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-slate-500">Spread</div>
+                    <div className="mt-1 font-semibold text-slate-100">
+                      {signal.spread !== null ? signal.spread : "n/a"}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-5 rounded-2xl border border-white/8 bg-black/20 p-4">
@@ -700,6 +792,96 @@ export default function TradingCfdPage() {
                 </div>
               </article>
             ))}
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Market Intelligence</div>
+            <h2 className="mt-1 text-xl font-semibold">Spread, Volatility, Trend</h2>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              {intelligencePanel.map((entry) => (
+                <div
+                  key={`intel-${entry.instrument}`}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <div className="font-semibold text-slate-100">{entry.instrument}</div>
+                  <div className="mt-3 text-sm text-slate-400">Spread</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">{entry.spreadLabel}</div>
+                  <div className="mt-3 text-sm text-slate-400">Volatility</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">{entry.volatilityLabel}</div>
+                  <div className="mt-3 text-sm text-slate-400">Trend Strength</div>
+                  <div className="mt-1 text-sm font-semibold text-sky-200">{entry.trendStrength}/100</div>
+                  <div className="mt-3 text-sm text-slate-400">Liquidity</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">{entry.liquidityQuality}</div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Volatility Scanner</div>
+            <h2 className="mt-1 text-xl font-semibold">Fastest Moving Markets</h2>
+
+            <div className="mt-5 space-y-3">
+              {volatilityScanner.map((entry) => (
+                <div
+                  key={`scanner-${entry.instrument}`}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-semibold text-slate-100">
+                      #{entry.rank} {entry.instrument}
+                    </div>
+                    <div className="text-slate-400">{entry.regime}</div>
+                  </div>
+                  <div className="mt-2 text-slate-300">
+                    ATR % {formatPct(entry.atrPct)} | Momentum {formatPct(entry.momentumPct)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Breakout Detector</div>
+              <h2 className="mt-1 text-xl font-semibold">Trend Expansion Candidates</h2>
+            </div>
+            <div className="text-xs text-slate-500">
+              Confidence &gt;= 70, Trend-Regime, rising activity
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {breakoutDetector.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm text-slate-400">
+                Kein Markt erfuellt aktuell die Breakout-Kriterien.
+              </div>
+            ) : (
+              breakoutDetector.map((signal) => (
+                <div
+                  key={`breakout-${signal.instrument}`}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-semibold text-slate-100">
+                      {signal.instrument} {signal.signal}
+                    </div>
+                    <div className="text-slate-400">{signal.confidence}% confidence</div>
+                  </div>
+                  <div className="mt-2 text-slate-300">
+                    Regime {signal.regime} | Momentum {formatPct(signal.momentumPct)} | ATR {signal.atr}
+                  </div>
+                  <div className="mt-2 text-slate-300">
+                    Execute on Plus500 as: {signal.plus500ExecutionText}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </section>
 

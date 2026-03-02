@@ -17,9 +17,17 @@ type InstrumentConfig = {
   plus500MarketName: string;
   atrStopMultiplier: number;
   atrTakeMultiplier: number;
+  massiveTickers?: string[];
 };
 
-type QuoteResponse = { close?: string; percent_change?: string };
+type QuoteResponse = {
+  close?: string;
+  percent_change?: string;
+  bid?: number;
+  ask?: number;
+  source?: string;
+  sourceLabel?: string;
+};
 type SeriesValue = {
   datetime: string;
   open: string;
@@ -47,6 +55,7 @@ const CONFIGS: InstrumentConfig[] = [
     plus500MarketName: "Germany 40 CFD",
     atrStopMultiplier: 1.4,
     atrTakeMultiplier: 2.8,
+    massiveTickers: ["I:GDAXI", "I:DAX", "I:DE40"],
   },
   {
     instrument: "WTI",
@@ -56,6 +65,7 @@ const CONFIGS: InstrumentConfig[] = [
     plus500MarketName: "Oil CFD",
     atrStopMultiplier: 1.5,
     atrTakeMultiplier: 3,
+    massiveTickers: ["I:WTI", "I:CL1", "I:WTICRUDE"],
   },
 ];
 
@@ -79,6 +89,62 @@ const fetchJson = async (url: string) => {
   }
 
   return response.json();
+};
+
+const fetchPolygonForexQuote = async () => {
+  const apiKey = process.env.POLYGON_API_KEY;
+
+  if (!apiKey) {
+    return null;
+  }
+
+  const data = await fetchJson(
+    `https://api.polygon.io/v1/last_quote/currencies/EUR/USD?apiKey=${apiKey}`
+  );
+  const bid = toNumber(data.last?.bid);
+  const ask = toNumber(data.last?.ask);
+
+  return {
+    bid,
+    ask,
+    close: ((bid + ask) / 2).toString(),
+    source: "polygon",
+    sourceLabel: "Polygon bid/ask",
+  } satisfies QuoteResponse;
+};
+
+const fetchMassiveSnapshotQuote = async (config: InstrumentConfig) => {
+  const apiKey = process.env.POLYGON_API_KEY;
+
+  if (!apiKey || !config.massiveTickers?.length) {
+    return null;
+  }
+
+  for (const ticker of config.massiveTickers) {
+    try {
+      const data = await fetchJson(
+        `https://api.polygon.io/v3/snapshot/indices?ticker=${encodeURIComponent(ticker)}&apiKey=${apiKey}`
+      );
+      const result = Array.isArray(data.results) ? data.results[0] : null;
+      const value = result?.value;
+
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          close: value.toString(),
+          percent_change:
+            typeof result?.session?.change_percent === "number"
+              ? result.session.change_percent.toString()
+              : undefined,
+          source: "polygon",
+          sourceLabel: `Massive index snapshot (${ticker})`,
+        } satisfies QuoteResponse;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 };
 
 const toNumber = (value: unknown) => {
@@ -212,6 +278,13 @@ const buildSignal = (config: InstrumentConfig, quote: QuoteResponse, values: Ser
     symbol: config.symbol,
     price: formatPrice(config.instrument, price),
     rawPrice: Number(price.toFixed(6)),
+    bid: quote.bid ? Number(quote.bid.toFixed(config.instrument === "EUR/USD" ? 5 : 2)) : null,
+    ask: quote.ask ? Number(quote.ask.toFixed(config.instrument === "EUR/USD" ? 5 : 2)) : null,
+    spread:
+      quote.bid && quote.ask
+        ? Number((quote.ask - quote.bid).toFixed(config.instrument === "EUR/USD" ? 5 : 2))
+        : null,
+    priceSource: quote.sourceLabel || "Reference price",
     changePct: Number(
       (quote.percent_change ? toNumber(quote.percent_change) : ((price - previous) / previous) * 100).toFixed(2)
     ),
@@ -246,35 +319,54 @@ const buildSignal = (config: InstrumentConfig, quote: QuoteResponse, values: Ser
 
 export async function GET() {
   const apiKey = process.env.TWELVEDATA_API_KEY || process.env.TWELVE_DATA_API_KEY;
+  const polygonApiKey = process.env.POLYGON_API_KEY;
 
-  if (!apiKey) {
+  if (!apiKey && !polygonApiKey) {
     return NextResponse.json(
-      { updatedAt: new Date().toISOString(), error: "missing_twelvedata_api_key", signals: [] },
+      { updatedAt: new Date().toISOString(), error: "missing_market_data_api_key", signals: [] },
       { status: 500 }
     );
   }
 
   const signals = await Promise.all(
     CONFIGS.map(async (config) => {
-      const [quote, series] = await Promise.all([
-        fetchJson(
-          `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
-        ) as Promise<QuoteResponse>,
-        fetchJson(
-          `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
-        ) as Promise<{ status?: string; message?: string; values?: SeriesValue[] }>,
+      const quotePromise =
+        config.instrument === "EUR/USD" && polygonApiKey
+          ? fetchPolygonForexQuote()
+          : polygonApiKey
+            ? fetchMassiveSnapshotQuote(config)
+            : null;
+      const seriesPromise = apiKey
+        ? (fetchJson(
+            `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=15min&outputsize=70&apikey=${apiKey}`
+          ) as Promise<{ status?: string; message?: string; values?: SeriesValue[] }>)
+        : Promise.resolve({ values: undefined });
+      const quoteFallbackPromise = apiKey
+        ? (fetchJson(
+            `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(config.symbol)}&apikey=${apiKey}`
+          ) as Promise<QuoteResponse>)
+        : Promise.resolve({});
+
+      const [polygonQuote, quoteFallback, series] = await Promise.all([
+        quotePromise,
+        quoteFallbackPromise,
+        seriesPromise,
       ]);
 
       if (series.status === "error" || !series.values?.length) {
         throw new Error(series.message || "twelvedata_series_failed");
       }
 
-      return buildSignal(config, quote, series.values);
+      return buildSignal(config, polygonQuote || quoteFallback, series.values);
     })
   );
 
   return NextResponse.json(
-    { updatedAt: new Date().toISOString(), source: "Twelve Data", signals },
+    {
+      updatedAt: new Date().toISOString(),
+      source: polygonApiKey ? "Polygon/Massive + Twelve Data" : "Twelve Data",
+      signals,
+    },
     { status: 200 }
   );
 }
