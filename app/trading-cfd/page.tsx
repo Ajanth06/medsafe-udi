@@ -147,7 +147,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = CFD_INSTRUMENTS.map((config) => ({
   stopLoss: "Nicht verfuegbar",
   takeProfit: "Nicht verfuegbar",
   riskReward: "Nicht verfuegbar",
-  risk: config.instrument === "EUR/USD" || config.instrument === "GBP/USD" ? "Low" : config.instrument === "WTI" ? "High" : "Medium",
+  risk: config.instrument === "EUR/USD" ? "Low" : "Medium",
   updatedAt: new Date().toISOString(),
 }));
 
@@ -231,8 +231,7 @@ const parseNumeric = (value: string) => {
 };
 
 const formatInstrumentPrice = (instrument: Instrument, value: number) => {
-  if (instrument === "EUR/USD" || instrument === "GBP/USD") return value.toFixed(4);
-  if (instrument === "Gold" || instrument === "WTI" || instrument === "QQQ") return value.toFixed(2);
+  if (instrument === "EUR/USD") return value.toFixed(4);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
 
@@ -251,34 +250,9 @@ const estimateBidAskFromLast = (price: number, spread: number) => {
   };
 };
 
-const sessionSchedule = {
-  London: {
-    title: "London",
-    utc: "07:00-12:00 UTC",
-    berlin: "08:00-13:00 Berlin",
-  },
-  Overlap: {
-    title: "Overlap",
-    utc: "12:00-16:00 UTC",
-    berlin: "13:00-17:00 Berlin",
-  },
-  "New York": {
-    title: "New York",
-    utc: "16:00-21:00 UTC",
-    berlin: "17:00-22:00 Berlin",
-  },
-} as const;
-
 const sessionPriority = (session: SessionMode, instrument: Instrument) => {
+  if (session === "London" && instrument === "EUR/USD") return 1;
   if (session === "Overlap") return 1;
-  if (session === "London") {
-    if (instrument === "EUR/USD" || instrument === "GBP/USD") return 1;
-    if (instrument === "Gold") return 0.8;
-    return 0.4;
-  }
-
-  if (instrument === "QQQ" || instrument === "WTI") return 1;
-  if (instrument === "Gold") return 0.85;
   return 0.7;
 };
 
@@ -632,9 +606,9 @@ export default function TradingCfdPage() {
   }, [signals]);
 
   const sessionBias = useMemo(() => {
-    if (sessionMode === "London") return "London priorisiert EUR/USD, GBP/USD und Gold.";
-    if (sessionMode === "New York") return "New York priorisiert QQQ, WTI und Gold.";
-    return "Overlap ist die staerkste Misch-Session fuer Forex, Gold und US-Indizes.";
+    if (sessionMode === "London") return "London ist die primaere Session fuer EUR/USD.";
+    if (sessionMode === "New York") return "New York liefert Momentum, aber EUR/USD braucht saubere Bestaetigung.";
+    return "Overlap liefert meist die saubersten EUR/USD-Signale insgesamt.";
   }, [sessionMode]);
 
   const actionableSignals = useMemo(
@@ -1060,18 +1034,9 @@ export default function TradingCfdPage() {
               </h1>
               <p className="mt-3 max-w-3xl text-sm text-slate-300/80 md:text-base">
                 Serverseitige Signal-Engine mit `EMA20`, `EMA50`, `ATR`, Regime-Erkennung
-                und Session-Scoring fuer EUR/USD, GBP/USD, Gold, WTI und QQQ. Dazu jetzt mit
+                und Session-Scoring fuer EUR/USD. Dazu jetzt mit
                 Positionsgroessen-Rechner, Signal-Historie und manuellem Plus500-Journal.
               </p>
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                {Object.values(sessionSchedule).map((entry) => (
-                  <div key={entry.title} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{entry.title}</div>
-                    <div className="mt-1 font-semibold text-slate-100">{entry.berlin}</div>
-                    <div className="text-xs text-slate-500">{entry.utc}</div>
-                  </div>
-                ))}
-              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
@@ -1208,12 +1173,12 @@ export default function TradingCfdPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signaltafel</div>
-              <h2 className="mt-1 text-xl font-semibold">5 Echtzeit-Maerkte</h2>
+              <h2 className="mt-1 text-xl font-semibold">EUR/USD</h2>
             </div>
             <div className="text-xs text-slate-500">Echtzeitstream ueber Twelve Data und `/api/trading/cfd/live`.</div>
           </div>
 
-          <div className="mt-5 grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="mt-5 grid gap-4 xl:grid-cols-1">
             {signals.map((signal) => (
               <article
                 key={signal.instrument}

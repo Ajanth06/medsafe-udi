@@ -86,7 +86,7 @@ export async function GET(request: Request) {
           JSON.stringify({
             action: "subscribe",
             params: {
-              symbols: CFD_STREAM_SYMBOLS.join(","),
+              symbols: CFD_STREAM_SYMBOLS[0],
             },
           })
         );

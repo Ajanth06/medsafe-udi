@@ -63,23 +63,7 @@ type MarketSignal = {
   updatedAt: string;
 };
 
-const CONFIGS: InstrumentConfig[] = CFD_INSTRUMENTS.map((config) => {
-  if (config.instrument === "QQQ") {
-    const preferred = process.env.TWELVEDATA_QQQ_SYMBOL || process.env.TWELVEDATA_NASDAQ100_SYMBOL;
-    return preferred
-      ? { ...config, symbolCandidates: [preferred, ...config.symbolCandidates.filter((entry) => entry !== preferred)] }
-      : config;
-  }
-
-  if (config.instrument === "WTI") {
-    const preferred = process.env.TWELVEDATA_WTI_SYMBOL;
-    return preferred
-      ? { ...config, symbolCandidates: [preferred, ...config.symbolCandidates.filter((entry) => entry !== preferred)] }
-      : config;
-  }
-
-  return config;
-});
+const CONFIGS: InstrumentConfig[] = CFD_INSTRUMENTS;
 
 const fetchJson = async (url: string) => {
   const controller = new AbortController();
@@ -175,31 +159,17 @@ const computeAtr = (candles: SeriesValue[], period: number) => {
 
 const formatPrice = (instrument: Instrument, value: number) => {
   if (instrument === "EUR/USD") return value.toFixed(4);
-  if (instrument === "GBP/USD") return value.toFixed(4);
-  if (instrument === "Gold" || instrument === "WTI" || instrument === "QQQ")
-    return value.toFixed(2);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
 
 const sessionScoreFor = (instrument: Instrument, session: SessionTag) => {
-  if (session === "Overlap") {
-    if (instrument === "Gold") return 10;
-    return 15;
-  }
-
+  if (session === "Overlap") return 15;
   if (instrument === "EUR/USD" && session === "London") return 15;
-  if (instrument === "GBP/USD" && session === "London") return 15;
-  if (instrument === "Gold" && session === "London") return 10;
-  if (instrument === "QQQ" && session === "New York") return 15;
-  if (instrument === "WTI" && session === "New York") return 15;
   return 0;
 };
 
 const riskFor = (instrument: Instrument, regime: Regime): RiskLevel => {
   if (instrument === "EUR/USD" && regime === "Trend") return "Low";
-  if (instrument === "GBP/USD" && regime === "Trend") return "Low";
-  if (instrument === "WTI") return "High";
-  if (instrument === "QQQ") return "Medium";
   return "Medium";
 };
 
@@ -346,7 +316,7 @@ const buildSignal = (
     regime,
     ema20: Number(ema20.toFixed(6)),
     ema50: Number(ema50.toFixed(6)),
-    atr: Number(atr.toFixed(config.instrument === "EUR/USD" || config.instrument === "GBP/USD" ? 5 : 2)),
+    atr: Number(atr.toFixed(config.instrument === "EUR/USD" ? 5 : 2)),
     atrPct: Number(atrPct.toFixed(2)),
     momentumPct: Number(momentumPct.toFixed(2)),
     volumeRising,

@@ -1,9 +1,4 @@
-export type Instrument =
-  | "EUR/USD"
-  | "QQQ"
-  | "Gold"
-  | "WTI"
-  | "GBP/USD";
+export type Instrument = "EUR/USD";
 
 export type InstrumentDefinition = {
   instrument: Instrument;
@@ -30,54 +25,6 @@ export const CFD_INSTRUMENTS: InstrumentDefinition[] = [
     atrTakeMultiplier: 2,
     minPrice: 0.8,
     maxPrice: 1.5,
-  },
-  {
-    instrument: "QQQ",
-    streamSymbol: "QQQ",
-    symbolCandidates: ["QQQ"],
-    maxSpreadNote: "Max 0.05 USD",
-    plus500MarketName: "QQQ CFD",
-    estimatedSpread: 0.05,
-    atrStopMultiplier: 1.6,
-    atrTakeMultiplier: 2.4,
-    minPrice: 200,
-    maxPrice: 700,
-  },
-  {
-    instrument: "Gold",
-    streamSymbol: "XAU/USD",
-    symbolCandidates: ["XAU/USD"],
-    maxSpreadNote: "Max 0.60 USD",
-    plus500MarketName: "Gold CFD",
-    estimatedSpread: 0.6,
-    atrStopMultiplier: 1.5,
-    atrTakeMultiplier: 2.2,
-    minPrice: 1500,
-    maxPrice: 4000,
-  },
-  {
-    instrument: "WTI",
-    streamSymbol: "WTI",
-    symbolCandidates: ["WTI", "USOIL"],
-    maxSpreadNote: "Max 0.08 USD",
-    plus500MarketName: "WTI CFD",
-    estimatedSpread: 0.08,
-    atrStopMultiplier: 1.6,
-    atrTakeMultiplier: 2.4,
-    minPrice: 20,
-    maxPrice: 120,
-  },
-  {
-    instrument: "GBP/USD",
-    streamSymbol: "GBP/USD",
-    symbolCandidates: ["GBP/USD"],
-    maxSpreadNote: "Max 1.5 Pip",
-    plus500MarketName: "GBP/USD CFD",
-    estimatedSpread: 0.00015,
-    atrStopMultiplier: 1.5,
-    atrTakeMultiplier: 2,
-    minPrice: 1,
-    maxPrice: 1.6,
   },
 ];
 
