@@ -40,6 +40,9 @@ type MarketSignal = {
   trendBias: SignalSide;
   entryMode: EntryMode;
   triggerPrice: string;
+  cancelTriggerPrice: string;
+  confirmationCount: number;
+  confirmationNeeded: number;
   maxSpread: number;
   regime: Regime;
   ema20: number;
@@ -157,6 +160,15 @@ const computeAtr = (candles: SeriesValue[], period: number) => {
   return sample.reduce((sum, value) => sum + value, 0) / Math.max(sample.length, 1);
 };
 
+const normalizeSourceTimestamp = (value?: string | null) => {
+  if (!value) return new Date().toISOString();
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(value)) return new Date(value).toISOString();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return new Date(value.replace(" ", "T") + "Z").toISOString();
+  }
+  return new Date(value).toISOString();
+};
+
 const formatPrice = (instrument: Instrument, value: number) => {
   if (instrument === "EUR/USD") return value.toFixed(4);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
@@ -232,6 +244,10 @@ const buildSignal = (
   symbol: string,
   values: SeriesValue[]
 ) => {
+  const REQUIRED_CONFIRMATIONS = 3;
+  const ENTRY_ATR_BUFFER = 0.1;
+  const CHOP_FILTER_MULTIPLIER = 0.2;
+
   if (values.length < 55) throw new Error("insufficient_series");
 
   const candles = [...values].reverse();
@@ -246,56 +262,75 @@ const buildSignal = (
   const momentumPct = ((price - closes[closes.length - 4]) / closes[closes.length - 4]) * 100;
   const highs = candles.map((entry) => toNumber(entry.high));
   const lows = candles.map((entry) => toNumber(entry.low));
-  const recentSwingHigh = Math.max(...highs.slice(-6, -1));
-  const recentSwingLow = Math.min(...lows.slice(-6, -1));
+  const recentSwingHigh = Math.max(...highs.slice(-21, -1));
+  const recentSwingLow = Math.min(...lows.slice(-21, -1));
   const volumes = candles.map((entry) => Number(entry.volume || 0));
   const recentVolume = volumes.slice(-6, -1).filter((value) => value > 0);
   const avgVolume = recentVolume.reduce((sum, value) => sum + value, 0) / Math.max(recentVolume.length, 1);
   const currentVolume = volumes[volumes.length - 1];
   const volumeRising = currentVolume > 0 ? currentVolume > avgVolume : atr > recentAtr;
-  const emaGapPct = (Math.abs(ema20 - ema50) / price) * 100;
+  const emaGapAbs = Math.abs(ema20 - ema50);
   const volatilityExpansion = atr > recentAtr * 1.08;
-  const regime: Regime = emaGapPct > atrPct * 0.35 ? "Trend" : "Range";
+  const regime: Regime = emaGapAbs >= atr * CHOP_FILTER_MULTIPLIER ? "Trend" : "Range";
   const biasLong = ema20 > ema50;
   const biasShort = ema20 < ema50;
-  const crossedAboveEma20 = previous <= ema20 && price > ema20;
-  const crossedBelowEma20 = previous >= ema20 && price < ema20;
-  const brokeSwingHigh = price > recentSwingHigh;
-  const brokeSwingLow = price < recentSwingLow;
-  const buyTrigger = biasLong && (crossedAboveEma20 || brokeSwingHigh);
-  const sellTrigger = biasShort && (crossedBelowEma20 || brokeSwingLow);
-  const trendSide: Exclude<SignalSide, "WAIT"> | null = biasLong ? "BUY" : biasShort ? "SELL" : null;
-  const trendScore = regime === "Trend" && (biasLong || biasShort) ? 30 : 0;
-  const triggerScore = buyTrigger || sellTrigger ? 30 : 0;
-  const momentumScore =
-    (biasLong && momentumPct > 0.04) || (biasShort && momentumPct < -0.04) ? 20 : 0;
-  const qualityScore = volatilityExpansion || volumeRising ? 20 : 0;
+  const isChoppy = emaGapAbs < atr * CHOP_FILTER_MULTIPLIER;
+  const longTrigger = recentSwingHigh + atr * ENTRY_ATR_BUFFER;
+  const shortTrigger = recentSwingLow - atr * ENTRY_ATR_BUFFER;
+  const longCancelTrigger = ema20;
+  const shortCancelTrigger = ema20;
+  const latestCloses = closes.slice(-REQUIRED_CONFIRMATIONS);
+  const longConfirmationCount = latestCloses.filter((close) => close > ema20).length;
+  const shortConfirmationCount = latestCloses.filter((close) => close < ema20).length;
+  const lastClose = latestCloses[latestCloses.length - 1] ?? price;
+  const buyTrigger =
+    !isChoppy &&
+    biasLong &&
+    longConfirmationCount >= REQUIRED_CONFIRMATIONS &&
+    lastClose > recentSwingHigh;
+  const sellTrigger =
+    !isChoppy &&
+    biasShort &&
+    shortConfirmationCount >= REQUIRED_CONFIRMATIONS &&
+    lastClose < recentSwingLow;
+  const trendSide: Exclude<SignalSide, "WAIT"> | null =
+    isChoppy ? null : biasLong ? "BUY" : biasShort ? "SELL" : null;
   const session = detectSession();
   const sessionScore = sessionScoreFor(config.instrument, session);
-  const confidence = Math.min(100, trendScore + triggerScore + momentumScore + qualityScore + sessionScore);
+  const confidenceBase =
+    trendSide === null
+      ? 60
+      : (volatilityExpansion ? 8 : 0) + (volumeRising ? 6 : 0) + Math.min(sessionScore, 6);
+  const confidence = Math.min(80, Math.max(60, 60 + confidenceBase));
 
   let signal: SignalSide = "WAIT";
-  if (buyTrigger && confidence >= 55) signal = "BUY";
-  if (sellTrigger && confidence >= 55) signal = "SELL";
+  if (buyTrigger) signal = "BUY";
+  if (sellTrigger) signal = "SELL";
   const { bid, ask, spread } = estimateBidAsk(price, config.estimatedSpread);
   const spreadAccepted = spread <= config.estimatedSpread;
   const triggerPriceValue = trendSide === "BUY"
-    ? Math.max(ema20, recentSwingHigh)
+    ? longTrigger
     : trendSide === "SELL"
-      ? Math.min(ema20, recentSwingLow)
+      ? shortTrigger
       : null;
+  const cancelTriggerValue = trendSide === "BUY"
+    ? longCancelTrigger
+    : trendSide === "SELL"
+      ? shortCancelTrigger
+      : null;
+  const confirmationCount = trendSide === "BUY"
+    ? longConfirmationCount
+    : trendSide === "SELL"
+      ? shortConfirmationCount
+      : 0;
   const entryMode: EntryMode =
     !spreadAccepted || !trendSide
       ? "WAIT"
       : trendSide === "BUY"
-        ? ask >= (triggerPriceValue ?? Number.POSITIVE_INFINITY)
-          ? "NOW"
-          : "STOP"
-        : bid <= (triggerPriceValue ?? Number.NEGATIVE_INFINITY)
-          ? "NOW"
-          : "STOP";
+        ? "STOP"
+        : "STOP";
   const effectiveSignal =
-    spreadAccepted && entryMode === "NOW" && trendSide ? trendSide : "WAIT";
+    spreadAccepted && trendSide && signal !== "WAIT" ? trendSide : "WAIT";
   const executionSide = signal !== "WAIT" ? signal : trendSide;
 
   return {
@@ -312,6 +347,9 @@ const buildSignal = (
     trendBias: trendSide ?? "WAIT",
     entryMode,
     triggerPrice: triggerPriceValue !== null ? formatPrice(config.instrument, triggerPriceValue) : "Nicht verfuegbar",
+    cancelTriggerPrice: cancelTriggerValue !== null ? formatPrice(config.instrument, cancelTriggerValue) : "Nicht verfuegbar",
+    confirmationCount,
+    confirmationNeeded: REQUIRED_CONFIRMATIONS,
     maxSpread: Number(config.estimatedSpread.toFixed(6)),
     regime,
     ema20: Number(ema20.toFixed(6)),
@@ -328,37 +366,41 @@ const buildSignal = (
       executionSide === "BUY"
         ? effectiveSignal === "BUY"
           ? `KAUF ${config.plus500MarketName} zum Briefkurs ${formatPrice(config.instrument, ask)}`
-          : `Kauf-Stop ueber ${formatPrice(config.instrument, Math.max(ema20, recentSwingHigh))}`
+          : `Kauf-Stop ueber ${formatPrice(config.instrument, longTrigger)}`
         : executionSide === "SELL"
           ? effectiveSignal === "SELL"
             ? `VERKAUF ${config.plus500MarketName} zum Geldkurs ${formatPrice(config.instrument, bid)}`
-            : `Verkauf-Stop unter ${formatPrice(config.instrument, Math.min(ema20, recentSwingLow))}`
+            : `Verkauf-Stop unter ${formatPrice(config.instrument, shortTrigger)}`
           : `WARTEN ${config.plus500MarketName}`,
     catalyst:
       !spreadAccepted
         ? `Spread liegt ueber Limit ${formatPrice(config.instrument, config.estimatedSpread)} und blockiert Entries`
+        : isChoppy
+          ? "EMA20 und EMA50 liegen zu nah beieinander. Seitwaertsmarkt wird gefiltert"
         : effectiveSignal === "BUY"
-        ? "EMA20 liegt ueber EMA50 und der Preis bricht ueber EMA20 oder das letzte Swing-High"
+        ? `EMA20 liegt ueber EMA50, drei Schlusskurse liegen ueber EMA20 und der letzte Schlusskurs liegt ueber ${formatPrice(config.instrument, recentSwingHigh)}`
         : effectiveSignal === "SELL"
-          ? "EMA20 liegt unter EMA50 und der Preis bricht unter EMA20 oder das letzte Swing-Low"
+          ? `EMA20 liegt unter EMA50, drei Schlusskurse liegen unter EMA20 und der letzte Schlusskurs liegt unter ${formatPrice(config.instrument, recentSwingLow)}`
           : trendSide === "BUY"
-            ? "Trend bleibt auf Kaufseite, der Ausbruch ist noch nicht bestaetigt"
+            ? `Trend bleibt auf Kaufseite. Bestaetigung ${longConfirmationCount}/${REQUIRED_CONFIRMATIONS} ueber EMA20, letzter Schlusskurs noch nicht sauber ueber ${formatPrice(config.instrument, recentSwingHigh)}`
             : trendSide === "SELL"
-              ? "Trend bleibt auf Verkaufsseite, der Ausbruch ist noch nicht bestaetigt"
+              ? `Trend bleibt auf Verkaufsseite. Bestaetigung ${shortConfirmationCount}/${REQUIRED_CONFIRMATIONS} unter EMA20, letzter Schlusskurs noch nicht sauber unter ${formatPrice(config.instrument, recentSwingLow)}`
               : "EMA20 und EMA50 liefern aktuell keinen klaren Trend",
     thesis:
       effectiveSignal === "BUY"
-        ? "Plus500-Stil Kauf: Einstieg ueber Briefkurs, Stop via 1.5 ATR, Ziel via 2.0 ATR."
+        ? "Konservativer Kauf: Entry als Buy-Stop, Stop 1 ATR, Ziel 2 ATR."
         : effectiveSignal === "SELL"
-          ? "Plus500-Stil Verkauf: Einstieg ueber Geldkurs, Stop via 1.5 ATR, Ziel via 2.0 ATR."
+          ? "Konservativer Verkauf: Entry als Sell-Stop, Stop 1 ATR, Ziel 2 ATR."
           : !spreadAccepted
             ? "Spread zu hoch. Bot bleibt ohne Position, bis der Markt wieder handelbar ist."
+          : isChoppy
+            ? "Chop-Filter aktiv. Kein Trade im Seitwaertsmarkt."
           : trendSide === "BUY"
-            ? "Trend zeigt Kaufseite. Einstieg erst beim Break ueber EMA20 oder Swing-High."
+            ? "Trend zeigt Kaufseite. Einstieg erst nach dreifacher Bestaetigung und Break des Swing-Highs."
             : trendSide === "SELL"
-              ? "Trend zeigt Verkaufsseite. Einstieg erst beim Break unter EMA20 oder Swing-Low."
+              ? "Trend zeigt Verkaufsseite. Einstieg erst nach dreifacher Bestaetigung und Break des Swing-Lows."
               : "Ohne Trend bleibt das Setup defensiv.",
-    updatedAt: candles[candles.length - 1]?.datetime || new Date().toISOString(),
+    updatedAt: normalizeSourceTimestamp(candles[candles.length - 1]?.datetime),
     risk: riskFor(config.instrument, regime),
     ...buildLevels(
       config,
@@ -392,6 +434,9 @@ const buildUnavailableSignal = (
   trendBias: "WAIT",
   entryMode: "WAIT",
   triggerPrice: "Nicht verfuegbar",
+  cancelTriggerPrice: "Nicht verfuegbar",
+  confirmationCount: 0,
+  confirmationNeeded: 2,
   maxSpread: 0.00012,
   regime: "Range",
   ema20: 0,

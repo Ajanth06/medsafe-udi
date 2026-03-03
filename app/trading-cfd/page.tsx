@@ -17,7 +17,8 @@ type FeedStatus = "idle" | "live" | "error";
 type SessionMode = "London" | "New York" | "Overlap";
 type RiskProfile = "Conservative" | "Balanced" | "Aggressive";
 type JournalStatus = "planned" | "executed" | "closed";
-type PositionState = "FLAT" | "LONG" | "SHORT";
+type PositionState = "FLAT" | "PENDING_LONG" | "PENDING_SHORT" | "LONG" | "SHORT";
+const BOT_COOLDOWN_MS = 5 * 60 * 1000;
 
 type MarketSignal = {
   instrument: Instrument;
@@ -33,6 +34,9 @@ type MarketSignal = {
   trendBias: SignalSide;
   entryMode: EntryMode;
   triggerPrice: string;
+  cancelTriggerPrice: string;
+  confirmationCount: number;
+  confirmationNeeded: number;
   maxSpread: number;
   regime: Regime;
   ema20: number;
@@ -97,17 +101,19 @@ type LiveTickEvent = {
 };
 
 type BotPosition = {
-  status: Exclude<PositionState, "FLAT">;
+  status: "PENDING_LONG" | "PENDING_SHORT" | "LONG" | "SHORT";
   entryPrice: number;
   stopLoss: number;
   takeProfit: number;
   atr: number;
   openedAt: string;
+  triggerPrice: number;
+  cancelTriggerPrice: number;
 };
 
 type BotSummary = {
   status: PositionState;
-  action: "BUY" | "SELL" | "WAIT" | "EXIT";
+  action: "BUY" | "SELL" | "WAIT" | "HOLD" | "EXIT";
   entry: string;
   exitPlan: string;
   update: string;
@@ -128,6 +134,9 @@ const FALLBACK_SIGNALS: MarketSignal[] = CFD_INSTRUMENTS.map((config) => ({
   trendBias: "WAIT",
   entryMode: "WAIT",
   triggerPrice: "Nicht verfuegbar",
+  cancelTriggerPrice: "Nicht verfuegbar",
+  confirmationCount: 0,
+  confirmationNeeded: 2,
   maxSpread: config.estimatedSpread,
   regime: "Range",
   ema20: 0,
@@ -194,12 +203,22 @@ const botActionLabel = (action: BotSummary["action"]) =>
     ? "KAUF"
     : action === "SELL"
       ? "VERKAUF"
+      : action === "HOLD"
+        ? "HALTEN"
       : action === "EXIT"
         ? "AUSSTIEG"
         : "WARTEN";
 
-const positionStateLabel = (status: PositionState) =>
-  status === "LONG" ? "Kaufposition" : status === "SHORT" ? "Verkaufsposition" : "Keine Position";
+const positionStateLabel = (status: PositionState | BotPosition["status"]) =>
+  status === "LONG"
+    ? "Kaufposition"
+    : status === "SHORT"
+      ? "Verkaufsposition"
+      : status === "PENDING_LONG"
+        ? "Kauforder aktiv"
+        : status === "PENDING_SHORT"
+          ? "Verkaufsorder aktiv"
+          : "Keine Position";
 
 const regimeLabel = (regime: Regime) =>
   regime === "Trend" ? "Trend" : "Seitwaerts";
@@ -217,6 +236,18 @@ const riskProfileLabel = (profile: RiskProfile) =>
 const formatPct = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 const formatDateTime = (value: string | null) =>
   value ? new Date(value).toLocaleString("de-DE") : "-";
+const formatSignalDateTime = (value: string | null) =>
+  value
+    ? new Intl.DateTimeFormat("de-DE", {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(new Date(value))
+    : "-";
 const formatUsd = (value: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -236,7 +267,13 @@ const formatInstrumentPrice = (instrument: Instrument, value: number) => {
 };
 
 const toIsoTimestamp = (tick: LiveTickEvent) => {
-  if (tick.datetime) return new Date(tick.datetime).toISOString();
+  if (tick.datetime) {
+    if (/[zZ]|[+-]\d{2}:\d{2}$/.test(tick.datetime)) return new Date(tick.datetime).toISOString();
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(tick.datetime)) {
+      return new Date(tick.datetime.replace(" ", "T") + "Z").toISOString();
+    }
+    return new Date(tick.datetime).toISOString();
+  }
   if (typeof tick.timestamp === "number") return new Date(tick.timestamp * 1000).toISOString();
   return new Date().toISOString();
 };
@@ -275,6 +312,7 @@ export default function TradingCfdPage() {
   const [journalStatus, setJournalStatus] = useState<JournalStatus>("planned");
   const [botPosition, setBotPosition] = useState<BotPosition | null>(null);
   const [botUpdate, setBotUpdate] = useState("Bot wartet auf einen gueltigen Trigger.");
+  const [cooldownUntil, setCooldownUntil] = useState<string | null>(null);
   const lastSyncedSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -690,6 +728,7 @@ export default function TradingCfdPage() {
     }
 
     const triggerPrice = parseNumeric(selectedSignal.triggerPrice);
+    const cancelTriggerPrice = parseNumeric(selectedSignal.cancelTriggerPrice);
     const stopLoss = parseNumeric(selectedSignal.stopLoss);
     const takeProfit = parseNumeric(selectedSignal.takeProfit);
     const bid = selectedSignal.bid ?? selectedSignal.rawPrice;
@@ -698,6 +737,14 @@ export default function TradingCfdPage() {
     const spreadTooHigh = spread > selectedSignal.maxSpread;
     const profitDistanceLong = bid;
     const profitDistanceShort = ask;
+    const confirmationReady =
+      selectedSignal.confirmationCount >= selectedSignal.confirmationNeeded;
+    const cooldownActive =
+      cooldownUntil !== null && Date.now() < new Date(cooldownUntil).getTime();
+
+    const startCooldown = () => {
+      setCooldownUntil(new Date(Date.now() + BOT_COOLDOWN_MS).toISOString());
+    };
 
     if (spreadTooHigh) {
       if (botPosition === null) {
@@ -716,12 +763,19 @@ export default function TradingCfdPage() {
       return;
     }
 
+    if (cooldownActive && botPosition === null) {
+      setBotUpdate(`WARTEN: Cooldown aktiv bis ${formatDateTime(cooldownUntil)}.`);
+      return;
+    }
+
     if (!botPosition) {
       if (
         selectedSignal.trendBias === "BUY" &&
         triggerPrice !== null &&
+        cancelTriggerPrice !== null &&
         stopLoss !== null &&
         takeProfit !== null &&
+        confirmationReady &&
         ask >= triggerPrice
       ) {
         setBotPosition({
@@ -731,6 +785,8 @@ export default function TradingCfdPage() {
           takeProfit,
           atr: selectedSignal.atr,
           openedAt: new Date().toISOString(),
+          triggerPrice,
+          cancelTriggerPrice,
         });
         setBotUpdate(`Kaufposition aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
         return;
@@ -739,8 +795,10 @@ export default function TradingCfdPage() {
       if (
         selectedSignal.trendBias === "SELL" &&
         triggerPrice !== null &&
+        cancelTriggerPrice !== null &&
         stopLoss !== null &&
         takeProfit !== null &&
+        confirmationReady &&
         bid <= triggerPrice
       ) {
         setBotPosition({
@@ -750,22 +808,102 @@ export default function TradingCfdPage() {
           takeProfit,
           atr: selectedSignal.atr,
           openedAt: new Date().toISOString(),
+          triggerPrice,
+          cancelTriggerPrice,
         });
         setBotUpdate(`Verkaufsposition aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
-      if (selectedSignal.trendBias === "BUY" && triggerPrice !== null) {
-        setBotUpdate(`Keine Position: Kauf-Stop wartet ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+      if (
+        selectedSignal.trendBias === "BUY" &&
+        triggerPrice !== null &&
+        cancelTriggerPrice !== null &&
+        stopLoss !== null &&
+        takeProfit !== null
+      ) {
+        setBotPosition({
+          status: "PENDING_LONG",
+          entryPrice: triggerPrice,
+          stopLoss,
+          takeProfit,
+          atr: selectedSignal.atr,
+          openedAt: new Date().toISOString(),
+          triggerPrice,
+          cancelTriggerPrice,
+        });
+        setBotUpdate(`Order aktiv: Kauf-Stop ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}.`);
         return;
       }
 
-      if (selectedSignal.trendBias === "SELL" && triggerPrice !== null) {
-        setBotUpdate(`Keine Position: Verkauf-Stop wartet unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+      if (
+        selectedSignal.trendBias === "SELL" &&
+        triggerPrice !== null &&
+        cancelTriggerPrice !== null &&
+        stopLoss !== null &&
+        takeProfit !== null
+      ) {
+        setBotPosition({
+          status: "PENDING_SHORT",
+          entryPrice: triggerPrice,
+          stopLoss,
+          takeProfit,
+          atr: selectedSignal.atr,
+          openedAt: new Date().toISOString(),
+          triggerPrice,
+          cancelTriggerPrice,
+        });
+        setBotUpdate(`Order aktiv: Verkauf-Stop unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}.`);
         return;
       }
 
       setBotUpdate("Keine Position: Kein Trendvorteil, daher warten.");
+      return;
+    }
+
+    if (botPosition.status === "PENDING_LONG") {
+      if (selectedSignal.trendBias !== "BUY" || selectedSignal.confirmationCount === 0) {
+        setBotPosition(null);
+        startCooldown();
+        setBotUpdate(`Order storniert: Kauf-Trigger verloren. Cooldown bis ${formatDateTime(new Date(Date.now() + BOT_COOLDOWN_MS).toISOString())}.`);
+        return;
+      }
+
+      if (confirmationReady && ask >= botPosition.triggerPrice) {
+        setBotPosition({
+          ...botPosition,
+          status: "LONG",
+          entryPrice: ask,
+          openedAt: new Date().toISOString(),
+        });
+        setBotUpdate(`Kaufposition aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+        return;
+      }
+
+      setBotUpdate(`Order aktiv: Kauf-Stop ueber ${formatInstrumentPrice(selectedSignal.instrument, botPosition.triggerPrice)}. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}.`);
+      return;
+    }
+
+    if (botPosition.status === "PENDING_SHORT") {
+      if (selectedSignal.trendBias !== "SELL" || selectedSignal.confirmationCount === 0) {
+        setBotPosition(null);
+        startCooldown();
+        setBotUpdate(`Order storniert: Verkauf-Trigger verloren. Cooldown bis ${formatDateTime(new Date(Date.now() + BOT_COOLDOWN_MS).toISOString())}.`);
+        return;
+      }
+
+      if (confirmationReady && bid <= botPosition.triggerPrice) {
+        setBotPosition({
+          ...botPosition,
+          status: "SHORT",
+          entryPrice: bid,
+          openedAt: new Date().toISOString(),
+        });
+        setBotUpdate(`Verkaufsposition aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        return;
+      }
+
+      setBotUpdate(`Order aktiv: Verkauf-Stop unter ${formatInstrumentPrice(selectedSignal.instrument, botPosition.triggerPrice)}. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}.`);
       return;
     }
 
@@ -783,18 +921,21 @@ export default function TradingCfdPage() {
 
       if (selectedSignal.ema20 < selectedSignal.ema50) {
         setBotPosition(null);
+        startCooldown();
         setBotUpdate("Jetzt aussteigen: Trend ist von Kauf auf Verkauf gekippt.");
         return;
       }
 
       if (bid <= nextStop) {
         setBotPosition(null);
+        startCooldown();
         setBotUpdate(`Jetzt aussteigen: Kauf-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
       if (bid >= botPosition.takeProfit) {
         setBotPosition(null);
+        startCooldown();
         setBotUpdate(`Jetzt aussteigen: Kauf-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
@@ -820,18 +961,21 @@ export default function TradingCfdPage() {
 
     if (selectedSignal.ema20 > selectedSignal.ema50) {
       setBotPosition(null);
+      startCooldown();
       setBotUpdate("Jetzt aussteigen: Trend ist von Verkauf auf Kauf gekippt.");
       return;
     }
 
     if (ask >= nextStop) {
       setBotPosition(null);
+      startCooldown();
       setBotUpdate(`Jetzt aussteigen: Verkauf-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
       return;
     }
 
     if (ask <= botPosition.takeProfit) {
       setBotPosition(null);
+      startCooldown();
       setBotUpdate(`Jetzt aussteigen: Verkauf-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
       return;
     }
@@ -841,7 +985,7 @@ export default function TradingCfdPage() {
     }
 
     setBotUpdate(`Verkaufsposition laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
-  }, [botPosition, entryAllowedByProfile, entryAllowedBySession, riskProfile, selectedSignal, sessionMode]);
+  }, [botPosition, cooldownUntil, entryAllowedByProfile, entryAllowedBySession, riskProfile, selectedSignal, sessionMode]);
 
   const botSummary = useMemo<BotSummary | null>(() => {
     if (!selectedSignal) return null;
@@ -850,25 +994,47 @@ export default function TradingCfdPage() {
     const spread = selectedSignal.spread ?? selectedSignal.maxSpread;
     const spreadTooHigh = spread > selectedSignal.maxSpread;
 
+    if (botPosition?.status === "PENDING_LONG") {
+      return {
+        status: "PENDING_LONG",
+        action: "HOLD",
+        entry: `KAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.triggerPrice)}`,
+        exitPlan: `Storno unter ${formatInstrumentPrice(selectedSignal.instrument, botPosition.cancelTriggerPrice)} | SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)}`,
+        update: botUpdate,
+        reason: `Order aktiv. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}. Trendfilter intakt.`,
+      };
+    }
+
+    if (botPosition?.status === "PENDING_SHORT") {
+      return {
+        status: "PENDING_SHORT",
+        action: "HOLD",
+        entry: `VERKAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.triggerPrice)}`,
+        exitPlan: `Storno ueber ${formatInstrumentPrice(selectedSignal.instrument, botPosition.cancelTriggerPrice)} | SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)}`,
+        update: botUpdate,
+        reason: `Order aktiv. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}. Trendfilter intakt.`,
+      };
+    }
+
     if (botPosition?.status === "LONG") {
       return {
         status: "LONG",
-        action: botUpdate.startsWith("Jetzt aussteigen") ? "EXIT" : "BUY",
+        action: botUpdate.startsWith("Jetzt aussteigen") ? "EXIT" : "HOLD",
         entry: `Kauf @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
         exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
         update: botUpdate,
-        reason: "Kaufposition aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
+        reason: "Position laeuft. Exit nur bei Trendbruch, Stop, Ziel oder Trail.",
       };
     }
 
     if (botPosition?.status === "SHORT") {
       return {
         status: "SHORT",
-        action: botUpdate.startsWith("Jetzt aussteigen") ? "EXIT" : "SELL",
+        action: botUpdate.startsWith("Jetzt aussteigen") ? "EXIT" : "HOLD",
         entry: `Verkauf @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
         exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
         update: botUpdate,
-        reason: "Verkaufsposition aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
+        reason: "Position laeuft. Exit nur bei Trendbruch, Stop, Ziel oder Trail.",
       };
     }
 
@@ -908,28 +1074,22 @@ export default function TradingCfdPage() {
     if (selectedSignal.trendBias === "BUY" && triggerPrice !== null) {
       return {
         status: "FLAT",
-        action: selectedSignal.entryMode === "NOW" ? "BUY" : "WAIT",
-        entry:
-          selectedSignal.entryMode === "NOW"
-            ? `JETZT KAUFEN @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.ask ?? selectedSignal.rawPrice)}`
-            : `KAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
+        action: "BUY",
+        entry: `KAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
         exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
         update: botUpdate,
-        reason: selectedSignal.catalyst,
+        reason: `${selectedSignal.catalyst}. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}.`,
       };
     }
 
     if (selectedSignal.trendBias === "SELL" && triggerPrice !== null) {
       return {
         status: "FLAT",
-        action: selectedSignal.entryMode === "NOW" ? "SELL" : "WAIT",
-        entry:
-          selectedSignal.entryMode === "NOW"
-            ? `JETZT VERKAUFEN @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.bid ?? selectedSignal.rawPrice)}`
-            : `VERKAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
+        action: "SELL",
+        entry: `VERKAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
         exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
         update: botUpdate,
-        reason: selectedSignal.catalyst,
+        reason: `${selectedSignal.catalyst}. Bestaetigung ${selectedSignal.confirmationCount}/${selectedSignal.confirmationNeeded}.`,
       };
     }
 
@@ -1570,7 +1730,7 @@ export default function TradingCfdPage() {
                   ) : (
                     signalHistory.map((entry) => (
                       <tr key={entry.id} className="border-t border-white/6 text-slate-200">
-                        <td className="px-4 py-3 text-slate-400">{formatDateTime(entry.updatedAt)}</td>
+                        <td className="px-4 py-3 text-slate-400">{formatSignalDateTime(entry.updatedAt)}</td>
                         <td className="px-4 py-3">{entry.instrument}</td>
                         <td className="px-4 py-3">{signalLabel(entry.signal)}</td>
                         <td className="px-4 py-3">{regimeLabel(entry.regime)}</td>

@@ -21,7 +21,7 @@ export const CFD_INSTRUMENTS: InstrumentDefinition[] = [
     maxSpreadNote: "Max 1.2 Pip",
     plus500MarketName: "EUR/USD CFD",
     estimatedSpread: 0.00012,
-    atrStopMultiplier: 1.5,
+    atrStopMultiplier: 1,
     atrTakeMultiplier: 2,
     minPrice: 0.8,
     maxPrice: 1.5,
