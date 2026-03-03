@@ -86,6 +86,8 @@ type LiveTickEvent = {
   datetime?: string;
 };
 
+const ESTIMATED_EURUSD_SPREAD = 0.00012;
+
 const FALLBACK_SIGNALS: MarketSignal[] = [
   {
     instrument: "EUR/USD",
@@ -172,6 +174,15 @@ const toIsoTimestamp = (tick: LiveTickEvent) => {
   if (tick.datetime) return new Date(tick.datetime).toISOString();
   if (typeof tick.timestamp === "number") return new Date(tick.timestamp * 1000).toISOString();
   return new Date().toISOString();
+};
+
+const estimateBidAskFromLast = (price: number, spread = ESTIMATED_EURUSD_SPREAD) => {
+  const halfSpread = spread / 2;
+  return {
+    bid: Number((price - halfSpread).toFixed(6)),
+    ask: Number((price + halfSpread).toFixed(6)),
+    spread: Number(spread.toFixed(6)),
+  };
 };
 
 export default function TradingCfdPage() {
@@ -349,10 +360,13 @@ export default function TradingCfdPage() {
           }
 
           const nextPrice = Number(tick.price);
-          const nextBid = typeof tick.bid === "number" ? tick.bid : null;
-          const nextAsk = typeof tick.ask === "number" ? tick.ask : null;
+          const estimatedQuote = estimateBidAskFromLast(nextPrice);
+          const nextBid = typeof tick.bid === "number" ? tick.bid : estimatedQuote.bid;
+          const nextAsk = typeof tick.ask === "number" ? tick.ask : estimatedQuote.ask;
           const nextSpread =
-            nextBid !== null && nextAsk !== null ? Number((nextAsk - nextBid).toFixed(5)) : null;
+            typeof tick.bid === "number" && typeof tick.ask === "number"
+              ? Number((tick.ask - tick.bid).toFixed(6))
+              : estimatedQuote.spread;
 
           setSignals((currentSignals) =>
             currentSignals.map((signal) =>
@@ -364,7 +378,10 @@ export default function TradingCfdPage() {
                     bid: nextBid,
                     ask: nextAsk,
                     spread: nextSpread,
-                    priceSource: "Twelve Data WebSocket",
+                    priceSource:
+                      typeof tick.bid === "number" && typeof tick.ask === "number"
+                        ? "Twelve Data WebSocket"
+                        : "Twelve Data WebSocket + estimated spread",
                   }
                 : signal
             )

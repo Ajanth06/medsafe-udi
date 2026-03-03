@@ -14,6 +14,7 @@ type InstrumentConfig = {
   symbolCandidates: string[];
   maxSpreadNote: string;
   plus500MarketName: string;
+  estimatedSpread: number;
   atrStopMultiplier: number;
   atrTakeMultiplier: number;
   minPrice: number;
@@ -73,8 +74,9 @@ const CONFIGS: InstrumentConfig[] = [
     symbolCandidates: ["EUR/USD"],
     maxSpreadNote: "Max 1.2 pip",
     plus500MarketName: "EUR/USD CFD",
-    atrStopMultiplier: 1.3,
-    atrTakeMultiplier: 2.6,
+    estimatedSpread: 0.00012,
+    atrStopMultiplier: 1.5,
+    atrTakeMultiplier: 2,
     minPrice: 0.8,
     maxPrice: 1.5,
   },
@@ -188,36 +190,53 @@ const riskFor = (instrument: Instrument, regime: Regime): RiskLevel => {
   return "Medium";
 };
 
+const estimateBidAsk = (price: number, spread: number) => {
+  const halfSpread = spread / 2;
+  return {
+    bid: Number((price - halfSpread).toFixed(6)),
+    ask: Number((price + halfSpread).toFixed(6)),
+    spread: Number(spread.toFixed(6)),
+  };
+};
+
 const buildLevels = (
   config: InstrumentConfig,
   signal: SignalSide,
-  price: number,
+  trendSide: Exclude<SignalSide, "WAIT"> | null,
   atr: number,
-  ema20: number
+  ema20: number,
+  swingHigh: number,
+  swingLow: number,
+  bid: number,
+  ask: number
 ) => {
-  if (signal === "WAIT") {
+  const setupSide = signal !== "WAIT" ? signal : trendSide;
+
+  if (!setupSide) {
     return {
       entryZone: `Wait near ${formatPrice(config.instrument, ema20)}`,
-      stopLoss: "Pending confirmation",
-      takeProfit: "Pending direction",
-      riskReward: "Stand by",
+      stopLoss: formatPrice(config.instrument, ema20),
+      takeProfit: formatPrice(config.instrument, ema20),
+      riskReward: "1 : 0.0",
     };
   }
 
-  const anchor = signal === "BUY" ? Math.min(price, ema20) : Math.max(price, ema20);
-  const stop = signal === "BUY"
+  const triggerLevel = setupSide === "BUY" ? Math.max(ema20, swingHigh) : Math.min(ema20, swingLow);
+  const anchor = signal === "WAIT" ? triggerLevel : setupSide === "BUY" ? ask : bid;
+  const stop = setupSide === "BUY"
     ? anchor - atr * config.atrStopMultiplier
     : anchor + atr * config.atrStopMultiplier;
-  const take = signal === "BUY"
+  const take = setupSide === "BUY"
     ? anchor + atr * config.atrTakeMultiplier
     : anchor - atr * config.atrTakeMultiplier;
-  const zoneLow = signal === "BUY" ? anchor - atr * 0.25 : anchor - atr * 0.15;
-  const zoneHigh = signal === "BUY" ? anchor + atr * 0.15 : anchor + atr * 0.25;
   const reward = Math.abs(take - anchor);
   const risk = Math.abs(anchor - stop);
 
   return {
-    entryZone: `${formatPrice(config.instrument, zoneLow)} - ${formatPrice(config.instrument, zoneHigh)}`,
+    entryZone:
+      signal === "WAIT"
+        ? `${setupSide} stop ${setupSide === "BUY" ? "above" : "below"} ${formatPrice(config.instrument, triggerLevel)}`
+        : formatPrice(config.instrument, anchor),
     stopLoss: formatPrice(config.instrument, stop),
     takeProfit: formatPrice(config.instrument, take),
     riskReward: `1 : ${(reward / Math.max(risk, Number.EPSILON)).toFixed(1)}`,
@@ -241,6 +260,10 @@ const buildSignal = (
   const recentAtr = computeAtr(candles.slice(-35, -10), 14);
   const atrPct = (atr / price) * 100;
   const momentumPct = ((price - closes[closes.length - 4]) / closes[closes.length - 4]) * 100;
+  const highs = candles.map((entry) => toNumber(entry.high));
+  const lows = candles.map((entry) => toNumber(entry.low));
+  const recentSwingHigh = Math.max(...highs.slice(-6, -1));
+  const recentSwingLow = Math.min(...lows.slice(-6, -1));
   const volumes = candles.map((entry) => Number(entry.volume || 0));
   const recentVolume = volumes.slice(-6, -1).filter((value) => value > 0);
   const avgVolume = recentVolume.reduce((sum, value) => sum + value, 0) / Math.max(recentVolume.length, 1);
@@ -251,27 +274,37 @@ const buildSignal = (
   const regime: Regime = emaGapPct > atrPct * 0.35 ? "Trend" : "Range";
   const biasLong = ema20 > ema50;
   const biasShort = ema20 < ema50;
-  const trendScore = regime === "Trend" && (biasLong || biasShort) ? 25 : 0;
+  const crossedAboveEma20 = previous <= ema20 && price > ema20;
+  const crossedBelowEma20 = previous >= ema20 && price < ema20;
+  const brokeSwingHigh = price > recentSwingHigh;
+  const brokeSwingLow = price < recentSwingLow;
+  const buyTrigger = biasLong && (crossedAboveEma20 || brokeSwingHigh);
+  const sellTrigger = biasShort && (crossedBelowEma20 || brokeSwingLow);
+  const trendSide: Exclude<SignalSide, "WAIT"> | null = biasLong ? "BUY" : biasShort ? "SELL" : null;
+  const trendScore = regime === "Trend" && (biasLong || biasShort) ? 30 : 0;
+  const triggerScore = buyTrigger || sellTrigger ? 30 : 0;
   const momentumScore =
-    (biasLong && momentumPct > 0.04) || (biasShort && momentumPct < -0.04) ? 25 : 0;
+    (biasLong && momentumPct > 0.04) || (biasShort && momentumPct < -0.04) ? 20 : 0;
   const qualityScore = volatilityExpansion || volumeRising ? 20 : 0;
   const session = detectSession();
   const sessionScore = sessionScoreFor(config.instrument, session);
-  const confidence = Math.min(100, trendScore + momentumScore + qualityScore + sessionScore);
+  const confidence = Math.min(100, trendScore + triggerScore + momentumScore + qualityScore + sessionScore);
 
   let signal: SignalSide = "WAIT";
-  if (confidence >= 70 && regime === "Trend" && biasLong) signal = "BUY";
-  if (confidence >= 70 && regime === "Trend" && biasShort) signal = "SELL";
+  if (buyTrigger && confidence >= 55) signal = "BUY";
+  if (sellTrigger && confidence >= 55) signal = "SELL";
+  const { bid, ask, spread } = estimateBidAsk(price, config.estimatedSpread);
+  const executionSide = signal !== "WAIT" ? signal : trendSide;
 
   return {
     instrument: config.instrument,
     symbol,
     price: formatPrice(config.instrument, price),
     rawPrice: Number(price.toFixed(6)),
-    bid: null,
-    ask: null,
-    spread: null,
-    priceSource: `Twelve Data (${symbol})`,
+    bid,
+    ask,
+    spread,
+    priceSource: `Twelve Data (${symbol}) + estimated spread`,
     changePct: Number((((price - previous) / previous) * 100).toFixed(2)),
     signal,
     regime,
@@ -285,20 +318,39 @@ const buildSignal = (
     confidence,
     session,
     maxSpreadNote: config.maxSpreadNote,
-    plus500ExecutionText: `${signal} ${config.plus500MarketName} manuell in Plus500`,
+    plus500ExecutionText:
+      executionSide === "BUY"
+        ? signal === "BUY"
+          ? `BUY ${config.plus500MarketName} at Ask ${formatPrice(config.instrument, ask)}`
+          : `BUY stop above ${formatPrice(config.instrument, Math.max(ema20, recentSwingHigh))}`
+        : executionSide === "SELL"
+          ? signal === "SELL"
+            ? `SELL ${config.plus500MarketName} at Bid ${formatPrice(config.instrument, bid)}`
+            : `SELL stop below ${formatPrice(config.instrument, Math.min(ema20, recentSwingLow))}`
+          : `WAIT ${config.plus500MarketName}`,
     catalyst:
       signal === "BUY"
-        ? "EMA20 liegt ueber EMA50, Trend und Expansion bestaetigen Long Bias"
+        ? "EMA20 liegt ueber EMA50 und der Preis bricht ueber EMA20 oder das letzte Swing-High"
         : signal === "SELL"
-          ? "EMA20 liegt unter EMA50, Trend und Expansion bestaetigen Short Bias"
-          : "Kein ausreichend starkes Trend-Regime oder Confidence unter Schwelle",
+          ? "EMA20 liegt unter EMA50 und der Preis bricht unter EMA20 oder das letzte Swing-Low"
+          : trendSide === "BUY"
+            ? "Trend bleibt Long, Trigger fuer den Ausbruch ist noch nicht bestaetigt"
+            : trendSide === "SELL"
+              ? "Trend bleibt Short, Trigger fuer den Ausbruch ist noch nicht bestaetigt"
+              : "EMA20 und EMA50 liefern aktuell keinen klaren Trend",
     thesis:
-      regime === "Trend"
-        ? "Pullback-Setup am Trendfilter wird bevorzugt. Breakouts nur bei Volatility Expansion."
-        : "Range-Regime erkannt. Ohne Expansion wird keine aggressive Execution empfohlen.",
+      signal === "BUY"
+        ? "Plus500-Style Long: Entry ueber Ask, Stop via 1.5 ATR, Target via 2.0 ATR."
+        : signal === "SELL"
+          ? "Plus500-Style Short: Entry ueber Bid, Stop via 1.5 ATR, Target via 2.0 ATR."
+          : trendSide === "BUY"
+            ? "Trend ist Long. Einstieg erst beim Break ueber EMA20 oder Swing-High."
+            : trendSide === "SELL"
+              ? "Trend ist Short. Einstieg erst beim Break unter EMA20 oder Swing-Low."
+              : "Ohne Trend bleibt das Setup defensiv.",
     updatedAt: candles[candles.length - 1]?.datetime || new Date().toISOString(),
     risk: riskFor(config.instrument, regime),
-    ...buildLevels(config, signal, price, atr, ema20),
+    ...buildLevels(config, signal, trendSide, atr, ema20, recentSwingHigh, recentSwingLow, bid, ask),
   } satisfies MarketSignal;
 };
 
