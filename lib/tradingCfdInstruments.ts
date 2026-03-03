@@ -1,8 +1,8 @@
 export type Instrument =
   | "EUR/USD"
-  | "NASDAQ 100"
+  | "QQQ"
   | "Gold"
-  | "WTI Oil"
+  | "WTI"
   | "GBP/USD";
 
 export type InstrumentDefinition = {
@@ -32,16 +32,16 @@ export const CFD_INSTRUMENTS: InstrumentDefinition[] = [
     maxPrice: 1.5,
   },
   {
-    instrument: "NASDAQ 100",
-    streamSymbol: "NDX",
-    symbolCandidates: ["NDX", "QQQ"],
-    maxSpreadNote: "Max 3.0 Punkte",
-    plus500MarketName: "Nasdaq 100 CFD",
-    estimatedSpread: 3,
+    instrument: "QQQ",
+    streamSymbol: "QQQ",
+    symbolCandidates: ["QQQ"],
+    maxSpreadNote: "Max 0.05 USD",
+    plus500MarketName: "QQQ CFD",
+    estimatedSpread: 0.05,
     atrStopMultiplier: 1.6,
     atrTakeMultiplier: 2.4,
-    minPrice: 10000,
-    maxPrice: 30000,
+    minPrice: 200,
+    maxPrice: 700,
   },
   {
     instrument: "Gold",
@@ -56,11 +56,11 @@ export const CFD_INSTRUMENTS: InstrumentDefinition[] = [
     maxPrice: 4000,
   },
   {
-    instrument: "WTI Oil",
+    instrument: "WTI",
     streamSymbol: "WTI",
     symbolCandidates: ["WTI", "USOIL"],
     maxSpreadNote: "Max 0.08 USD",
-    plus500MarketName: "WTI Oil CFD",
+    plus500MarketName: "WTI CFD",
     estimatedSpread: 0.08,
     atrStopMultiplier: 1.6,
     atrTakeMultiplier: 2.4,

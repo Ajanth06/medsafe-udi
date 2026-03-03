@@ -64,14 +64,14 @@ type MarketSignal = {
 };
 
 const CONFIGS: InstrumentConfig[] = CFD_INSTRUMENTS.map((config) => {
-  if (config.instrument === "NASDAQ 100") {
-    const preferred = process.env.TWELVEDATA_NASDAQ100_SYMBOL;
+  if (config.instrument === "QQQ") {
+    const preferred = process.env.TWELVEDATA_QQQ_SYMBOL || process.env.TWELVEDATA_NASDAQ100_SYMBOL;
     return preferred
       ? { ...config, symbolCandidates: [preferred, ...config.symbolCandidates.filter((entry) => entry !== preferred)] }
       : config;
   }
 
-  if (config.instrument === "WTI Oil") {
+  if (config.instrument === "WTI") {
     const preferred = process.env.TWELVEDATA_WTI_SYMBOL;
     return preferred
       ? { ...config, symbolCandidates: [preferred, ...config.symbolCandidates.filter((entry) => entry !== preferred)] }
@@ -176,7 +176,7 @@ const computeAtr = (candles: SeriesValue[], period: number) => {
 const formatPrice = (instrument: Instrument, value: number) => {
   if (instrument === "EUR/USD") return value.toFixed(4);
   if (instrument === "GBP/USD") return value.toFixed(4);
-  if (instrument === "Gold" || instrument === "WTI Oil")
+  if (instrument === "Gold" || instrument === "WTI" || instrument === "QQQ")
     return value.toFixed(2);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
@@ -190,15 +190,16 @@ const sessionScoreFor = (instrument: Instrument, session: SessionTag) => {
   if (instrument === "EUR/USD" && session === "London") return 15;
   if (instrument === "GBP/USD" && session === "London") return 15;
   if (instrument === "Gold" && session === "London") return 10;
-  if (instrument === "NASDAQ 100" && session === "New York") return 15;
-  if (instrument === "WTI Oil" && session === "New York") return 15;
+  if (instrument === "QQQ" && session === "New York") return 15;
+  if (instrument === "WTI" && session === "New York") return 15;
   return 0;
 };
 
 const riskFor = (instrument: Instrument, regime: Regime): RiskLevel => {
   if (instrument === "EUR/USD" && regime === "Trend") return "Low";
   if (instrument === "GBP/USD" && regime === "Trend") return "Low";
-  if (instrument === "NASDAQ 100" || instrument === "WTI Oil") return "High";
+  if (instrument === "WTI") return "High";
+  if (instrument === "QQQ") return "Medium";
   return "Medium";
 };
 
@@ -488,7 +489,7 @@ export async function GET() {
         .filter((entry) => entry.error)
         .map((entry) => [entry.signal.instrument, entry.error])
     );
-    const hasLiveSignal = signals.some((entry) => entry.price !== "unavailable");
+  const hasLiveSignal = signals.some((entry) => entry.price !== "nicht verfuegbar");
 
     return NextResponse.json(
       {

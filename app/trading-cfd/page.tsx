@@ -147,7 +147,7 @@ const FALLBACK_SIGNALS: MarketSignal[] = CFD_INSTRUMENTS.map((config) => ({
   stopLoss: "Nicht verfuegbar",
   takeProfit: "Nicht verfuegbar",
   riskReward: "Nicht verfuegbar",
-  risk: config.instrument === "EUR/USD" || config.instrument === "GBP/USD" ? "Low" : config.instrument === "NASDAQ 100" || config.instrument === "WTI Oil" ? "High" : "Medium",
+  risk: config.instrument === "EUR/USD" || config.instrument === "GBP/USD" ? "Low" : config.instrument === "WTI" ? "High" : "Medium",
   updatedAt: new Date().toISOString(),
 }));
 
@@ -232,7 +232,7 @@ const parseNumeric = (value: string) => {
 
 const formatInstrumentPrice = (instrument: Instrument, value: number) => {
   if (instrument === "EUR/USD" || instrument === "GBP/USD") return value.toFixed(4);
-  if (instrument === "Gold" || instrument === "WTI Oil") return value.toFixed(2);
+  if (instrument === "Gold" || instrument === "WTI" || instrument === "QQQ") return value.toFixed(2);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
 
@@ -277,7 +277,7 @@ const sessionPriority = (session: SessionMode, instrument: Instrument) => {
     return 0.4;
   }
 
-  if (instrument === "NASDAQ 100" || instrument === "WTI Oil") return 1;
+  if (instrument === "QQQ" || instrument === "WTI") return 1;
   if (instrument === "Gold") return 0.85;
   return 0.7;
 };
@@ -396,7 +396,7 @@ export default function TradingCfdPage() {
         const hasLiveSignal =
           typeof data.hasLiveSignal === "boolean"
             ? data.hasLiveSignal
-            : nextSignals.some((signal) => signal.price !== "unavailable");
+            : nextSignals.some((signal) => signal.price !== "nicht verfuegbar");
         setSignals(nextSignals);
         setUpdatedAt(data.updatedAt);
         setSource(data.source || "Twelve Data Echtzeitfeed");
@@ -633,7 +633,7 @@ export default function TradingCfdPage() {
 
   const sessionBias = useMemo(() => {
     if (sessionMode === "London") return "London priorisiert EUR/USD, GBP/USD und Gold.";
-    if (sessionMode === "New York") return "New York priorisiert Nasdaq 100, WTI Oil und Gold.";
+    if (sessionMode === "New York") return "New York priorisiert QQQ, WTI und Gold.";
     return "Overlap ist die staerkste Misch-Session fuer Forex, Gold und US-Indizes.";
   }, [sessionMode]);
 
@@ -1060,7 +1060,7 @@ export default function TradingCfdPage() {
               </h1>
               <p className="mt-3 max-w-3xl text-sm text-slate-300/80 md:text-base">
                 Serverseitige Signal-Engine mit `EMA20`, `EMA50`, `ATR`, Regime-Erkennung
-                und Session-Scoring fuer EUR/USD, NASDAQ 100, Gold, WTI Oil und GBP/USD. Dazu jetzt mit
+                und Session-Scoring fuer EUR/USD, GBP/USD, Gold, WTI und QQQ. Dazu jetzt mit
                 Positionsgroessen-Rechner, Signal-Historie und manuellem Plus500-Journal.
               </p>
               <div className="mt-5 grid gap-3 md:grid-cols-3">
