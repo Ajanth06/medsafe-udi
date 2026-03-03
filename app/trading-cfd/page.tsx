@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -75,6 +75,15 @@ type JournalEntry = {
   status: JournalStatus;
   notes: string;
   createdAt: string;
+};
+
+type LiveTickEvent = {
+  symbol?: string;
+  price?: number;
+  bid?: number | null;
+  ask?: number | null;
+  timestamp?: number;
+  datetime?: string;
 };
 
 const FALLBACK_SIGNALS: MarketSignal[] = [
@@ -154,6 +163,17 @@ const parseNumeric = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const formatInstrumentPrice = (instrument: Instrument, value: number) => {
+  if (instrument === "EUR/USD") return value.toFixed(4);
+  return value.toString();
+};
+
+const toIsoTimestamp = (tick: LiveTickEvent) => {
+  if (tick.datetime) return new Date(tick.datetime).toISOString();
+  if (typeof tick.timestamp === "number") return new Date(tick.timestamp * 1000).toISOString();
+  return new Date().toISOString();
+};
+
 export default function TradingCfdPage() {
   const [user, setUser] = useState<User | null>(null);
   const [sessionMode, setSessionMode] = useState<SessionMode>("Overlap");
@@ -171,6 +191,7 @@ export default function TradingCfdPage() {
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [journalNotes, setJournalNotes] = useState("");
   const [journalStatus, setJournalStatus] = useState<JournalStatus>("planned");
+  const lastSyncedSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -248,6 +269,7 @@ export default function TradingCfdPage() {
 
   useEffect(() => {
     let active = true;
+    let eventSource: EventSource | null = null;
 
     const loadSignals = async () => {
       try {
@@ -273,6 +295,9 @@ export default function TradingCfdPage() {
         setMarketErrors(data.marketErrors || {});
         setFeedStatus(hasLiveSignal ? "live" : "error");
         setFeedError(data.error || "");
+        if (data.signals[0]?.updatedAt) {
+          lastSyncedSnapshotRef.current = null;
+        }
       } catch (error) {
         if (!active) return;
         setFeedStatus("error");
@@ -281,17 +306,121 @@ export default function TradingCfdPage() {
       }
     };
 
+    const connectLiveStream = () => {
+      eventSource = new EventSource("/api/trading/cfd/live");
+
+      eventSource.addEventListener("status", (event) => {
+        if (!active) return;
+
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            state?: string;
+            source?: string;
+            reason?: string;
+          };
+
+          if (payload.source) {
+            setSource(payload.source);
+          }
+
+          if (payload.state === "open" || payload.state === "subscribed") {
+            setFeedStatus("live");
+            setFeedError("");
+          }
+
+          if (payload.state === "closed") {
+            setFeedStatus("error");
+            setFeedError(payload.reason || "live_stream_closed");
+          }
+        } catch {
+          setFeedStatus("error");
+          setFeedError("live_stream_status_parse_failed");
+        }
+      });
+
+      eventSource.addEventListener("tick", (event) => {
+        if (!active) return;
+
+        try {
+          const tick = JSON.parse((event as MessageEvent).data) as LiveTickEvent;
+
+          if (!Number.isFinite(tick.price) || tick.symbol !== "EUR/USD") {
+            return;
+          }
+
+          const nextPrice = Number(tick.price);
+          const nextBid = typeof tick.bid === "number" ? tick.bid : null;
+          const nextAsk = typeof tick.ask === "number" ? tick.ask : null;
+          const nextSpread =
+            nextBid !== null && nextAsk !== null ? Number((nextAsk - nextBid).toFixed(5)) : null;
+
+          setSignals((currentSignals) =>
+            currentSignals.map((signal) =>
+              signal.instrument === "EUR/USD"
+                ? {
+                    ...signal,
+                    price: formatInstrumentPrice(signal.instrument, nextPrice),
+                    rawPrice: Number(nextPrice.toFixed(6)),
+                    bid: nextBid,
+                    ask: nextAsk,
+                    spread: nextSpread,
+                    priceSource: "Twelve Data WebSocket",
+                  }
+                : signal
+            )
+          );
+          setUpdatedAt(toIsoTimestamp(tick));
+          setSource("Twelve Data WebSocket");
+          setFeedStatus("live");
+          setFeedError("");
+          setMarketErrors({});
+        } catch {
+          setFeedStatus("error");
+          setFeedError("live_tick_parse_failed");
+        }
+      });
+
+      eventSource.addEventListener("feed-error", (event) => {
+        if (!active) return;
+
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as { message?: string };
+          setFeedStatus("error");
+          setFeedError(payload.message || "live_stream_failed");
+        } catch {
+          setFeedStatus("error");
+          setFeedError("live_stream_failed");
+        }
+      });
+
+      eventSource.onerror = () => {
+        if (!active) return;
+        setFeedStatus("error");
+        setFeedError("live_stream_disconnected");
+      };
+    };
+
     void loadSignals();
-    const intervalId = window.setInterval(loadSignals, 60000);
+    connectLiveStream();
+    const snapshotIntervalId = window.setInterval(loadSignals, 15 * 60 * 1000);
 
     return () => {
       active = false;
-      window.clearInterval(intervalId);
+      eventSource?.close();
+      window.clearInterval(snapshotIntervalId);
     };
   }, []);
 
   useEffect(() => {
     if (!user || signals.length === 0) return;
+
+    const snapshotKey = signals
+      .map((signal) => `${signal.instrument}:${signal.signal}:${signal.regime}:${signal.confidence}:${signal.updatedAt}`)
+      .join("|");
+
+    if (lastSyncedSnapshotRef.current === snapshotKey) {
+      return;
+    }
 
     const syncSignalHistory = async () => {
       const payload = signals.map((signal) => ({
@@ -327,6 +456,8 @@ export default function TradingCfdPage() {
       if (!historyData) {
         return;
       }
+
+      lastSyncedSnapshotRef.current = snapshotKey;
 
       setSignalHistory(
         historyData.map((entry) => ({
@@ -657,7 +788,7 @@ export default function TradingCfdPage() {
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signal Board</div>
               <h2 className="mt-1 text-xl font-semibold">EUR/USD</h2>
             </div>
-            <div className="text-xs text-slate-500">Polling every 60 seconds via `/api/trading/cfd/signals`.</div>
+            <div className="text-xs text-slate-500">Live stream via Twelve Data WebSocket and `/api/trading/cfd/live`.</div>
           </div>
 
           <div className="mt-5 grid gap-4 xl:grid-cols-1">
