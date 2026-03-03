@@ -182,12 +182,16 @@ const formatPrice = (instrument: Instrument, value: number) => {
 };
 
 const sessionScoreFor = (instrument: Instrument, session: SessionTag) => {
-  if (session === "Overlap") return 15;
+  if (session === "Overlap") {
+    if (instrument === "Gold") return 10;
+    return 15;
+  }
+
   if (instrument === "EUR/USD" && session === "London") return 15;
   if (instrument === "GBP/USD" && session === "London") return 15;
-  if (instrument === "Gold" && (session === "London" || session === "Overlap")) return 10;
-  if (instrument === "NASDAQ 100" && (session === "New York" || session === "Overlap")) return 15;
-  if (instrument === "WTI Oil" && (session === "New York" || session === "Overlap")) return 15;
+  if (instrument === "Gold" && session === "London") return 10;
+  if (instrument === "NASDAQ 100" && session === "New York") return 15;
+  if (instrument === "WTI Oil" && session === "New York") return 15;
   return 0;
 };
 
