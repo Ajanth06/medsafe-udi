@@ -6,12 +6,14 @@ import { supabase } from "../../lib/supabaseClient";
 
 type Instrument = "EUR/USD";
 type SignalSide = "BUY" | "SELL" | "WAIT";
+type EntryMode = "NOW" | "STOP" | "WAIT";
 type Regime = "Trend" | "Range";
 type RiskLevel = "Low" | "Medium" | "High";
 type FeedStatus = "idle" | "live" | "error";
 type SessionMode = "London" | "New York" | "Overlap";
 type RiskProfile = "Conservative" | "Balanced" | "Aggressive";
 type JournalStatus = "planned" | "executed" | "closed";
+type PositionState = "FLAT" | "LONG" | "SHORT";
 
 type MarketSignal = {
   instrument: Instrument;
@@ -24,6 +26,10 @@ type MarketSignal = {
   priceSource: string;
   changePct: number;
   signal: SignalSide;
+  trendBias: SignalSide;
+  entryMode: EntryMode;
+  triggerPrice: string;
+  maxSpread: number;
   regime: Regime;
   ema20: number;
   ema50: number;
@@ -86,6 +92,24 @@ type LiveTickEvent = {
   datetime?: string;
 };
 
+type BotPosition = {
+  status: Exclude<PositionState, "FLAT">;
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  atr: number;
+  openedAt: string;
+};
+
+type BotSummary = {
+  status: PositionState;
+  action: "BUY" | "SELL" | "WAIT" | "EXIT";
+  entry: string;
+  exitPlan: string;
+  update: string;
+  reason: string;
+};
+
 const ESTIMATED_EURUSD_SPREAD = 0.00012;
 
 const FALLBACK_SIGNALS: MarketSignal[] = [
@@ -100,6 +124,10 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     priceSource: "Twelve Data unavailable",
     changePct: 0,
     signal: "WAIT",
+    trendBias: "WAIT",
+    entryMode: "WAIT",
+    triggerPrice: "Unavailable",
+    maxSpread: ESTIMATED_EURUSD_SPREAD,
     regime: "Range",
     ema20: 0,
     ema50: 0,
@@ -202,6 +230,8 @@ export default function TradingCfdPage() {
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [journalNotes, setJournalNotes] = useState("");
   const [journalStatus, setJournalStatus] = useState<JournalStatus>("planned");
+  const [botPosition, setBotPosition] = useState<BotPosition | null>(null);
+  const [botUpdate, setBotUpdate] = useState("Bot wartet auf einen gueltigen Trigger.");
   const lastSyncedSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -577,6 +607,235 @@ export default function TradingCfdPage() {
   const selectedSignal =
     signals.find((entry) => entry.instrument === selectedInstrument) || signals[0];
 
+  useEffect(() => {
+    if (!selectedSignal) {
+      setBotPosition(null);
+      setBotUpdate("Bot wartet auf einen gueltigen Trigger.");
+      return;
+    }
+
+    const triggerPrice = parseNumeric(selectedSignal.triggerPrice);
+    const stopLoss = parseNumeric(selectedSignal.stopLoss);
+    const takeProfit = parseNumeric(selectedSignal.takeProfit);
+    const bid = selectedSignal.bid ?? selectedSignal.rawPrice;
+    const ask = selectedSignal.ask ?? selectedSignal.rawPrice;
+    const spread = selectedSignal.spread ?? ESTIMATED_EURUSD_SPREAD;
+    const spreadTooHigh = spread > selectedSignal.maxSpread;
+    const profitDistanceLong = bid;
+    const profitDistanceShort = ask;
+
+    if (spreadTooHigh) {
+      if (botPosition === null) {
+        setBotUpdate(`WAIT: Spread ${spread.toFixed(6)} liegt ueber Limit ${selectedSignal.maxSpread.toFixed(6)}.`);
+      }
+      return;
+    }
+
+    if (!botPosition) {
+      if (
+        selectedSignal.trendBias === "BUY" &&
+        triggerPrice !== null &&
+        stopLoss !== null &&
+        takeProfit !== null &&
+        ask >= triggerPrice
+      ) {
+        setBotPosition({
+          status: "LONG",
+          entryPrice: ask,
+          stopLoss,
+          takeProfit,
+          atr: selectedSignal.atr,
+          openedAt: new Date().toISOString(),
+        });
+        setBotUpdate(`LONG aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+        return;
+      }
+
+      if (
+        selectedSignal.trendBias === "SELL" &&
+        triggerPrice !== null &&
+        stopLoss !== null &&
+        takeProfit !== null &&
+        bid <= triggerPrice
+      ) {
+        setBotPosition({
+          status: "SHORT",
+          entryPrice: bid,
+          stopLoss,
+          takeProfit,
+          atr: selectedSignal.atr,
+          openedAt: new Date().toISOString(),
+        });
+        setBotUpdate(`SHORT aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        return;
+      }
+
+      if (selectedSignal.trendBias === "BUY" && triggerPrice !== null) {
+        setBotUpdate(`FLAT: BUY stop wartet ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+        return;
+      }
+
+      if (selectedSignal.trendBias === "SELL" && triggerPrice !== null) {
+        setBotUpdate(`FLAT: SELL stop wartet unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+        return;
+      }
+
+      setBotUpdate("FLAT: Kein Trendvorteil, daher WAIT.");
+      return;
+    }
+
+    if (botPosition.status === "LONG") {
+      let nextStop = botPosition.stopLoss;
+      const profit = profitDistanceLong - botPosition.entryPrice;
+
+      if (profit >= botPosition.atr) {
+        nextStop = Math.max(nextStop, botPosition.entryPrice);
+      }
+
+      if (profit >= botPosition.atr * 2) {
+        nextStop = Math.max(nextStop, selectedSignal.ema20, bid - botPosition.atr);
+      }
+
+      if (selectedSignal.ema20 < selectedSignal.ema50) {
+        setBotPosition(null);
+        setBotUpdate("EXIT NOW: Trend ist von LONG auf SHORT gekippt.");
+        return;
+      }
+
+      if (bid <= nextStop) {
+        setBotPosition(null);
+        setBotUpdate(`EXIT NOW: LONG Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        return;
+      }
+
+      if (bid >= botPosition.takeProfit) {
+        setBotPosition(null);
+        setBotUpdate(`EXIT NOW: LONG Target erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        return;
+      }
+
+      if (nextStop !== botPosition.stopLoss) {
+        setBotPosition({ ...botPosition, stopLoss: Number(nextStop.toFixed(6)) });
+      }
+
+      setBotUpdate(`LONG laeuft. Trailing Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
+      return;
+    }
+
+    let nextStop = botPosition.stopLoss;
+    const profit = botPosition.entryPrice - profitDistanceShort;
+
+    if (profit >= botPosition.atr) {
+      nextStop = Math.min(nextStop, botPosition.entryPrice);
+    }
+
+    if (profit >= botPosition.atr * 2) {
+      nextStop = Math.min(nextStop, selectedSignal.ema20, ask + botPosition.atr);
+    }
+
+    if (selectedSignal.ema20 > selectedSignal.ema50) {
+      setBotPosition(null);
+      setBotUpdate("EXIT NOW: Trend ist von SHORT auf LONG gekippt.");
+      return;
+    }
+
+    if (ask >= nextStop) {
+      setBotPosition(null);
+      setBotUpdate(`EXIT NOW: SHORT Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+      return;
+    }
+
+    if (ask <= botPosition.takeProfit) {
+      setBotPosition(null);
+      setBotUpdate(`EXIT NOW: SHORT Target erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+      return;
+    }
+
+    if (nextStop !== botPosition.stopLoss) {
+      setBotPosition({ ...botPosition, stopLoss: Number(nextStop.toFixed(6)) });
+    }
+
+    setBotUpdate(`SHORT laeuft. Trailing Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
+  }, [botPosition, selectedSignal]);
+
+  const botSummary = useMemo<BotSummary | null>(() => {
+    if (!selectedSignal) return null;
+
+    const triggerPrice = parseNumeric(selectedSignal.triggerPrice);
+    const spread = selectedSignal.spread ?? ESTIMATED_EURUSD_SPREAD;
+    const spreadTooHigh = spread > selectedSignal.maxSpread;
+
+    if (botPosition?.status === "LONG") {
+      return {
+        status: "LONG",
+        action: botUpdate.startsWith("EXIT NOW") ? "EXIT" : "BUY",
+        entry: `LONG @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
+        exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
+        update: botUpdate,
+        reason: "LONG aktiv. Exit bei Trendflip, Stop, TP oder Trailing.",
+      };
+    }
+
+    if (botPosition?.status === "SHORT") {
+      return {
+        status: "SHORT",
+        action: botUpdate.startsWith("EXIT NOW") ? "EXIT" : "SELL",
+        entry: `SHORT @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
+        exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
+        update: botUpdate,
+        reason: "SHORT aktiv. Exit bei Trendflip, Stop, TP oder Trailing.",
+      };
+    }
+
+    if (spreadTooHigh) {
+      return {
+        status: "FLAT",
+        action: "WAIT",
+        entry: `WAIT: Spread ${spread.toFixed(6)} > ${selectedSignal.maxSpread.toFixed(6)}`,
+        exitPlan: `Kein Trade bis Spread <= ${selectedSignal.maxSpread.toFixed(6)}`,
+        update: botUpdate,
+        reason: "Spread-Filter blockiert Entries.",
+      };
+    }
+
+    if (selectedSignal.trendBias === "BUY" && triggerPrice !== null) {
+      return {
+        status: "FLAT",
+        action: selectedSignal.entryMode === "NOW" ? "BUY" : "WAIT",
+        entry:
+          selectedSignal.entryMode === "NOW"
+            ? `BUY NOW @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.ask ?? selectedSignal.rawPrice)}`
+            : `BUY STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
+        exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
+        update: botUpdate,
+        reason: selectedSignal.catalyst,
+      };
+    }
+
+    if (selectedSignal.trendBias === "SELL" && triggerPrice !== null) {
+      return {
+        status: "FLAT",
+        action: selectedSignal.entryMode === "NOW" ? "SELL" : "WAIT",
+        entry:
+          selectedSignal.entryMode === "NOW"
+            ? `SELL NOW @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.bid ?? selectedSignal.rawPrice)}`
+            : `SELL STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
+        exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
+        update: botUpdate,
+        reason: selectedSignal.catalyst,
+      };
+    }
+
+    return {
+      status: "FLAT",
+      action: "WAIT",
+      entry: "WAIT",
+      exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
+      update: botUpdate,
+      reason: selectedSignal.catalyst,
+    };
+  }, [botPosition, botUpdate, selectedSignal]);
+
   const riskModel = useMemo(() => {
     if (!selectedSignal) return null;
 
@@ -844,8 +1103,20 @@ export default function TradingCfdPage() {
                     <div className="mt-1 font-semibold text-slate-100">{signal.priceSource}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-slate-500">Trend Bias</div>
+                    <div className="mt-1 font-semibold text-slate-100">{signal.trendBias}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-slate-500">Entry Mode</div>
+                    <div className="mt-1 font-semibold text-slate-100">{signal.entryMode}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Entry Zone</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.entryZone}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                    <div className="text-slate-500">Trigger Price</div>
+                    <div className="mt-1 font-semibold text-slate-100">{signal.triggerPrice}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Confidence</div>
@@ -989,6 +1260,43 @@ export default function TradingCfdPage() {
         </section>
 
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
+          <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Bot State</div>
+                <h2 className="mt-1 text-xl font-semibold">Entry / Exit Engine</h2>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${signalClass(botSummary?.action === "EXIT" ? "WAIT" : botSummary?.action === "SELL" ? "SELL" : botSummary?.action === "BUY" ? "BUY" : "WAIT")}`}>
+                {botSummary?.status || "FLAT"}
+              </span>
+            </div>
+
+            {botSummary && (
+              <div className="mt-5 grid gap-3">
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                  <div className="text-slate-500">Action</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-100">{botSummary.action}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                  <div className="text-slate-500">Entry</div>
+                  <div className="mt-1 font-semibold text-slate-100">{botSummary.entry}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                  <div className="text-slate-500">Exit Plan</div>
+                  <div className="mt-1 font-semibold text-slate-100">{botSummary.exitPlan}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                  <div className="text-slate-500">Update</div>
+                  <div className="mt-1 text-slate-200">{botSummary.update}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                  <div className="text-slate-500">Reason</div>
+                  <div className="mt-1 text-slate-300">{botSummary.reason}</div>
+                </div>
+              </div>
+            )}
+          </article>
+
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
             <div className="flex items-center justify-between gap-3">
               <div>

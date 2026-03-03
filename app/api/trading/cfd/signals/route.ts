@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 type Instrument = "EUR/USD";
 type SignalSide = "BUY" | "SELL" | "WAIT";
+type EntryMode = "NOW" | "STOP" | "WAIT";
 type Regime = "Trend" | "Range";
 type RiskLevel = "Low" | "Medium" | "High";
 type SessionTag = "London" | "New York" | "Overlap" | "Off Hours";
@@ -46,6 +47,10 @@ type MarketSignal = {
   priceSource: string;
   changePct: number;
   signal: SignalSide;
+  trendBias: SignalSide;
+  entryMode: EntryMode;
+  triggerPrice: string;
+  maxSpread: number;
   regime: Regime;
   ema20: number;
   ema50: number;
@@ -202,6 +207,7 @@ const estimateBidAsk = (price: number, spread: number) => {
 const buildLevels = (
   config: InstrumentConfig,
   signal: SignalSide,
+  entryMode: EntryMode,
   trendSide: Exclude<SignalSide, "WAIT"> | null,
   atr: number,
   ema20: number,
@@ -234,9 +240,9 @@ const buildLevels = (
 
   return {
     entryZone:
-      signal === "WAIT"
+      signal === "WAIT" || entryMode === "STOP"
         ? `${setupSide} stop ${setupSide === "BUY" ? "above" : "below"} ${formatPrice(config.instrument, triggerLevel)}`
-        : formatPrice(config.instrument, anchor),
+        : `${setupSide} now @ ${formatPrice(config.instrument, anchor)}`,
     stopLoss: formatPrice(config.instrument, stop),
     takeProfit: formatPrice(config.instrument, take),
     riskReward: `1 : ${(reward / Math.max(risk, Number.EPSILON)).toFixed(1)}`,
@@ -294,6 +300,24 @@ const buildSignal = (
   if (buyTrigger && confidence >= 55) signal = "BUY";
   if (sellTrigger && confidence >= 55) signal = "SELL";
   const { bid, ask, spread } = estimateBidAsk(price, config.estimatedSpread);
+  const spreadAccepted = spread <= config.estimatedSpread;
+  const triggerPriceValue = trendSide === "BUY"
+    ? Math.max(ema20, recentSwingHigh)
+    : trendSide === "SELL"
+      ? Math.min(ema20, recentSwingLow)
+      : null;
+  const entryMode: EntryMode =
+    !spreadAccepted || !trendSide
+      ? "WAIT"
+      : trendSide === "BUY"
+        ? ask >= (triggerPriceValue ?? Number.POSITIVE_INFINITY)
+          ? "NOW"
+          : "STOP"
+        : bid <= (triggerPriceValue ?? Number.NEGATIVE_INFINITY)
+          ? "NOW"
+          : "STOP";
+  const effectiveSignal =
+    spreadAccepted && entryMode === "NOW" && trendSide ? trendSide : "WAIT";
   const executionSide = signal !== "WAIT" ? signal : trendSide;
 
   return {
@@ -306,7 +330,11 @@ const buildSignal = (
     spread,
     priceSource: `Twelve Data (${symbol}) + estimated spread`,
     changePct: Number((((price - previous) / previous) * 100).toFixed(2)),
-    signal,
+    signal: effectiveSignal,
+    trendBias: trendSide ?? "WAIT",
+    entryMode,
+    triggerPrice: triggerPriceValue !== null ? formatPrice(config.instrument, triggerPriceValue) : "Unavailable",
+    maxSpread: Number(config.estimatedSpread.toFixed(6)),
     regime,
     ema20: Number(ema20.toFixed(6)),
     ema50: Number(ema50.toFixed(6)),
@@ -320,18 +348,20 @@ const buildSignal = (
     maxSpreadNote: config.maxSpreadNote,
     plus500ExecutionText:
       executionSide === "BUY"
-        ? signal === "BUY"
+        ? effectiveSignal === "BUY"
           ? `BUY ${config.plus500MarketName} at Ask ${formatPrice(config.instrument, ask)}`
           : `BUY stop above ${formatPrice(config.instrument, Math.max(ema20, recentSwingHigh))}`
         : executionSide === "SELL"
-          ? signal === "SELL"
+          ? effectiveSignal === "SELL"
             ? `SELL ${config.plus500MarketName} at Bid ${formatPrice(config.instrument, bid)}`
             : `SELL stop below ${formatPrice(config.instrument, Math.min(ema20, recentSwingLow))}`
           : `WAIT ${config.plus500MarketName}`,
     catalyst:
-      signal === "BUY"
+      !spreadAccepted
+        ? `Spread liegt ueber Limit ${formatPrice(config.instrument, config.estimatedSpread)} und blockiert Entries`
+        : effectiveSignal === "BUY"
         ? "EMA20 liegt ueber EMA50 und der Preis bricht ueber EMA20 oder das letzte Swing-High"
-        : signal === "SELL"
+        : effectiveSignal === "SELL"
           ? "EMA20 liegt unter EMA50 und der Preis bricht unter EMA20 oder das letzte Swing-Low"
           : trendSide === "BUY"
             ? "Trend bleibt Long, Trigger fuer den Ausbruch ist noch nicht bestaetigt"
@@ -339,10 +369,12 @@ const buildSignal = (
               ? "Trend bleibt Short, Trigger fuer den Ausbruch ist noch nicht bestaetigt"
               : "EMA20 und EMA50 liefern aktuell keinen klaren Trend",
     thesis:
-      signal === "BUY"
+      effectiveSignal === "BUY"
         ? "Plus500-Style Long: Entry ueber Ask, Stop via 1.5 ATR, Target via 2.0 ATR."
-        : signal === "SELL"
+        : effectiveSignal === "SELL"
           ? "Plus500-Style Short: Entry ueber Bid, Stop via 1.5 ATR, Target via 2.0 ATR."
+          : !spreadAccepted
+            ? "Spread zu hoch. Bot bleibt flat, bis der Markt wieder handelbar ist."
           : trendSide === "BUY"
             ? "Trend ist Long. Einstieg erst beim Break ueber EMA20 oder Swing-High."
             : trendSide === "SELL"
@@ -350,7 +382,18 @@ const buildSignal = (
               : "Ohne Trend bleibt das Setup defensiv.",
     updatedAt: candles[candles.length - 1]?.datetime || new Date().toISOString(),
     risk: riskFor(config.instrument, regime),
-    ...buildLevels(config, signal, trendSide, atr, ema20, recentSwingHigh, recentSwingLow, bid, ask),
+    ...buildLevels(
+      config,
+      effectiveSignal,
+      entryMode,
+      trendSide,
+      atr,
+      ema20,
+      recentSwingHigh,
+      recentSwingLow,
+      bid,
+      ask
+    ),
   } satisfies MarketSignal;
 };
 
@@ -368,6 +411,10 @@ const buildUnavailableSignal = (
   priceSource: "Live feed unavailable",
   changePct: 0,
   signal: "WAIT",
+  trendBias: "WAIT",
+  entryMode: "WAIT",
+  triggerPrice: "Unavailable",
+  maxSpread: 0.00012,
   regime: "Range",
   ema20: 0,
   ema50: 0,
