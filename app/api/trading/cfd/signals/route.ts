@@ -1,26 +1,16 @@
 import { NextResponse } from "next/server";
+import { CFD_INSTRUMENTS, type Instrument } from "../../../../../lib/tradingCfdInstruments";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Instrument = "EUR/USD";
 type SignalSide = "BUY" | "SELL" | "WAIT";
 type EntryMode = "NOW" | "STOP" | "WAIT";
 type Regime = "Trend" | "Range";
 type RiskLevel = "Low" | "Medium" | "High";
-type SessionTag = "London" | "New York" | "Overlap" | "Off Hours";
+type SessionTag = "London" | "New York" | "Overlap" | "Ausserhalb";
 
-type InstrumentConfig = {
-  instrument: Instrument;
-  symbolCandidates: string[];
-  maxSpreadNote: string;
-  plus500MarketName: string;
-  estimatedSpread: number;
-  atrStopMultiplier: number;
-  atrTakeMultiplier: number;
-  minPrice: number;
-  maxPrice: number;
-};
+type InstrumentConfig = (typeof CFD_INSTRUMENTS)[number];
 type SeriesValue = {
   datetime: string;
   open: string;
@@ -73,19 +63,23 @@ type MarketSignal = {
   updatedAt: string;
 };
 
-const CONFIGS: InstrumentConfig[] = [
-  {
-    instrument: "EUR/USD",
-    symbolCandidates: ["EUR/USD"],
-    maxSpreadNote: "Max 1.2 pip",
-    plus500MarketName: "EUR/USD CFD",
-    estimatedSpread: 0.00012,
-    atrStopMultiplier: 1.5,
-    atrTakeMultiplier: 2,
-    minPrice: 0.8,
-    maxPrice: 1.5,
-  },
-];
+const CONFIGS: InstrumentConfig[] = CFD_INSTRUMENTS.map((config) => {
+  if (config.instrument === "NASDAQ 100") {
+    const preferred = process.env.TWELVEDATA_NASDAQ100_SYMBOL;
+    return preferred
+      ? { ...config, symbolCandidates: [preferred, ...config.symbolCandidates.filter((entry) => entry !== preferred)] }
+      : config;
+  }
+
+  if (config.instrument === "WTI Oil") {
+    const preferred = process.env.TWELVEDATA_WTI_SYMBOL;
+    return preferred
+      ? { ...config, symbolCandidates: [preferred, ...config.symbolCandidates.filter((entry) => entry !== preferred)] }
+      : config;
+  }
+
+  return config;
+});
 
 const fetchJson = async (url: string) => {
   const controller = new AbortController();
@@ -156,7 +150,7 @@ const detectSession = (): SessionTag => {
   if (hour >= 12 && hour < 16) return "Overlap";
   if (hour >= 7 && hour < 12) return "London";
   if (hour >= 16 && hour < 21) return "New York";
-  return "Off Hours";
+  return "Ausserhalb";
 };
 
 const computeEma = (values: number[], period: number) => {
@@ -181,17 +175,26 @@ const computeAtr = (candles: SeriesValue[], period: number) => {
 
 const formatPrice = (instrument: Instrument, value: number) => {
   if (instrument === "EUR/USD") return value.toFixed(4);
+  if (instrument === "GBP/USD") return value.toFixed(4);
+  if (instrument === "Gold" || instrument === "WTI Oil")
+    return value.toFixed(2);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
 
 const sessionScoreFor = (instrument: Instrument, session: SessionTag) => {
   if (session === "Overlap") return 15;
   if (instrument === "EUR/USD" && session === "London") return 15;
+  if (instrument === "GBP/USD" && session === "London") return 15;
+  if (instrument === "Gold" && (session === "London" || session === "Overlap")) return 10;
+  if (instrument === "NASDAQ 100" && (session === "New York" || session === "Overlap")) return 15;
+  if (instrument === "WTI Oil" && (session === "New York" || session === "Overlap")) return 15;
   return 0;
 };
 
 const riskFor = (instrument: Instrument, regime: Regime): RiskLevel => {
   if (instrument === "EUR/USD" && regime === "Trend") return "Low";
+  if (instrument === "GBP/USD" && regime === "Trend") return "Low";
+  if (instrument === "NASDAQ 100" || instrument === "WTI Oil") return "High";
   return "Medium";
 };
 
@@ -338,7 +341,7 @@ const buildSignal = (
     regime,
     ema20: Number(ema20.toFixed(6)),
     ema50: Number(ema50.toFixed(6)),
-    atr: Number(atr.toFixed(config.instrument === "EUR/USD" ? 5 : 2)),
+    atr: Number(atr.toFixed(config.instrument === "EUR/USD" || config.instrument === "GBP/USD" ? 5 : 2)),
     atrPct: Number(atrPct.toFixed(2)),
     momentumPct: Number(momentumPct.toFixed(2)),
     volumeRising,
@@ -349,11 +352,11 @@ const buildSignal = (
     plus500ExecutionText:
       executionSide === "BUY"
         ? effectiveSignal === "BUY"
-          ? `KAUF ${config.plus500MarketName} zum Ask ${formatPrice(config.instrument, ask)}`
+          ? `KAUF ${config.plus500MarketName} zum Briefkurs ${formatPrice(config.instrument, ask)}`
           : `Kauf-Stop ueber ${formatPrice(config.instrument, Math.max(ema20, recentSwingHigh))}`
         : executionSide === "SELL"
           ? effectiveSignal === "SELL"
-            ? `VERKAUF ${config.plus500MarketName} zum Bid ${formatPrice(config.instrument, bid)}`
+            ? `VERKAUF ${config.plus500MarketName} zum Geldkurs ${formatPrice(config.instrument, bid)}`
             : `Verkauf-Stop unter ${formatPrice(config.instrument, Math.min(ema20, recentSwingLow))}`
           : `WARTEN ${config.plus500MarketName}`,
     catalyst:
@@ -364,21 +367,21 @@ const buildSignal = (
         : effectiveSignal === "SELL"
           ? "EMA20 liegt unter EMA50 und der Preis bricht unter EMA20 oder das letzte Swing-Low"
           : trendSide === "BUY"
-            ? "Trend bleibt Long, Trigger fuer den Ausbruch ist noch nicht bestaetigt"
+            ? "Trend bleibt auf Kaufseite, der Ausbruch ist noch nicht bestaetigt"
             : trendSide === "SELL"
-              ? "Trend bleibt Short, Trigger fuer den Ausbruch ist noch nicht bestaetigt"
+              ? "Trend bleibt auf Verkaufsseite, der Ausbruch ist noch nicht bestaetigt"
               : "EMA20 und EMA50 liefern aktuell keinen klaren Trend",
     thesis:
       effectiveSignal === "BUY"
-        ? "Plus500-Stil Long: Einstieg ueber Ask, Stop via 1.5 ATR, Ziel via 2.0 ATR."
+        ? "Plus500-Stil Kauf: Einstieg ueber Briefkurs, Stop via 1.5 ATR, Ziel via 2.0 ATR."
         : effectiveSignal === "SELL"
-          ? "Plus500-Stil Short: Einstieg ueber Bid, Stop via 1.5 ATR, Ziel via 2.0 ATR."
+          ? "Plus500-Stil Verkauf: Einstieg ueber Geldkurs, Stop via 1.5 ATR, Ziel via 2.0 ATR."
           : !spreadAccepted
-            ? "Spread zu hoch. Bot bleibt flat, bis der Markt wieder handelbar ist."
+            ? "Spread zu hoch. Bot bleibt ohne Position, bis der Markt wieder handelbar ist."
           : trendSide === "BUY"
-            ? "Trend ist Long. Einstieg erst beim Break ueber EMA20 oder Swing-High."
+            ? "Trend zeigt Kaufseite. Einstieg erst beim Break ueber EMA20 oder Swing-High."
             : trendSide === "SELL"
-              ? "Trend ist Short. Einstieg erst beim Break unter EMA20 oder Swing-Low."
+              ? "Trend zeigt Verkaufsseite. Einstieg erst beim Break unter EMA20 oder Swing-Low."
               : "Ohne Trend bleibt das Setup defensiv.",
     updatedAt: candles[candles.length - 1]?.datetime || new Date().toISOString(),
     risk: riskFor(config.instrument, regime),
@@ -403,7 +406,7 @@ const buildUnavailableSignal = (
 ): MarketSignal => ({
   instrument: config.instrument,
   symbol: config.symbolCandidates[0] || config.instrument,
-  price: "unavailable",
+  price: "nicht verfuegbar",
   rawPrice: 0,
   bid: null,
   ask: null,

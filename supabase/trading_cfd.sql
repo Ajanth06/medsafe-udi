@@ -26,8 +26,11 @@ create table if not exists cfd_trade_journal (
   created_at timestamptz not null default now()
 );
 
-delete from cfd_signal_history where instrument <> 'EUR/USD';
-delete from cfd_trade_journal where instrument <> 'EUR/USD';
+delete from cfd_signal_history
+where instrument not in ('EUR/USD', 'NASDAQ 100', 'Gold', 'WTI Oil', 'GBP/USD');
+
+delete from cfd_trade_journal
+where instrument not in ('EUR/USD', 'NASDAQ 100', 'Gold', 'WTI Oil', 'GBP/USD');
 
 alter table cfd_signal_history
   drop constraint if exists cfd_signal_history_instrument_check;
@@ -37,11 +40,11 @@ alter table cfd_trade_journal
 
 alter table cfd_signal_history
   add constraint cfd_signal_history_instrument_check
-  check (instrument = 'EUR/USD');
+  check (instrument in ('EUR/USD', 'NASDAQ 100', 'Gold', 'WTI Oil', 'GBP/USD'));
 
 alter table cfd_trade_journal
   add constraint cfd_trade_journal_instrument_check
-  check (instrument = 'EUR/USD');
+  check (instrument in ('EUR/USD', 'NASDAQ 100', 'Gold', 'WTI Oil', 'GBP/USD'));
 
 alter table cfd_signal_history enable row level security;
 alter table cfd_trade_journal enable row level security;

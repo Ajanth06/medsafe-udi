@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CFD_STREAM_SYMBOLS } from "../../../../../lib/tradingCfdInstruments";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,7 +86,7 @@ export async function GET(request: Request) {
           JSON.stringify({
             action: "subscribe",
             params: {
-              symbols: "EUR/USD",
+              symbols: CFD_STREAM_SYMBOLS.join(","),
             },
           })
         );

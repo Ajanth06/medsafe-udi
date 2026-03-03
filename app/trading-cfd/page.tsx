@@ -3,8 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
+import {
+  CFD_INSTRUMENTS,
+  instrumentByStreamSymbol,
+  type Instrument,
+} from "../../lib/tradingCfdInstruments";
 
-type Instrument = "EUR/USD";
 type SignalSide = "BUY" | "SELL" | "WAIT";
 type EntryMode = "NOW" | "STOP" | "WAIT";
 type Regime = "Trend" | "Range";
@@ -110,46 +114,42 @@ type BotSummary = {
   reason: string;
 };
 
-const ESTIMATED_EURUSD_SPREAD = 0.00012;
-
-const FALLBACK_SIGNALS: MarketSignal[] = [
-  {
-    instrument: "EUR/USD",
-    symbol: "EUR/USD",
-    price: "unavailable",
-    rawPrice: 0,
-    bid: null,
-    ask: null,
-    spread: null,
-    priceSource: "Twelve Data unavailable",
-    changePct: 0,
-    signal: "WAIT",
-    trendBias: "WAIT",
-    entryMode: "WAIT",
-    triggerPrice: "Unavailable",
-    maxSpread: ESTIMATED_EURUSD_SPREAD,
-    regime: "Range",
-    ema20: 0,
-    ema50: 0,
-    atr: 0,
-    atrPct: 0,
-    momentumPct: 0,
-    volumeRising: false,
-    volumeSource: "none",
-    confidence: 0,
-    session: "Off Hours",
-    maxSpreadNote: "Max 1.2 pip",
-    plus500ExecutionText: "Kein Live-Forex-Preis verfuegbar",
-    catalyst: "Twelve Data liefert aktuell keinen gueltigen EUR/USD Wert.",
-    thesis: "Ohne echten Live-Kurs wird kein handelbarer Wert angezeigt.",
-    entryZone: "Nicht verfuegbar",
-    stopLoss: "Nicht verfuegbar",
-    takeProfit: "Nicht verfuegbar",
-    riskReward: "Nicht verfuegbar",
-    risk: "Low",
-    updatedAt: new Date().toISOString(),
-  },
-];
+const FALLBACK_SIGNALS: MarketSignal[] = CFD_INSTRUMENTS.map((config) => ({
+  instrument: config.instrument,
+  symbol: config.streamSymbol,
+  price: "nicht verfuegbar",
+  rawPrice: 0,
+  bid: null,
+  ask: null,
+  spread: null,
+  priceSource: "Twelve Data nicht verfuegbar",
+  changePct: 0,
+  signal: "WAIT",
+  trendBias: "WAIT",
+  entryMode: "WAIT",
+  triggerPrice: "Nicht verfuegbar",
+  maxSpread: config.estimatedSpread,
+  regime: "Range",
+  ema20: 0,
+  ema50: 0,
+  atr: 0,
+  atrPct: 0,
+  momentumPct: 0,
+  volumeRising: false,
+  volumeSource: "none",
+  confidence: 0,
+  session: "Ausserhalb der Haupthandelszeiten",
+  maxSpreadNote: config.maxSpreadNote,
+  plus500ExecutionText: `Kein Live-Preis fuer ${config.instrument} verfuegbar`,
+  catalyst: `Twelve Data liefert aktuell keinen gueltigen Wert fuer ${config.instrument}.`,
+  thesis: "Ohne echten Live-Kurs wird kein handelbarer Wert angezeigt.",
+  entryZone: "Nicht verfuegbar",
+  stopLoss: "Nicht verfuegbar",
+  takeProfit: "Nicht verfuegbar",
+  riskReward: "Nicht verfuegbar",
+  risk: config.instrument === "EUR/USD" || config.instrument === "GBP/USD" ? "Low" : config.instrument === "NASDAQ 100" || config.instrument === "WTI Oil" ? "High" : "Medium",
+  updatedAt: new Date().toISOString(),
+}));
 
 const feedStatusClass = (status: FeedStatus) =>
   status === "live"
@@ -184,7 +184,7 @@ const riskLabel = (risk: RiskLevel) =>
   risk === "Low" ? "Niedriges Risiko" : risk === "High" ? "Hohes Risiko" : "Mittleres Risiko";
 
 const feedStatusLabel = (status: FeedStatus) =>
-  status === "live" ? "live" : status === "error" ? "fehler" : "wartend";
+  status === "live" ? "echtzeit" : status === "error" ? "fehler" : "wartend";
 
 const journalStatusLabel = (status: JournalStatus) =>
   status === "planned" ? "geplant" : status === "executed" ? "ausgefuehrt" : "geschlossen";
@@ -199,7 +199,20 @@ const botActionLabel = (action: BotSummary["action"]) =>
         : "WARTEN";
 
 const positionStateLabel = (status: PositionState) =>
-  status === "LONG" ? "LONG" : status === "SHORT" ? "SHORT" : "FLAT";
+  status === "LONG" ? "Kaufposition" : status === "SHORT" ? "Verkaufsposition" : "Keine Position";
+
+const regimeLabel = (regime: Regime) =>
+  regime === "Trend" ? "Trend" : "Seitwaerts";
+
+const entryModeLabel = (mode: EntryMode) =>
+  mode === "NOW" ? "Sofort" : mode === "STOP" ? "Stop-Order" : "Warten";
+
+const riskProfileLabel = (profile: RiskProfile) =>
+  profile === "Conservative"
+    ? "Konservativ"
+    : profile === "Aggressive"
+      ? "Aggressiv"
+      : "Ausgewogen";
 
 const formatPct = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 const formatDateTime = (value: string | null) =>
@@ -218,8 +231,9 @@ const parseNumeric = (value: string) => {
 };
 
 const formatInstrumentPrice = (instrument: Instrument, value: number) => {
-  if (instrument === "EUR/USD") return value.toFixed(4);
-  return value.toString();
+  if (instrument === "EUR/USD" || instrument === "GBP/USD") return value.toFixed(4);
+  if (instrument === "Gold" || instrument === "WTI Oil") return value.toFixed(2);
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
 
 const toIsoTimestamp = (tick: LiveTickEvent) => {
@@ -228,13 +242,44 @@ const toIsoTimestamp = (tick: LiveTickEvent) => {
   return new Date().toISOString();
 };
 
-const estimateBidAskFromLast = (price: number, spread = ESTIMATED_EURUSD_SPREAD) => {
+const estimateBidAskFromLast = (price: number, spread: number) => {
   const halfSpread = spread / 2;
   return {
     bid: Number((price - halfSpread).toFixed(6)),
     ask: Number((price + halfSpread).toFixed(6)),
     spread: Number(spread.toFixed(6)),
   };
+};
+
+const sessionSchedule = {
+  London: {
+    title: "London",
+    utc: "07:00-12:00 UTC",
+    berlin: "08:00-13:00 Berlin",
+  },
+  Overlap: {
+    title: "Overlap",
+    utc: "12:00-16:00 UTC",
+    berlin: "13:00-17:00 Berlin",
+  },
+  "New York": {
+    title: "New York",
+    utc: "16:00-21:00 UTC",
+    berlin: "17:00-22:00 Berlin",
+  },
+} as const;
+
+const sessionPriority = (session: SessionMode, instrument: Instrument) => {
+  if (session === "Overlap") return 1;
+  if (session === "London") {
+    if (instrument === "EUR/USD" || instrument === "GBP/USD") return 1;
+    if (instrument === "Gold") return 0.8;
+    return 0.4;
+  }
+
+  if (instrument === "NASDAQ 100" || instrument === "WTI Oil") return 1;
+  if (instrument === "Gold") return 0.85;
+  return 0.7;
 };
 
 export default function TradingCfdPage() {
@@ -246,7 +291,7 @@ export default function TradingCfdPage() {
   const [accountSize, setAccountSize] = useState(10000);
   const [riskPercent, setRiskPercent] = useState(0.8);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [source, setSource] = useState("Twelve Data");
+  const [source, setSource] = useState("Twelve Data Echtzeitfeed");
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("idle");
   const [feedError, setFeedError] = useState("");
   const [marketErrors, setMarketErrors] = useState<Partial<Record<Instrument, string>>>({});
@@ -290,14 +335,12 @@ export default function TradingCfdPage() {
           .from("cfd_signal_history")
           .select("id, instrument, signal, confidence, regime, price, signal_timestamp")
           .eq("user_id", user.id)
-          .eq("instrument", "EUR/USD")
           .order("signal_timestamp", { ascending: false })
           .limit(40),
         supabase
           .from("cfd_trade_journal")
           .select("id, instrument, signal, entry, stop_loss, take_profit, status, notes, created_at")
           .eq("user_id", user.id)
-          .eq("instrument", "EUR/USD")
           .order("created_at", { ascending: false })
           .limit(50),
       ]);
@@ -356,7 +399,7 @@ export default function TradingCfdPage() {
             : nextSignals.some((signal) => signal.price !== "unavailable");
         setSignals(nextSignals);
         setUpdatedAt(data.updatedAt);
-        setSource(data.source || "Twelve Data");
+        setSource(data.source || "Twelve Data Echtzeitfeed");
         setMarketErrors(data.marketErrors || {});
         setFeedStatus(hasLiveSignal ? "live" : "error");
         setFeedError(data.error || "");
@@ -409,12 +452,15 @@ export default function TradingCfdPage() {
         try {
           const tick = JSON.parse((event as MessageEvent).data) as LiveTickEvent;
 
-          if (!Number.isFinite(tick.price) || tick.symbol !== "EUR/USD") {
+          if (!Number.isFinite(tick.price) || !tick.symbol) {
             return;
           }
 
+          const config = instrumentByStreamSymbol(tick.symbol);
+          if (!config) return;
+
           const nextPrice = Number(tick.price);
-          const estimatedQuote = estimateBidAskFromLast(nextPrice);
+          const estimatedQuote = estimateBidAskFromLast(nextPrice, config.estimatedSpread);
           const nextBid = typeof tick.bid === "number" ? tick.bid : estimatedQuote.bid;
           const nextAsk = typeof tick.ask === "number" ? tick.ask : estimatedQuote.ask;
           const nextSpread =
@@ -424,7 +470,7 @@ export default function TradingCfdPage() {
 
           setSignals((currentSignals) =>
             currentSignals.map((signal) =>
-              signal.instrument === "EUR/USD"
+              signal.instrument === config.instrument
                 ? {
                     ...signal,
                     price: formatInstrumentPrice(signal.instrument, nextPrice),
@@ -434,14 +480,14 @@ export default function TradingCfdPage() {
                     spread: nextSpread,
                     priceSource:
                       typeof tick.bid === "number" && typeof tick.ask === "number"
-                        ? "Twelve Data WebSocket"
-                        : "Twelve Data WebSocket + estimated spread",
+                        ? "Twelve Data Echtzeitstream"
+                        : "Twelve Data Echtzeitstream + geschaetzter Spread",
                   }
                 : signal
             )
           );
           setUpdatedAt(toIsoTimestamp(tick));
-          setSource("Twelve Data WebSocket");
+          setSource("Twelve Data Echtzeitstream");
           setFeedStatus("live");
           setFeedError("");
           setMarketErrors({});
@@ -520,7 +566,6 @@ export default function TradingCfdPage() {
         .from("cfd_signal_history")
         .select("id, instrument, signal, confidence, regime, price, signal_timestamp")
         .eq("user_id", user.id)
-        .eq("instrument", "EUR/USD")
         .order("signal_timestamp", { ascending: false })
         .limit(40);
 
@@ -548,12 +593,33 @@ export default function TradingCfdPage() {
 
   const profileConfig = useMemo(() => {
     if (riskProfile === "Conservative") {
-      return { maxRiskPerTrade: "0.50%", maxOpenSignals: 1, executionStyle: "Nur A-Setups handeln" };
+      return {
+        maxRiskPerTrade: "0.50%",
+        riskCapPercent: 0.5,
+        minConfidence: 75,
+        allowStopEntries: false,
+        maxOpenSignals: 1,
+        executionStyle: "Nur A-Setups in bevorzugter Session handeln",
+      };
     }
     if (riskProfile === "Aggressive") {
-      return { maxRiskPerTrade: "1.00%", maxOpenSignals: 3, executionStyle: "Breakouts nur mit Expansion handeln" };
+      return {
+        maxRiskPerTrade: "1.00%",
+        riskCapPercent: 1,
+        minConfidence: 55,
+        allowStopEntries: true,
+        maxOpenSignals: 3,
+        executionStyle: "Breakouts und Stop-Orders auch ausserhalb des Overlap handeln",
+      };
     }
-    return { maxRiskPerTrade: "0.80%", maxOpenSignals: 2, executionStyle: "Trend-Pullbacks selektiv handeln" };
+    return {
+      maxRiskPerTrade: "0.80%",
+      riskCapPercent: 0.8,
+      minConfidence: 65,
+      allowStopEntries: true,
+      maxOpenSignals: 2,
+      executionStyle: "Trend-Pullbacks in priorisierter Session selektiv handeln",
+    };
   }, [riskProfile]);
 
   const summary = useMemo(() => {
@@ -566,9 +632,9 @@ export default function TradingCfdPage() {
   }, [signals]);
 
   const sessionBias = useMemo(() => {
-    if (sessionMode === "London") return "London ist die primaere Session fuer EUR/USD.";
-    if (sessionMode === "New York") return "New York liefert Momentum, aber EUR/USD braucht saubere Bestaetigung.";
-    return "Overlap liefert meist die saubersten EUR/USD-Signale insgesamt.";
+    if (sessionMode === "London") return "London priorisiert EUR/USD, GBP/USD und Gold.";
+    if (sessionMode === "New York") return "New York priorisiert Nasdaq 100, WTI Oil und Gold.";
+    return "Overlap ist die staerkste Misch-Session fuer Forex, Gold und US-Indizes.";
   }, [sessionMode]);
 
   const actionableSignals = useMemo(
@@ -631,6 +697,17 @@ export default function TradingCfdPage() {
   const selectedSignal =
     signals.find((entry) => entry.instrument === selectedInstrument) || signals[0];
 
+  const selectedInstrumentPriority = selectedSignal
+    ? sessionPriority(sessionMode, selectedSignal.instrument)
+    : 0;
+
+  const entryAllowedByProfile = selectedSignal
+    ? selectedSignal.confidence >= profileConfig.minConfidence &&
+      (profileConfig.allowStopEntries || selectedSignal.entryMode !== "STOP")
+    : false;
+
+  const entryAllowedBySession = selectedInstrumentPriority >= 0.75;
+
   useEffect(() => {
     if (!selectedSignal) {
       setBotPosition(null);
@@ -643,7 +720,7 @@ export default function TradingCfdPage() {
     const takeProfit = parseNumeric(selectedSignal.takeProfit);
     const bid = selectedSignal.bid ?? selectedSignal.rawPrice;
     const ask = selectedSignal.ask ?? selectedSignal.rawPrice;
-    const spread = selectedSignal.spread ?? ESTIMATED_EURUSD_SPREAD;
+    const spread = selectedSignal.spread ?? selectedSignal.maxSpread;
     const spreadTooHigh = spread > selectedSignal.maxSpread;
     const profitDistanceLong = bid;
     const profitDistanceShort = ask;
@@ -652,6 +729,16 @@ export default function TradingCfdPage() {
       if (botPosition === null) {
         setBotUpdate(`WARTEN: Spread ${spread.toFixed(6)} liegt ueber Limit ${selectedSignal.maxSpread.toFixed(6)}.`);
       }
+      return;
+    }
+
+    if (!entryAllowedBySession && botPosition === null) {
+      setBotUpdate(`WARTEN: ${selectedSignal.instrument} ist im Modus ${sessionMode} nicht priorisiert.`);
+      return;
+    }
+
+    if (!entryAllowedByProfile && botPosition === null) {
+      setBotUpdate(`WARTEN: Profil ${riskProfileLabel(riskProfile)} blockiert dieses Setup bei ${selectedSignal.confidence}% Vertrauen.`);
       return;
     }
 
@@ -671,7 +758,7 @@ export default function TradingCfdPage() {
           atr: selectedSignal.atr,
           openedAt: new Date().toISOString(),
         });
-        setBotUpdate(`LONG aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+        setBotUpdate(`Kaufposition aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
         return;
       }
 
@@ -690,21 +777,21 @@ export default function TradingCfdPage() {
           atr: selectedSignal.atr,
           openedAt: new Date().toISOString(),
         });
-        setBotUpdate(`SHORT aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        setBotUpdate(`Verkaufsposition aktiv seit ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
       if (selectedSignal.trendBias === "BUY" && triggerPrice !== null) {
-        setBotUpdate(`FLAT: Kauf-Stop wartet ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+        setBotUpdate(`Keine Position: Kauf-Stop wartet ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
         return;
       }
 
       if (selectedSignal.trendBias === "SELL" && triggerPrice !== null) {
-        setBotUpdate(`FLAT: Verkauf-Stop wartet unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+        setBotUpdate(`Keine Position: Verkauf-Stop wartet unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
         return;
       }
 
-      setBotUpdate("FLAT: Kein Trendvorteil, daher WARTEN.");
+      setBotUpdate("Keine Position: Kein Trendvorteil, daher warten.");
       return;
     }
 
@@ -722,19 +809,19 @@ export default function TradingCfdPage() {
 
       if (selectedSignal.ema20 < selectedSignal.ema50) {
         setBotPosition(null);
-        setBotUpdate("JETZT AUSSTEIGEN: Trend ist von LONG auf SHORT gekippt.");
+        setBotUpdate("Jetzt aussteigen: Trend ist von Kauf auf Verkauf gekippt.");
         return;
       }
 
       if (bid <= nextStop) {
         setBotPosition(null);
-        setBotUpdate(`JETZT AUSSTEIGEN: LONG-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        setBotUpdate(`Jetzt aussteigen: Kauf-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
       if (bid >= botPosition.takeProfit) {
         setBotPosition(null);
-        setBotUpdate(`JETZT AUSSTEIGEN: LONG-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        setBotUpdate(`Jetzt aussteigen: Kauf-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
@@ -742,7 +829,7 @@ export default function TradingCfdPage() {
         setBotPosition({ ...botPosition, stopLoss: Number(nextStop.toFixed(6)) });
       }
 
-      setBotUpdate(`LONG laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
+      setBotUpdate(`Kaufposition laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
       return;
     }
 
@@ -759,19 +846,19 @@ export default function TradingCfdPage() {
 
     if (selectedSignal.ema20 > selectedSignal.ema50) {
       setBotPosition(null);
-      setBotUpdate("JETZT AUSSTEIGEN: Trend ist von SHORT auf LONG gekippt.");
+      setBotUpdate("Jetzt aussteigen: Trend ist von Verkauf auf Kauf gekippt.");
       return;
     }
 
     if (ask >= nextStop) {
       setBotPosition(null);
-      setBotUpdate(`JETZT AUSSTEIGEN: SHORT-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+      setBotUpdate(`Jetzt aussteigen: Verkauf-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
       return;
     }
 
     if (ask <= botPosition.takeProfit) {
       setBotPosition(null);
-      setBotUpdate(`JETZT AUSSTEIGEN: SHORT-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+      setBotUpdate(`Jetzt aussteigen: Verkauf-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
       return;
     }
 
@@ -779,35 +866,35 @@ export default function TradingCfdPage() {
       setBotPosition({ ...botPosition, stopLoss: Number(nextStop.toFixed(6)) });
     }
 
-    setBotUpdate(`SHORT laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
-  }, [botPosition, selectedSignal]);
+    setBotUpdate(`Verkaufsposition laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
+  }, [botPosition, entryAllowedByProfile, entryAllowedBySession, riskProfile, selectedSignal, sessionMode]);
 
   const botSummary = useMemo<BotSummary | null>(() => {
     if (!selectedSignal) return null;
 
     const triggerPrice = parseNumeric(selectedSignal.triggerPrice);
-    const spread = selectedSignal.spread ?? ESTIMATED_EURUSD_SPREAD;
+    const spread = selectedSignal.spread ?? selectedSignal.maxSpread;
     const spreadTooHigh = spread > selectedSignal.maxSpread;
 
     if (botPosition?.status === "LONG") {
       return {
         status: "LONG",
-        action: botUpdate.startsWith("JETZT AUSSTEIGEN") ? "EXIT" : "BUY",
-        entry: `LONG @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
+        action: botUpdate.startsWith("Jetzt aussteigen") ? "EXIT" : "BUY",
+        entry: `Kauf @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
         exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
         update: botUpdate,
-        reason: "LONG aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
+        reason: "Kaufposition aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
       };
     }
 
     if (botPosition?.status === "SHORT") {
       return {
         status: "SHORT",
-        action: botUpdate.startsWith("JETZT AUSSTEIGEN") ? "EXIT" : "SELL",
-        entry: `SHORT @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
+        action: botUpdate.startsWith("Jetzt aussteigen") ? "EXIT" : "SELL",
+        entry: `Verkauf @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
         exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
         update: botUpdate,
-        reason: "SHORT aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
+        reason: "Verkaufsposition aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
       };
     }
 
@@ -819,6 +906,28 @@ export default function TradingCfdPage() {
         exitPlan: `Kein Trade bis Spread <= ${selectedSignal.maxSpread.toFixed(6)}`,
         update: botUpdate,
         reason: "Spread-Filter blockiert Entries.",
+      };
+    }
+
+    if (!entryAllowedBySession) {
+      return {
+        status: "FLAT",
+        action: "WAIT",
+        entry: `WARTEN: ${selectedSignal.instrument} passt aktuell nicht zu ${sessionMode}`,
+        exitPlan: `Session-Fokus fuer ${sessionMode} beachten`,
+        update: botUpdate,
+        reason: sessionBias,
+      };
+    }
+
+    if (!entryAllowedByProfile) {
+      return {
+        status: "FLAT",
+        action: "WAIT",
+        entry: `WARTEN: Profil ${riskProfileLabel(riskProfile)} verlangt strengere Bedingungen`,
+        exitPlan: `Mindestens ${profileConfig.minConfidence}% Vertrauen${profileConfig.allowStopEntries ? "" : " und Sofort-Einstieg"} noetig`,
+        update: botUpdate,
+        reason: "Risikoprofil beeinflusst Freigabe, Stop-Orders und Mindestvertrauen.",
       };
     }
 
@@ -853,20 +962,21 @@ export default function TradingCfdPage() {
     return {
       status: "FLAT",
       action: "WAIT",
-        entry: "WARTEN",
+      entry: "Warten",
       exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
       update: botUpdate,
       reason: selectedSignal.catalyst,
     };
-  }, [botPosition, botUpdate, selectedSignal]);
+  }, [botPosition, botUpdate, entryAllowedByProfile, entryAllowedBySession, profileConfig.allowStopEntries, profileConfig.minConfidence, riskProfile, selectedSignal, sessionBias, sessionMode]);
 
   const riskModel = useMemo(() => {
     if (!selectedSignal) return null;
 
     const stopValue = parseNumeric(selectedSignal.stopLoss);
+    const effectiveRiskPercent = Math.min(riskPercent, profileConfig.riskCapPercent);
     if (stopValue === null) {
       return {
-        riskCapital: accountSize * (riskPercent / 100),
+        riskCapital: accountSize * (effectiveRiskPercent / 100),
         stopDistance: null,
         positionSize: null,
         notionalExposure: null,
@@ -876,14 +986,14 @@ export default function TradingCfdPage() {
     const stopDistance = Math.abs(selectedSignal.rawPrice - stopValue);
     if (stopDistance <= 0) {
       return {
-        riskCapital: accountSize * (riskPercent / 100),
+        riskCapital: accountSize * (effectiveRiskPercent / 100),
         stopDistance: null,
         positionSize: null,
         notionalExposure: null,
       };
     }
 
-    const riskCapital = accountSize * (riskPercent / 100);
+    const riskCapital = accountSize * (effectiveRiskPercent / 100);
     const positionSize = riskCapital / stopDistance;
     const notionalExposure = positionSize * selectedSignal.rawPrice;
 
@@ -893,7 +1003,7 @@ export default function TradingCfdPage() {
       positionSize,
       notionalExposure,
     };
-  }, [accountSize, riskPercent, selectedSignal]);
+  }, [accountSize, profileConfig.riskCapPercent, riskPercent, selectedSignal]);
 
   const addJournalEntry = async () => {
     if (!selectedSignal || !user) return;
@@ -950,9 +1060,18 @@ export default function TradingCfdPage() {
               </h1>
               <p className="mt-3 max-w-3xl text-sm text-slate-300/80 md:text-base">
                 Serverseitige Signal-Engine mit `EMA20`, `EMA50`, `ATR`, Regime-Erkennung
-                und Session-Scoring fuer EUR/USD. Dazu jetzt mit
+                und Session-Scoring fuer EUR/USD, NASDAQ 100, Gold, WTI Oil und GBP/USD. Dazu jetzt mit
                 Positionsgroessen-Rechner, Signal-Historie und manuellem Plus500-Journal.
               </p>
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                {Object.values(sessionSchedule).map((entry) => (
+                  <div key={entry.title} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{entry.title}</div>
+                    <div className="mt-1 font-semibold text-slate-100">{entry.berlin}</div>
+                    <div className="text-xs text-slate-500">{entry.utc}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
@@ -1057,6 +1176,9 @@ export default function TradingCfdPage() {
                   <option value="Balanced">Ausgewogen</option>
                   <option value="Aggressive">Aggressiv</option>
                 </select>
+                <div className="mt-2 text-[11px] text-slate-500">
+                  Session wirkt jetzt direkt auf priorisierte Maerkte und Entry-Freigaben.
+                </div>
               </label>
             </div>
           </article>
@@ -1086,12 +1208,12 @@ export default function TradingCfdPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signaltafel</div>
-              <h2 className="mt-1 text-xl font-semibold">EUR/USD</h2>
+              <h2 className="mt-1 text-xl font-semibold">5 Echtzeit-Maerkte</h2>
             </div>
-            <div className="text-xs text-slate-500">Live-Stream ueber Twelve-Data-WebSocket und `/api/trading/cfd/live`.</div>
+            <div className="text-xs text-slate-500">Echtzeitstream ueber Twelve Data und `/api/trading/cfd/live`.</div>
           </div>
 
-          <div className="mt-5 grid gap-4 xl:grid-cols-1">
+          <div className="mt-5 grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
             {signals.map((signal) => (
               <article
                 key={signal.instrument}
@@ -1100,7 +1222,7 @@ export default function TradingCfdPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                      {signal.symbol === signal.instrument ? "Live-Setup" : signal.symbol}
+                      {signal.symbol === signal.instrument ? "Echtzeit-Setup" : signal.symbol}
                     </div>
                     <h3 className="mt-1 text-2xl font-semibold">{signal.instrument}</h3>
                     <div className="mt-1 text-sm text-slate-400">
@@ -1113,7 +1235,7 @@ export default function TradingCfdPage() {
                       {signalLabel(signal.signal)}
                     </span>
                     <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${regimeClass(signal.regime)}`}>
-                      {signal.regime}
+                      {regimeLabel(signal.regime)}
                     </span>
                     <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${riskClass(signal.risk)}`}>
                       {riskLabel(signal.risk)}
@@ -1128,11 +1250,11 @@ export default function TradingCfdPage() {
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Trendrichtung</div>
-                    <div className="mt-1 font-semibold text-slate-100">{signal.trendBias}</div>
+                    <div className="mt-1 font-semibold text-slate-100">{signalLabel(signal.trendBias)}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Einstiegsmodus</div>
-                    <div className="mt-1 font-semibold text-slate-100">{signal.entryMode}</div>
+                    <div className="mt-1 font-semibold text-slate-100">{entryModeLabel(signal.entryMode)}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Einstieg</div>
@@ -1163,15 +1285,15 @@ export default function TradingCfdPage() {
                     <div className="mt-1 font-semibold text-slate-100">{signal.atr} ({formatPct(signal.atrPct)})</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Bid / Ask</div>
+                    <div className="text-slate-500">Geld / Brief</div>
                     <div className="mt-1 font-semibold text-slate-100">
-                      {signal.bid !== null && signal.ask !== null ? `${signal.bid} / ${signal.ask}` : "n/a"}
+                      {signal.bid !== null && signal.ask !== null ? `${signal.bid} / ${signal.ask}` : "k.A."}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
                     <div className="text-slate-500">Spread</div>
                     <div className="mt-1 font-semibold text-slate-100">
-                      {signal.spread !== null ? signal.spread : "n/a"}
+                      {signal.spread !== null ? signal.spread : "k.A."}
                     </div>
                   </div>
                 </div>
@@ -1232,7 +1354,7 @@ export default function TradingCfdPage() {
                     <div className="font-semibold text-slate-100">
                       #{entry.rank} {entry.instrument}
                     </div>
-                    <div className="text-slate-400">{entry.regime}</div>
+                    <div className="text-slate-400">{regimeLabel(entry.regime)}</div>
                   </div>
                   <div className="mt-2 text-slate-300">
                     ATR % {formatPct(entry.atrPct)} | Momentum {formatPct(entry.momentumPct)}
@@ -1272,7 +1394,7 @@ export default function TradingCfdPage() {
                     <div className="text-slate-400">{signal.confidence}% Vertrauen</div>
                   </div>
                   <div className="mt-2 text-slate-300">
-                    Regime {signal.regime} | Momentum {formatPct(signal.momentumPct)} | ATR {signal.atr}
+                    Regime {regimeLabel(signal.regime)} | Momentum {formatPct(signal.momentumPct)} | ATR {signal.atr}
                   </div>
                   <div className="mt-2 text-slate-300">
                     In Plus500 ausfuehren als: {signal.plus500ExecutionText}
@@ -1374,7 +1496,7 @@ export default function TradingCfdPage() {
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                   <div className="text-slate-500">Signal</div>
                   <div className="mt-1 text-xl font-semibold text-slate-100">
-                    {selectedSignal.instrument} {selectedSignal.signal}
+                    {selectedSignal.instrument} {signalLabel(selectedSignal.signal)}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
@@ -1485,8 +1607,8 @@ export default function TradingCfdPage() {
                       <tr key={entry.id} className="border-t border-white/6 text-slate-200">
                         <td className="px-4 py-3 text-slate-400">{formatDateTime(entry.updatedAt)}</td>
                         <td className="px-4 py-3">{entry.instrument}</td>
-                        <td className="px-4 py-3">{entry.signal}</td>
-                        <td className="px-4 py-3">{entry.regime}</td>
+                        <td className="px-4 py-3">{signalLabel(entry.signal)}</td>
+                        <td className="px-4 py-3">{regimeLabel(entry.regime)}</td>
                         <td className="px-4 py-3">{entry.confidence}%</td>
                       </tr>
                     ))
@@ -1523,7 +1645,7 @@ export default function TradingCfdPage() {
                       <tr key={entry.id} className="border-t border-white/6 text-slate-200">
                         <td className="px-4 py-3 text-slate-400">{formatDateTime(entry.createdAt)}</td>
                         <td className="px-4 py-3">{entry.instrument}</td>
-                        <td className="px-4 py-3">{entry.signal}</td>
+                        <td className="px-4 py-3">{signalLabel(entry.signal)}</td>
                         <td className="px-4 py-3">{journalStatusLabel(entry.status)}</td>
                         <td className="px-4 py-3">
                           <div>Einstieg {entry.entry}</div>
@@ -1555,7 +1677,7 @@ export default function TradingCfdPage() {
                 actionableSignals.map((signal) => (
                   <div key={signal.instrument} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="font-semibold text-slate-100">{signal.instrument} {signal.signal}</div>
+                      <div className="font-semibold text-slate-100">{signal.instrument} {signalLabel(signal.signal)}</div>
                       <div className="text-xs text-slate-500">{signal.confidence}% Vertrauen</div>
                     </div>
                     <div className="mt-1 text-slate-300">
