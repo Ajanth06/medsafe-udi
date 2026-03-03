@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Instrument = "EUR/USD" | "DAX" | "WTI";
+type Instrument = "EUR/USD";
 type SignalSide = "BUY" | "SELL" | "WAIT";
 type Regime = "Trend" | "Range";
 type RiskLevel = "Low" | "Medium" | "High";
@@ -77,34 +77,6 @@ const CONFIGS: InstrumentConfig[] = [
     atrTakeMultiplier: 2.6,
     minPrice: 0.8,
     maxPrice: 1.5,
-  },
-  {
-    instrument: "DAX",
-    symbolCandidates: [
-      process.env.TWELVEDATA_DAX_SYMBOL || "",
-      "DAX",
-      "DE40",
-    ].filter(Boolean),
-    maxSpreadNote: "Max 2.5 points",
-    plus500MarketName: "Germany 40 CFD",
-    atrStopMultiplier: 1.4,
-    atrTakeMultiplier: 2.8,
-    minPrice: 10000,
-    maxPrice: 25000,
-  },
-  {
-    instrument: "WTI",
-    symbolCandidates: [
-      process.env.TWELVEDATA_WTI_SYMBOL || "",
-      "XTI/USD",
-      "WTI",
-    ].filter(Boolean),
-    maxSpreadNote: "Max 0.06 USD",
-    plus500MarketName: "Oil CFD",
-    atrStopMultiplier: 1.5,
-    atrTakeMultiplier: 3,
-    minPrice: 20,
-    maxPrice: 120,
   },
 ];
 
@@ -202,21 +174,17 @@ const computeAtr = (candles: SeriesValue[], period: number) => {
 
 const formatPrice = (instrument: Instrument, value: number) => {
   if (instrument === "EUR/USD") return value.toFixed(4);
-  if (instrument === "WTI") return value.toFixed(2);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 };
 
 const sessionScoreFor = (instrument: Instrument, session: SessionTag) => {
   if (session === "Overlap") return 15;
   if (instrument === "EUR/USD" && session === "London") return 15;
-  if (instrument === "DAX" && (session === "London" || session === "New York")) return 15;
-  if (instrument === "WTI" && session === "New York") return 15;
   return 0;
 };
 
 const riskFor = (instrument: Instrument, regime: Regime): RiskLevel => {
   if (instrument === "EUR/USD" && regime === "Trend") return "Low";
-  if (instrument === "WTI") return "High";
   return "Medium";
 };
 

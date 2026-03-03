@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 
-type Instrument = "EUR/USD" | "DAX" | "WTI";
+type Instrument = "EUR/USD";
 type SignalSide = "BUY" | "SELL" | "WAIT";
 type Regime = "Trend" | "Range";
 type RiskLevel = "Low" | "Medium" | "High";
@@ -110,70 +110,6 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     risk: "Low",
     updatedAt: new Date().toISOString(),
   },
-  {
-    instrument: "DAX",
-    symbol: "DE40",
-    price: "unavailable",
-    rawPrice: 0,
-    bid: null,
-    ask: null,
-    spread: null,
-    priceSource: "Twelve Data unavailable",
-    changePct: 0,
-    signal: "WAIT",
-    regime: "Range",
-    ema20: 0,
-    ema50: 0,
-    atr: 0,
-    atrPct: 0,
-    momentumPct: 0,
-    volumeRising: false,
-    volumeSource: "none",
-    confidence: 0,
-    session: "Off Hours",
-    maxSpreadNote: "Max 2.5 points",
-    plus500ExecutionText: "Kein Live-DAX-Preis verfuegbar",
-    catalyst: "Twelve Data liefert aktuell keinen gueltigen DAX Wert.",
-    thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
-    entryZone: "Unavailable",
-    stopLoss: "Unavailable",
-    takeProfit: "Unavailable",
-    riskReward: "Unavailable",
-    risk: "Medium",
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    instrument: "WTI",
-    symbol: "WTI",
-    price: "unavailable",
-    rawPrice: 0,
-    bid: null,
-    ask: null,
-    spread: null,
-    priceSource: "Twelve Data unavailable",
-    changePct: 0,
-    signal: "WAIT",
-    regime: "Range",
-    ema20: 0,
-    ema50: 0,
-    atr: 0,
-    atrPct: 0,
-    momentumPct: 0,
-    volumeRising: false,
-    volumeSource: "none",
-    confidence: 0,
-    session: "Off Hours",
-    maxSpreadNote: "Max 0.06 USD",
-    plus500ExecutionText: "Kein Live-WTI-Preis verfuegbar",
-    catalyst: "Twelve Data liefert aktuell keinen gueltigen WTI Wert.",
-    thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
-    entryZone: "Unavailable",
-    stopLoss: "Unavailable",
-    takeProfit: "Unavailable",
-    riskReward: "Unavailable",
-    risk: "High",
-    updatedAt: new Date().toISOString(),
-  },
 ];
 
 const feedStatusClass = (status: FeedStatus) =>
@@ -268,12 +204,14 @@ export default function TradingCfdPage() {
           .from("cfd_signal_history")
           .select("id, instrument, signal, confidence, regime, price, signal_timestamp")
           .eq("user_id", user.id)
+          .eq("instrument", "EUR/USD")
           .order("signal_timestamp", { ascending: false })
           .limit(40),
         supabase
           .from("cfd_trade_journal")
           .select("id, instrument, signal, entry, stop_loss, take_profit, status, notes, created_at")
           .eq("user_id", user.id)
+          .eq("instrument", "EUR/USD")
           .order("created_at", { ascending: false })
           .limit(50),
       ]);
@@ -382,6 +320,7 @@ export default function TradingCfdPage() {
         .from("cfd_signal_history")
         .select("id, instrument, signal, confidence, regime, price, signal_timestamp")
         .eq("user_id", user.id)
+        .eq("instrument", "EUR/USD")
         .order("signal_timestamp", { ascending: false })
         .limit(40);
 
@@ -425,9 +364,9 @@ export default function TradingCfdPage() {
   }, [signals]);
 
   const sessionBias = useMemo(() => {
-    if (sessionMode === "London") return "London priorisiert EUR/USD und DAX, WTI nur selektiv.";
-    if (sessionMode === "New York") return "New York priorisiert WTI, Indizes nur mit Follow-through.";
-    return "Overlap liefert meist die saubersten CFD-Signale insgesamt.";
+    if (sessionMode === "London") return "London ist die primaere Session fuer EUR/USD.";
+    if (sessionMode === "New York") return "New York liefert Momentum, aber EUR/USD braucht sauberes Follow-through.";
+    return "Overlap liefert meist die saubersten EUR/USD-Signale insgesamt.";
   }, [sessionMode]);
 
   const actionableSignals = useMemo(
@@ -580,7 +519,7 @@ export default function TradingCfdPage() {
               </h1>
               <p className="mt-3 max-w-3xl text-sm text-slate-300/80 md:text-base">
                 Serverseitige Signal-Engine mit `EMA20`, `EMA50`, `ATR`, Regime Detection
-                und Session-Scoring fuer EUR/USD, DAX und WTI. Dazu jetzt mit
+                und Session-Scoring fuer EUR/USD. Dazu jetzt mit
                 Positionsgroessen-Rechner, Signal-Historie und manuellem Plus500-Journal.
               </p>
             </div>
@@ -716,12 +655,12 @@ export default function TradingCfdPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signal Board</div>
-              <h2 className="mt-1 text-xl font-semibold">EUR/USD, DAX, WTI</h2>
+              <h2 className="mt-1 text-xl font-semibold">EUR/USD</h2>
             </div>
             <div className="text-xs text-slate-500">Polling every 60 seconds via `/api/trading/cfd/signals`.</div>
           </div>
 
-          <div className="mt-5 grid gap-4 xl:grid-cols-3">
+          <div className="mt-5 grid gap-4 xl:grid-cols-1">
             {signals.map((signal) => (
               <article
                 key={signal.instrument}

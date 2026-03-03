@@ -1,7 +1,7 @@
 create table if not exists cfd_signal_history (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  instrument text not null check (instrument in ('EUR/USD', 'DAX', 'WTI')),
+  instrument text not null,
   signal text not null check (signal in ('BUY', 'SELL', 'WAIT')),
   confidence int not null,
   regime text not null check (regime in ('Trend', 'Range')),
@@ -16,7 +16,7 @@ create unique index if not exists cfd_signal_history_unique_signal
 create table if not exists cfd_trade_journal (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  instrument text not null check (instrument in ('EUR/USD', 'DAX', 'WTI')),
+  instrument text not null,
   signal text not null check (signal in ('BUY', 'SELL', 'WAIT')),
   entry text not null,
   stop_loss text not null,
@@ -25,6 +25,23 @@ create table if not exists cfd_trade_journal (
   notes text not null default '',
   created_at timestamptz not null default now()
 );
+
+delete from cfd_signal_history where instrument <> 'EUR/USD';
+delete from cfd_trade_journal where instrument <> 'EUR/USD';
+
+alter table cfd_signal_history
+  drop constraint if exists cfd_signal_history_instrument_check;
+
+alter table cfd_trade_journal
+  drop constraint if exists cfd_trade_journal_instrument_check;
+
+alter table cfd_signal_history
+  add constraint cfd_signal_history_instrument_check
+  check (instrument = 'EUR/USD');
+
+alter table cfd_trade_journal
+  add constraint cfd_trade_journal_instrument_check
+  check (instrument = 'EUR/USD');
 
 alter table cfd_signal_history enable row level security;
 alter table cfd_trade_journal enable row level security;
