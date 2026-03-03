@@ -220,7 +220,7 @@ const buildLevels = (
 
   if (!setupSide) {
     return {
-      entryZone: `Wait near ${formatPrice(config.instrument, ema20)}`,
+      entryZone: `Warten nahe ${formatPrice(config.instrument, ema20)}`,
       stopLoss: formatPrice(config.instrument, ema20),
       takeProfit: formatPrice(config.instrument, ema20),
       riskReward: "1 : 0.0",
@@ -241,8 +241,8 @@ const buildLevels = (
   return {
     entryZone:
       signal === "WAIT" || entryMode === "STOP"
-        ? `${setupSide} stop ${setupSide === "BUY" ? "above" : "below"} ${formatPrice(config.instrument, triggerLevel)}`
-        : `${setupSide} now @ ${formatPrice(config.instrument, anchor)}`,
+        ? `${setupSide === "BUY" ? "Kauf-Stop" : "Verkauf-Stop"} ${setupSide === "BUY" ? "ueber" : "unter"} ${formatPrice(config.instrument, triggerLevel)}`
+        : `${setupSide === "BUY" ? "Jetzt kaufen" : "Jetzt verkaufen"} @ ${formatPrice(config.instrument, anchor)}`,
     stopLoss: formatPrice(config.instrument, stop),
     takeProfit: formatPrice(config.instrument, take),
     riskReward: `1 : ${(reward / Math.max(risk, Number.EPSILON)).toFixed(1)}`,
@@ -328,12 +328,12 @@ const buildSignal = (
     bid,
     ask,
     spread,
-    priceSource: `Twelve Data (${symbol}) + estimated spread`,
+    priceSource: `Twelve Data (${symbol}) + geschaetzter Spread`,
     changePct: Number((((price - previous) / previous) * 100).toFixed(2)),
     signal: effectiveSignal,
     trendBias: trendSide ?? "WAIT",
     entryMode,
-    triggerPrice: triggerPriceValue !== null ? formatPrice(config.instrument, triggerPriceValue) : "Unavailable",
+    triggerPrice: triggerPriceValue !== null ? formatPrice(config.instrument, triggerPriceValue) : "Nicht verfuegbar",
     maxSpread: Number(config.estimatedSpread.toFixed(6)),
     regime,
     ema20: Number(ema20.toFixed(6)),
@@ -349,13 +349,13 @@ const buildSignal = (
     plus500ExecutionText:
       executionSide === "BUY"
         ? effectiveSignal === "BUY"
-          ? `BUY ${config.plus500MarketName} at Ask ${formatPrice(config.instrument, ask)}`
-          : `BUY stop above ${formatPrice(config.instrument, Math.max(ema20, recentSwingHigh))}`
+          ? `KAUF ${config.plus500MarketName} zum Ask ${formatPrice(config.instrument, ask)}`
+          : `Kauf-Stop ueber ${formatPrice(config.instrument, Math.max(ema20, recentSwingHigh))}`
         : executionSide === "SELL"
           ? effectiveSignal === "SELL"
-            ? `SELL ${config.plus500MarketName} at Bid ${formatPrice(config.instrument, bid)}`
-            : `SELL stop below ${formatPrice(config.instrument, Math.min(ema20, recentSwingLow))}`
-          : `WAIT ${config.plus500MarketName}`,
+            ? `VERKAUF ${config.plus500MarketName} zum Bid ${formatPrice(config.instrument, bid)}`
+            : `Verkauf-Stop unter ${formatPrice(config.instrument, Math.min(ema20, recentSwingLow))}`
+          : `WARTEN ${config.plus500MarketName}`,
     catalyst:
       !spreadAccepted
         ? `Spread liegt ueber Limit ${formatPrice(config.instrument, config.estimatedSpread)} und blockiert Entries`
@@ -370,9 +370,9 @@ const buildSignal = (
               : "EMA20 und EMA50 liefern aktuell keinen klaren Trend",
     thesis:
       effectiveSignal === "BUY"
-        ? "Plus500-Style Long: Entry ueber Ask, Stop via 1.5 ATR, Target via 2.0 ATR."
+        ? "Plus500-Stil Long: Einstieg ueber Ask, Stop via 1.5 ATR, Ziel via 2.0 ATR."
         : effectiveSignal === "SELL"
-          ? "Plus500-Style Short: Entry ueber Bid, Stop via 1.5 ATR, Target via 2.0 ATR."
+          ? "Plus500-Stil Short: Einstieg ueber Bid, Stop via 1.5 ATR, Ziel via 2.0 ATR."
           : !spreadAccepted
             ? "Spread zu hoch. Bot bleibt flat, bis der Markt wieder handelbar ist."
           : trendSide === "BUY"
@@ -408,12 +408,12 @@ const buildUnavailableSignal = (
   bid: null,
   ask: null,
   spread: null,
-  priceSource: "Live feed unavailable",
+  priceSource: "Live-Feed nicht verfuegbar",
   changePct: 0,
   signal: "WAIT",
   trendBias: "WAIT",
   entryMode: "WAIT",
-  triggerPrice: "Unavailable",
+  triggerPrice: "Nicht verfuegbar",
   maxSpread: 0.00012,
   regime: "Range",
   ema20: 0,
@@ -428,11 +428,11 @@ const buildUnavailableSignal = (
   maxSpreadNote: config.maxSpreadNote,
   plus500ExecutionText: `Kein Live-${config.instrument}-Preis verfuegbar`,
   catalyst: message,
-  thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
-  entryZone: "Unavailable",
-  stopLoss: "Unavailable",
-  takeProfit: "Unavailable",
-  riskReward: "Unavailable",
+  thesis: "Ohne echten Live-Kurs wird kein handelbarer Wert angezeigt.",
+  entryZone: "Nicht verfuegbar",
+  stopLoss: "Nicht verfuegbar",
+  takeProfit: "Nicht verfuegbar",
+  riskReward: "Nicht verfuegbar",
   risk: riskFor(config.instrument, "Range"),
   updatedAt: new Date().toISOString(),
 });

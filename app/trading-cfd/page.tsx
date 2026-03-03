@@ -141,11 +141,11 @@ const FALLBACK_SIGNALS: MarketSignal[] = [
     maxSpreadNote: "Max 1.2 pip",
     plus500ExecutionText: "Kein Live-Forex-Preis verfuegbar",
     catalyst: "Twelve Data liefert aktuell keinen gueltigen EUR/USD Wert.",
-    thesis: "Ohne echten Live-Quote wird kein handelbarer Wert angezeigt.",
-    entryZone: "Unavailable",
-    stopLoss: "Unavailable",
-    takeProfit: "Unavailable",
-    riskReward: "Unavailable",
+    thesis: "Ohne echten Live-Kurs wird kein handelbarer Wert angezeigt.",
+    entryZone: "Nicht verfuegbar",
+    stopLoss: "Nicht verfuegbar",
+    takeProfit: "Nicht verfuegbar",
+    riskReward: "Nicht verfuegbar",
     risk: "Low",
     updatedAt: new Date().toISOString(),
   },
@@ -176,6 +176,30 @@ const regimeClass = (regime: Regime) =>
   regime === "Trend"
     ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
     : "border-slate-500/40 bg-slate-500/10 text-slate-200";
+
+const signalLabel = (signal: SignalSide) =>
+  signal === "BUY" ? "KAUF" : signal === "SELL" ? "VERKAUF" : "WARTEN";
+
+const riskLabel = (risk: RiskLevel) =>
+  risk === "Low" ? "Niedriges Risiko" : risk === "High" ? "Hohes Risiko" : "Mittleres Risiko";
+
+const feedStatusLabel = (status: FeedStatus) =>
+  status === "live" ? "live" : status === "error" ? "fehler" : "wartend";
+
+const journalStatusLabel = (status: JournalStatus) =>
+  status === "planned" ? "geplant" : status === "executed" ? "ausgefuehrt" : "geschlossen";
+
+const botActionLabel = (action: BotSummary["action"]) =>
+  action === "BUY"
+    ? "KAUF"
+    : action === "SELL"
+      ? "VERKAUF"
+      : action === "EXIT"
+        ? "AUSSTIEG"
+        : "WARTEN";
+
+const positionStateLabel = (status: PositionState) =>
+  status === "LONG" ? "LONG" : status === "SHORT" ? "SHORT" : "FLAT";
 
 const formatPct = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 const formatDateTime = (value: string | null) =>
@@ -543,7 +567,7 @@ export default function TradingCfdPage() {
 
   const sessionBias = useMemo(() => {
     if (sessionMode === "London") return "London ist die primaere Session fuer EUR/USD.";
-    if (sessionMode === "New York") return "New York liefert Momentum, aber EUR/USD braucht sauberes Follow-through.";
+    if (sessionMode === "New York") return "New York liefert Momentum, aber EUR/USD braucht saubere Bestaetigung.";
     return "Overlap liefert meist die saubersten EUR/USD-Signale insgesamt.";
   }, [sessionMode]);
 
@@ -561,9 +585,9 @@ export default function TradingCfdPage() {
         );
         const liquidityQuality = signal.volumeRising
           ? signal.bid !== null && signal.ask !== null
-            ? "Tradable"
-            : "Proxy only"
-          : "Thin";
+            ? "Handelbar"
+            : "Nur Proxy"
+          : "Duenn";
 
         return {
           instrument: signal.instrument,
@@ -626,7 +650,7 @@ export default function TradingCfdPage() {
 
     if (spreadTooHigh) {
       if (botPosition === null) {
-        setBotUpdate(`WAIT: Spread ${spread.toFixed(6)} liegt ueber Limit ${selectedSignal.maxSpread.toFixed(6)}.`);
+        setBotUpdate(`WARTEN: Spread ${spread.toFixed(6)} liegt ueber Limit ${selectedSignal.maxSpread.toFixed(6)}.`);
       }
       return;
     }
@@ -671,16 +695,16 @@ export default function TradingCfdPage() {
       }
 
       if (selectedSignal.trendBias === "BUY" && triggerPrice !== null) {
-        setBotUpdate(`FLAT: BUY stop wartet ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+        setBotUpdate(`FLAT: Kauf-Stop wartet ueber ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
         return;
       }
 
       if (selectedSignal.trendBias === "SELL" && triggerPrice !== null) {
-        setBotUpdate(`FLAT: SELL stop wartet unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
+        setBotUpdate(`FLAT: Verkauf-Stop wartet unter ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}.`);
         return;
       }
 
-      setBotUpdate("FLAT: Kein Trendvorteil, daher WAIT.");
+      setBotUpdate("FLAT: Kein Trendvorteil, daher WARTEN.");
       return;
     }
 
@@ -698,19 +722,19 @@ export default function TradingCfdPage() {
 
       if (selectedSignal.ema20 < selectedSignal.ema50) {
         setBotPosition(null);
-        setBotUpdate("EXIT NOW: Trend ist von LONG auf SHORT gekippt.");
+        setBotUpdate("JETZT AUSSTEIGEN: Trend ist von LONG auf SHORT gekippt.");
         return;
       }
 
       if (bid <= nextStop) {
         setBotPosition(null);
-        setBotUpdate(`EXIT NOW: LONG Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        setBotUpdate(`JETZT AUSSTEIGEN: LONG-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
       if (bid >= botPosition.takeProfit) {
         setBotPosition(null);
-        setBotUpdate(`EXIT NOW: LONG Target erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
+        setBotUpdate(`JETZT AUSSTEIGEN: LONG-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, bid)}.`);
         return;
       }
 
@@ -718,7 +742,7 @@ export default function TradingCfdPage() {
         setBotPosition({ ...botPosition, stopLoss: Number(nextStop.toFixed(6)) });
       }
 
-      setBotUpdate(`LONG laeuft. Trailing Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
+      setBotUpdate(`LONG laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
       return;
     }
 
@@ -735,19 +759,19 @@ export default function TradingCfdPage() {
 
     if (selectedSignal.ema20 > selectedSignal.ema50) {
       setBotPosition(null);
-      setBotUpdate("EXIT NOW: Trend ist von SHORT auf LONG gekippt.");
+      setBotUpdate("JETZT AUSSTEIGEN: Trend ist von SHORT auf LONG gekippt.");
       return;
     }
 
     if (ask >= nextStop) {
       setBotPosition(null);
-      setBotUpdate(`EXIT NOW: SHORT Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+      setBotUpdate(`JETZT AUSSTEIGEN: SHORT-Stop getroffen bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
       return;
     }
 
     if (ask <= botPosition.takeProfit) {
       setBotPosition(null);
-      setBotUpdate(`EXIT NOW: SHORT Target erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
+      setBotUpdate(`JETZT AUSSTEIGEN: SHORT-Ziel erreicht bei ${formatInstrumentPrice(selectedSignal.instrument, ask)}.`);
       return;
     }
 
@@ -755,7 +779,7 @@ export default function TradingCfdPage() {
       setBotPosition({ ...botPosition, stopLoss: Number(nextStop.toFixed(6)) });
     }
 
-    setBotUpdate(`SHORT laeuft. Trailing Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
+    setBotUpdate(`SHORT laeuft. Nachgezogener Stop aktiv bei ${formatInstrumentPrice(selectedSignal.instrument, nextStop)}.`);
   }, [botPosition, selectedSignal]);
 
   const botSummary = useMemo<BotSummary | null>(() => {
@@ -768,22 +792,22 @@ export default function TradingCfdPage() {
     if (botPosition?.status === "LONG") {
       return {
         status: "LONG",
-        action: botUpdate.startsWith("EXIT NOW") ? "EXIT" : "BUY",
+        action: botUpdate.startsWith("JETZT AUSSTEIGEN") ? "EXIT" : "BUY",
         entry: `LONG @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
         exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
         update: botUpdate,
-        reason: "LONG aktiv. Exit bei Trendflip, Stop, TP oder Trailing.",
+        reason: "LONG aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
       };
     }
 
     if (botPosition?.status === "SHORT") {
       return {
         status: "SHORT",
-        action: botUpdate.startsWith("EXIT NOW") ? "EXIT" : "SELL",
+        action: botUpdate.startsWith("JETZT AUSSTEIGEN") ? "EXIT" : "SELL",
         entry: `SHORT @ ${formatInstrumentPrice(selectedSignal.instrument, botPosition.entryPrice)}`,
         exitPlan: `SL ${formatInstrumentPrice(selectedSignal.instrument, botPosition.stopLoss)} | TP ${formatInstrumentPrice(selectedSignal.instrument, botPosition.takeProfit)} | Trail ab +1 ATR`,
         update: botUpdate,
-        reason: "SHORT aktiv. Exit bei Trendflip, Stop, TP oder Trailing.",
+        reason: "SHORT aktiv. Ausstieg bei Trendwechsel, Stop, Ziel oder nachgezogenem Stop.",
       };
     }
 
@@ -791,7 +815,7 @@ export default function TradingCfdPage() {
       return {
         status: "FLAT",
         action: "WAIT",
-        entry: `WAIT: Spread ${spread.toFixed(6)} > ${selectedSignal.maxSpread.toFixed(6)}`,
+        entry: `WARTEN: Spread ${spread.toFixed(6)} > ${selectedSignal.maxSpread.toFixed(6)}`,
         exitPlan: `Kein Trade bis Spread <= ${selectedSignal.maxSpread.toFixed(6)}`,
         update: botUpdate,
         reason: "Spread-Filter blockiert Entries.",
@@ -804,8 +828,8 @@ export default function TradingCfdPage() {
         action: selectedSignal.entryMode === "NOW" ? "BUY" : "WAIT",
         entry:
           selectedSignal.entryMode === "NOW"
-            ? `BUY NOW @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.ask ?? selectedSignal.rawPrice)}`
-            : `BUY STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
+            ? `JETZT KAUFEN @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.ask ?? selectedSignal.rawPrice)}`
+            : `KAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
         exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
         update: botUpdate,
         reason: selectedSignal.catalyst,
@@ -818,8 +842,8 @@ export default function TradingCfdPage() {
         action: selectedSignal.entryMode === "NOW" ? "SELL" : "WAIT",
         entry:
           selectedSignal.entryMode === "NOW"
-            ? `SELL NOW @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.bid ?? selectedSignal.rawPrice)}`
-            : `SELL STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
+            ? `JETZT VERKAUFEN @ ${formatInstrumentPrice(selectedSignal.instrument, selectedSignal.bid ?? selectedSignal.rawPrice)}`
+            : `VERKAUF-STOP @ ${formatInstrumentPrice(selectedSignal.instrument, triggerPrice)}`,
         exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
         update: botUpdate,
         reason: selectedSignal.catalyst,
@@ -829,7 +853,7 @@ export default function TradingCfdPage() {
     return {
       status: "FLAT",
       action: "WAIT",
-      entry: "WAIT",
+        entry: "WARTEN",
       exitPlan: `SL ${selectedSignal.stopLoss} | TP ${selectedSignal.takeProfit}`,
       update: botUpdate,
       reason: selectedSignal.catalyst,
@@ -919,13 +943,13 @@ export default function TradingCfdPage() {
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
             <div>
               <div className="text-[11px] uppercase tracking-[0.28em] text-rose-200/80">
-                Trading CFD
+                CFD-Handel
               </div>
               <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-5xl">
-                CFD Signal Desk
+                CFD-Signalzentrale
               </h1>
               <p className="mt-3 max-w-3xl text-sm text-slate-300/80 md:text-base">
-                Serverseitige Signal-Engine mit `EMA20`, `EMA50`, `ATR`, Regime Detection
+                Serverseitige Signal-Engine mit `EMA20`, `EMA50`, `ATR`, Regime-Erkennung
                 und Session-Scoring fuer EUR/USD. Dazu jetzt mit
                 Positionsgroessen-Rechner, Signal-Historie und manuellem Plus500-Journal.
               </p>
@@ -933,19 +957,19 @@ export default function TradingCfdPage() {
 
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-400">Buy Signals</div>
+                <div className="text-slate-400">Kaufsignale</div>
                 <div className="mt-1 text-2xl font-semibold text-emerald-300">{summary.buyCount}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-400">Sell Signals</div>
+                <div className="text-slate-400">Verkaufssignale</div>
                 <div className="mt-1 text-2xl font-semibold text-rose-300">{summary.sellCount}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-400">Wait Setups</div>
+                <div className="text-slate-400">Warte-Setups</div>
                 <div className="mt-1 text-2xl font-semibold text-amber-200">{summary.waitCount}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-400">Avg Confidence</div>
+                <div className="text-slate-400">Durchschn. Vertrauen</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-100">{summary.avgConfidence}%</div>
               </div>
             </div>
@@ -956,27 +980,27 @@ export default function TradingCfdPage() {
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Feed and Execution</div>
-                <h2 className="mt-1 text-xl font-semibold">Manual Plus500 Workflow</h2>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Datenfeed und Ausfuehrung</div>
+                <h2 className="mt-1 text-xl font-semibold">Manueller Plus500-Ablauf</h2>
               </div>
               <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${feedStatusClass(feedStatus)}`}>
-                {feedStatus}
+                {feedStatusLabel(feedStatus)}
               </span>
             </div>
 
             <div className="mt-5 grid gap-3 text-sm">
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Persistence</div>
+                <div className="text-slate-500">Speicherung</div>
                 <div className="mt-1 font-semibold text-slate-100">
-                  {user ? "Supabase synced" : "Login required for history and journal"}
+                  {user ? "Mit Supabase synchronisiert" : "Anmeldung fuer Historie und Journal erforderlich"}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Source</div>
+                <div className="text-slate-500">Quelle</div>
                 <div className="mt-1 font-semibold text-slate-100">{source}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Price Coverage</div>
+                <div className="text-slate-500">Preisabdeckung</div>
                 <div className="mt-1 font-semibold text-slate-100">
                   {signals
                     .map((entry) => `${entry.instrument}: ${entry.priceSource}`)
@@ -984,16 +1008,16 @@ export default function TradingCfdPage() {
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Feed Snapshot</div>
+                <div className="text-slate-500">Feed-Zeitpunkt</div>
                 <div className="mt-1 font-semibold text-slate-100">{formatDateTime(updatedAt)}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Current Session Bias</div>
+                <div className="text-slate-500">Aktueller Session-Bias</div>
                 <div className="mt-1 font-semibold text-slate-100">{sessionBias}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="text-slate-500">Feed Errors</div>
-                <div className="mt-1 text-slate-300">{feedError || "No upstream error reported."}</div>
+                <div className="text-slate-500">Feed-Fehler</div>
+                <div className="mt-1 text-slate-300">{feedError || "Kein Upstream-Fehler gemeldet."}</div>
                 {Object.keys(marketErrors).length > 0 ? (
                   <div className="mt-3 space-y-1 text-xs text-slate-400">
                     {(Object.entries(marketErrors) as Array<[Instrument, string]>).map(
@@ -1010,7 +1034,7 @@ export default function TradingCfdPage() {
 
             <div className="mt-5 grid gap-3 md:grid-cols-2">
               <label className="text-xs text-slate-400">
-                Session Mode
+                Session-Modus
                 <select
                   value={sessionMode}
                   onChange={(event) => setSessionMode(event.target.value as SessionMode)}
@@ -1023,35 +1047,35 @@ export default function TradingCfdPage() {
               </label>
 
               <label className="text-xs text-slate-400">
-                Risk Profile
+                Risikoprofil
                 <select
                   value={riskProfile}
                   onChange={(event) => setRiskProfile(event.target.value as RiskProfile)}
                   className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-rose-500"
                 >
-                  <option value="Conservative">Conservative</option>
-                  <option value="Balanced">Balanced</option>
-                  <option value="Aggressive">Aggressive</option>
+                  <option value="Conservative">Konservativ</option>
+                  <option value="Balanced">Ausgewogen</option>
+                  <option value="Aggressive">Aggressiv</option>
                 </select>
               </label>
             </div>
           </article>
 
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Risk Envelope</div>
-            <h2 className="mt-1 text-xl font-semibold">Execution Parameters</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Risikorahmen</div>
+            <h2 className="mt-1 text-xl font-semibold">Ausfuehrungsparameter</h2>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                <div className="text-slate-500">Risk Per Trade</div>
+                <div className="text-slate-500">Risiko pro Trade</div>
                 <div className="mt-1 text-2xl font-semibold text-rose-200">{profileConfig.maxRiskPerTrade}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                <div className="text-slate-500">Open Signals</div>
+                <div className="text-slate-500">Offene Signale</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-100">{profileConfig.maxOpenSignals}</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                <div className="text-slate-500">Execution Style</div>
+                <div className="text-slate-500">Ausfuehrungsstil</div>
                 <div className="mt-1 text-sm font-semibold text-slate-100">{profileConfig.executionStyle}</div>
               </div>
             </div>
@@ -1061,10 +1085,10 @@ export default function TradingCfdPage() {
         <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signal Board</div>
+              <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signaltafel</div>
               <h2 className="mt-1 text-xl font-semibold">EUR/USD</h2>
             </div>
-            <div className="text-xs text-slate-500">Live stream via Twelve Data WebSocket and `/api/trading/cfd/live`.</div>
+            <div className="text-xs text-slate-500">Live-Stream ueber Twelve-Data-WebSocket und `/api/trading/cfd/live`.</div>
           </div>
 
           <div className="mt-5 grid gap-4 xl:grid-cols-1">
@@ -1076,58 +1100,58 @@ export default function TradingCfdPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                      {signal.symbol === signal.instrument ? "Live Setup" : signal.symbol}
+                      {signal.symbol === signal.instrument ? "Live-Setup" : signal.symbol}
                     </div>
                     <h3 className="mt-1 text-2xl font-semibold">{signal.instrument}</h3>
                     <div className="mt-1 text-sm text-slate-400">
-                      Price {signal.price} <span className="ml-2">{formatPct(signal.changePct)}</span>
+                      Kurs {signal.price} <span className="ml-2">{formatPct(signal.changePct)}</span>
                     </div>
                   </div>
 
                   <div className="flex flex-col items-end gap-2">
                     <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${signalClass(signal.signal)}`}>
-                      {signal.signal}
+                      {signalLabel(signal.signal)}
                     </span>
                     <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${regimeClass(signal.regime)}`}>
                       {signal.regime}
                     </span>
                     <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${riskClass(signal.risk)}`}>
-                      {signal.risk} risk
+                      {riskLabel(signal.risk)}
                     </span>
                   </div>
                 </div>
 
                 <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3 col-span-2">
-                    <div className="text-slate-500">Price Source</div>
+                    <div className="text-slate-500">Preisquelle</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.priceSource}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Trend Bias</div>
+                    <div className="text-slate-500">Trendrichtung</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.trendBias}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Entry Mode</div>
+                    <div className="text-slate-500">Einstiegsmodus</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.entryMode}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Entry Zone</div>
+                    <div className="text-slate-500">Einstieg</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.entryZone}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Trigger Price</div>
+                    <div className="text-slate-500">Trigger-Kurs</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.triggerPrice}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Confidence</div>
+                    <div className="text-slate-500">Vertrauen</div>
                     <div className="mt-1 font-semibold text-slate-100">{signal.confidence}%</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Stop Loss</div>
+                    <div className="text-slate-500">Stop-Loss</div>
                     <div className="mt-1 font-semibold text-rose-200">{signal.stopLoss}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
-                    <div className="text-slate-500">Take Profit</div>
+                    <div className="text-slate-500">Take-Profit</div>
                     <div className="mt-1 font-semibold text-emerald-300">{signal.takeProfit}</div>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
@@ -1153,16 +1177,16 @@ export default function TradingCfdPage() {
                 </div>
 
                 <div className="mt-5 rounded-2xl border border-white/8 bg-black/20 p-4">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Catalyst</div>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Ausloeser</div>
                   <div className="mt-2 text-sm text-slate-200">{signal.catalyst}</div>
-                  <div className="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">Thesis</div>
+                  <div className="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">Einschaetzung</div>
                   <div className="mt-2 text-sm text-slate-300">{signal.thesis}</div>
                 </div>
 
                 <div className="mt-5 space-y-2 rounded-2xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-sm text-slate-200">
-                  <div>Execute on Plus500 as: {signal.plus500ExecutionText}</div>
-                  <div>Spread Check: {signal.maxSpreadNote}</div>
-                  <div>Updated: {formatDateTime(signal.updatedAt)}</div>
+                  <div>In Plus500 ausfuehren als: {signal.plus500ExecutionText}</div>
+                  <div>Spread-Pruefung: {signal.maxSpreadNote}</div>
+                  <div>Preis aktualisiert: {formatDateTime(updatedAt || signal.updatedAt)}</div>
                 </div>
               </article>
             ))}
@@ -1171,8 +1195,8 @@ export default function TradingCfdPage() {
 
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.05fr_0.95fr]">
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Market Intelligence</div>
-            <h2 className="mt-1 text-xl font-semibold">Spread, Volatility, Trend</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Marktbild</div>
+            <h2 className="mt-1 text-xl font-semibold">Spread, Volatilitaet, Trend</h2>
 
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               {intelligencePanel.map((entry) => (
@@ -1183,11 +1207,11 @@ export default function TradingCfdPage() {
                   <div className="font-semibold text-slate-100">{entry.instrument}</div>
                   <div className="mt-3 text-sm text-slate-400">Spread</div>
                   <div className="mt-1 text-sm font-semibold text-slate-100">{entry.spreadLabel}</div>
-                  <div className="mt-3 text-sm text-slate-400">Volatility</div>
+                  <div className="mt-3 text-sm text-slate-400">Volatilitaet</div>
                   <div className="mt-1 text-sm font-semibold text-slate-100">{entry.volatilityLabel}</div>
-                  <div className="mt-3 text-sm text-slate-400">Trend Strength</div>
+                  <div className="mt-3 text-sm text-slate-400">Trendstaerke</div>
                   <div className="mt-1 text-sm font-semibold text-sky-200">{entry.trendStrength}/100</div>
-                  <div className="mt-3 text-sm text-slate-400">Liquidity</div>
+                  <div className="mt-3 text-sm text-slate-400">Liquiditaet</div>
                   <div className="mt-1 text-sm font-semibold text-slate-100">{entry.liquidityQuality}</div>
                 </div>
               ))}
@@ -1195,8 +1219,8 @@ export default function TradingCfdPage() {
           </article>
 
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Volatility Scanner</div>
-            <h2 className="mt-1 text-xl font-semibold">Fastest Moving Markets</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Volatilitaets-Scanner</div>
+            <h2 className="mt-1 text-xl font-semibold">Schnellste Maerkte</h2>
 
             <div className="mt-5 space-y-3">
               {volatilityScanner.map((entry) => (
@@ -1222,11 +1246,11 @@ export default function TradingCfdPage() {
         <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Breakout Detector</div>
-              <h2 className="mt-1 text-xl font-semibold">Trend Expansion Candidates</h2>
+              <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Breakout-Detektor</div>
+              <h2 className="mt-1 text-xl font-semibold">Kandidaten fuer Trendexpansion</h2>
             </div>
             <div className="text-xs text-slate-500">
-              Confidence &gt;= 70, Trend-Regime, rising activity
+              Vertrauen &gt;= 70, Trend-Regime, steigende Aktivitaet
             </div>
           </div>
 
@@ -1243,15 +1267,15 @@ export default function TradingCfdPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-semibold text-slate-100">
-                      {signal.instrument} {signal.signal}
+                      {signal.instrument} {signalLabel(signal.signal)}
                     </div>
-                    <div className="text-slate-400">{signal.confidence}% confidence</div>
+                    <div className="text-slate-400">{signal.confidence}% Vertrauen</div>
                   </div>
                   <div className="mt-2 text-slate-300">
                     Regime {signal.regime} | Momentum {formatPct(signal.momentumPct)} | ATR {signal.atr}
                   </div>
                   <div className="mt-2 text-slate-300">
-                    Execute on Plus500 as: {signal.plus500ExecutionText}
+                    In Plus500 ausfuehren als: {signal.plus500ExecutionText}
                   </div>
                 </div>
               ))
@@ -1263,34 +1287,34 @@ export default function TradingCfdPage() {
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Bot State</div>
-                <h2 className="mt-1 text-xl font-semibold">Entry / Exit Engine</h2>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Bot-Status</div>
+                <h2 className="mt-1 text-xl font-semibold">Einstiegs- / Ausstiegslogik</h2>
               </div>
               <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${signalClass(botSummary?.action === "EXIT" ? "WAIT" : botSummary?.action === "SELL" ? "SELL" : botSummary?.action === "BUY" ? "BUY" : "WAIT")}`}>
-                {botSummary?.status || "FLAT"}
+                {positionStateLabel(botSummary?.status || "FLAT")}
               </span>
             </div>
 
             {botSummary && (
               <div className="mt-5 grid gap-3">
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-slate-500">Action</div>
-                  <div className="mt-1 text-xl font-semibold text-slate-100">{botSummary.action}</div>
+                  <div className="text-slate-500">Aktion</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-100">{botActionLabel(botSummary.action)}</div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-slate-500">Entry</div>
+                  <div className="text-slate-500">Einstieg</div>
                   <div className="mt-1 font-semibold text-slate-100">{botSummary.entry}</div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-slate-500">Exit Plan</div>
+                  <div className="text-slate-500">Ausstiegsplan</div>
                   <div className="mt-1 font-semibold text-slate-100">{botSummary.exitPlan}</div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-slate-500">Update</div>
+                  <div className="text-slate-500">Aktualisierung</div>
                   <div className="mt-1 text-slate-200">{botSummary.update}</div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <div className="text-slate-500">Reason</div>
+                  <div className="text-slate-500">Begruendung</div>
                   <div className="mt-1 text-slate-300">{botSummary.reason}</div>
                 </div>
               </div>
@@ -1300,10 +1324,10 @@ export default function TradingCfdPage() {
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Risk Calculator</div>
-                <h2 className="mt-1 text-xl font-semibold">Position Sizing</h2>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Risikorechner</div>
+                <h2 className="mt-1 text-xl font-semibold">Positionsgroesse</h2>
               </div>
-              <span className="text-xs text-slate-500">Kontobasiert und signalabhängig</span>
+              <span className="text-xs text-slate-500">Kontobasiert und signalabhaengig</span>
             </div>
 
             <div className="mt-5 grid gap-3 md:grid-cols-2">
@@ -1323,7 +1347,7 @@ export default function TradingCfdPage() {
               </label>
 
               <label className="text-xs text-slate-400">
-                Account Size USD
+                Kontogroesse in USD
                 <input
                   type="number"
                   step="100"
@@ -1334,7 +1358,7 @@ export default function TradingCfdPage() {
               </label>
 
               <label className="text-xs text-slate-400">
-                Risk %
+                Risiko in %
                 <input
                   type="number"
                   step="0.1"
@@ -1354,19 +1378,19 @@ export default function TradingCfdPage() {
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                  <div className="text-slate-500">Risk Capital</div>
+                  <div className="text-slate-500">Risikokapital</div>
                   <div className="mt-1 text-xl font-semibold text-rose-200">
                     {riskModel ? formatUsd(riskModel.riskCapital) : "-"}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                  <div className="text-slate-500">Stop Distance</div>
+                  <div className="text-slate-500">Stop-Abstand</div>
                   <div className="mt-1 text-xl font-semibold text-slate-100">
                     {riskModel?.stopDistance ? riskModel.stopDistance.toFixed(4) : "-"}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                  <div className="text-slate-500">Position Size</div>
+                  <div className="text-slate-500">Positionsgroesse</div>
                   <div className="mt-1 text-xl font-semibold text-emerald-300">
                     {riskModel?.positionSize ? riskModel.positionSize.toFixed(2) : "-"}
                   </div>
@@ -1375,7 +1399,7 @@ export default function TradingCfdPage() {
             )}
 
             <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">
-              Exposure: {riskModel?.notionalExposure ? formatUsd(riskModel.notionalExposure) : "nicht berechenbar"}.
+              Exponierung: {riskModel?.notionalExposure ? formatUsd(riskModel.notionalExposure) : "nicht berechenbar"}.
               Wenn kein numerischer Stop vorliegt, bleibt der Rechner bewusst konservativ.
             </div>
           </article>
@@ -1384,9 +1408,9 @@ export default function TradingCfdPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Journal</div>
-                <h2 className="mt-1 text-xl font-semibold">Manual Plus500 Entries</h2>
+                <h2 className="mt-1 text-xl font-semibold">Manuelle Plus500-Eintraege</h2>
               </div>
-              <span className="text-xs text-slate-500">Persistiert in Supabase</span>
+              <span className="text-xs text-slate-500">In Supabase gespeichert</span>
             </div>
 
             {selectedSignal && (
@@ -1401,13 +1425,13 @@ export default function TradingCfdPage() {
                     onChange={(event) => setJournalStatus(event.target.value as JournalStatus)}
                     className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-rose-500"
                   >
-                    <option value="planned">planned</option>
-                    <option value="executed">executed</option>
-                    <option value="closed">closed</option>
+                    <option value="planned">{journalStatusLabel("planned")}</option>
+                    <option value="executed">{journalStatusLabel("executed")}</option>
+                    <option value="closed">{journalStatusLabel("closed")}</option>
                   </select>
                 </label>
                 <label className="text-xs text-slate-400">
-                  Notes
+                  Notizen
                   <textarea
                     value={journalNotes}
                     onChange={(event) => setJournalNotes(event.target.value)}
@@ -1421,7 +1445,7 @@ export default function TradingCfdPage() {
                   disabled={!user}
                   className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500"
                 >
-                  Save Journal Entry
+                  Journaleintrag speichern
                 </button>
                 {!user && (
                   <div className="text-xs text-amber-200">
@@ -1435,18 +1459,18 @@ export default function TradingCfdPage() {
 
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signal History</div>
-            <h2 className="mt-1 text-xl font-semibold">Recent Signal Changes</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signal-Historie</div>
+            <h2 className="mt-1 text-xl font-semibold">Letzte Signalwechsel</h2>
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
               <table className="min-w-full text-sm">
                 <thead className="bg-white/5 text-left text-slate-400">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Time</th>
+                    <th className="px-4 py-3 font-medium">Zeit</th>
                     <th className="px-4 py-3 font-medium">Instrument</th>
                     <th className="px-4 py-3 font-medium">Signal</th>
                     <th className="px-4 py-3 font-medium">Regime</th>
-                    <th className="px-4 py-3 font-medium">Confidence</th>
+                    <th className="px-4 py-3 font-medium">Vertrauen</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1473,14 +1497,14 @@ export default function TradingCfdPage() {
           </article>
 
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Trade Journal</div>
-            <h2 className="mt-1 text-xl font-semibold">Manual Execution Log</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Trade-Journal</div>
+            <h2 className="mt-1 text-xl font-semibold">Manuelles Ausfuehrungsprotokoll</h2>
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
               <table className="min-w-full text-sm">
                 <thead className="bg-white/5 text-left text-slate-400">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Time</th>
+                    <th className="px-4 py-3 font-medium">Zeit</th>
                     <th className="px-4 py-3 font-medium">Instrument</th>
                     <th className="px-4 py-3 font-medium">Signal</th>
                     <th className="px-4 py-3 font-medium">Status</th>
@@ -1500,9 +1524,9 @@ export default function TradingCfdPage() {
                         <td className="px-4 py-3 text-slate-400">{formatDateTime(entry.createdAt)}</td>
                         <td className="px-4 py-3">{entry.instrument}</td>
                         <td className="px-4 py-3">{entry.signal}</td>
-                        <td className="px-4 py-3">{entry.status}</td>
+                        <td className="px-4 py-3">{journalStatusLabel(entry.status)}</td>
                         <td className="px-4 py-3">
-                          <div>Entry {entry.entry}</div>
+                          <div>Einstieg {entry.entry}</div>
                           <div className="text-xs text-slate-500">
                             SL {entry.stopLoss} / TP {entry.takeProfit}
                             {entry.notes ? ` / ${entry.notes}` : ""}
@@ -1519,23 +1543,23 @@ export default function TradingCfdPage() {
 
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr]">
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Alerts</div>
-            <h2 className="mt-1 text-xl font-semibold">Actionable Signals</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Hinweise</div>
+            <h2 className="mt-1 text-xl font-semibold">Handelbare Signale</h2>
 
             <div className="mt-5 space-y-3 text-sm text-slate-300">
               {actionableSignals.length === 0 ? (
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  Keine frischen BUY- oder SELL-Signale. Das System sieht aktuell kein A-Setup.
+                  Keine frischen Kauf- oder Verkaufssignale. Das System sieht aktuell kein A-Setup.
                 </div>
               ) : (
                 actionableSignals.map((signal) => (
                   <div key={signal.instrument} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="font-semibold text-slate-100">{signal.instrument} {signal.signal}</div>
-                      <div className="text-xs text-slate-500">{signal.confidence}% confidence</div>
+                      <div className="text-xs text-slate-500">{signal.confidence}% Vertrauen</div>
                     </div>
                     <div className="mt-1 text-slate-300">
-                      {signal.plus500ExecutionText} | Entry {signal.entryZone} | Stop {signal.stopLoss} | TP {signal.takeProfit}
+                      {signal.plus500ExecutionText} | Einstieg {signal.entryZone} | Stop {signal.stopLoss} | TP {signal.takeProfit}
                     </div>
                   </div>
                 ))
@@ -1544,20 +1568,20 @@ export default function TradingCfdPage() {
           </article>
 
           <article className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Trading Rules</div>
-            <h2 className="mt-1 text-xl font-semibold">What The Engine Does</h2>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Handelsregeln</div>
+            <h2 className="mt-1 text-xl font-semibold">Was die Engine macht</h2>
 
             <div className="mt-5 grid gap-3 text-sm">
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="font-semibold text-slate-100">Regime Detection</div>
-                <div className="mt-1 text-slate-300">EMA20 vs EMA50 plus ATR entscheiden, ob Trend oder Range vorliegt.</div>
+                <div className="font-semibold text-slate-100">Regime-Erkennung</div>
+                <div className="mt-1 text-slate-300">EMA20 vs EMA50 plus ATR entscheiden, ob Trend oder Seitwaertsphase vorliegt.</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="font-semibold text-slate-100">Setup Generator</div>
-                <div className="mt-1 text-slate-300">Entry Zone, Stop Loss und Take Profit werden live aus ATR und Trendfilter berechnet.</div>
+                <div className="font-semibold text-slate-100">Setup-Generator</div>
+                <div className="mt-1 text-slate-300">Einstieg, Stop-Loss und Take-Profit werden live aus ATR und Trendfilter berechnet.</div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <div className="font-semibold text-slate-100">Persistence</div>
+                <div className="font-semibold text-slate-100">Speicherung</div>
                 <div className="mt-1 text-slate-300">Signal-Historie und manuelles Journal werden lokal im Browser gespeichert.</div>
               </div>
             </div>
