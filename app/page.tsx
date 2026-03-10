@@ -339,6 +339,12 @@ function toNullableDateOrTimestamp(value?: string) {
   return value;
 }
 
+function hasStoredDocumentFile(doc: Pick<Doc, "cid" | "url">): boolean {
+  const cid = typeof doc.cid === "string" ? doc.cid.trim() : "";
+  const url = typeof doc.url === "string" ? doc.url.trim() : "";
+  return cid.length > 0 || url.length > 0;
+}
+
 function extractMissingColumnName(errorMessage: string): string | null {
   const patterns = [
     /column\s+"?([a-zA-Z0-9_]+)"?\s+of relation\s+"?[a-zA-Z0-9_]+"?\s+does not exist/i,
@@ -1867,11 +1873,6 @@ export default function MedSafePage() {
       setMessage("Bitte eine Datei auswählen.");
       return;
     }
-    if (!docPurpose.trim()) {
-      setMessage("Bitte das Ziel/Zweck des Dokuments angeben.");
-      return;
-    }
-
     setIsUploading(true);
     setMessage("Upload läuft …");
 
@@ -2315,8 +2316,13 @@ export default function MedSafePage() {
   const docsForDevice = selectedDeviceId
     ? (() => {
         const device = devices.find((d) => d.id === selectedDeviceId);
-        if (!device) return docs.filter((d) => d.deviceId === selectedDeviceId);
+        if (!device) {
+          return docs.filter(
+            (d) => d.deviceId === selectedDeviceId && hasStoredDocumentFile(d)
+          );
+        }
         return docs.filter((d) => {
+          if (!hasStoredDocumentFile(d)) return false;
           if (d.deviceId === selectedDeviceId) return true;
           if (d.assignmentScope === "batch" && d.assignedBatch && d.assignedBatch === device.batch) {
             return true;
@@ -2440,6 +2446,7 @@ export default function MedSafePage() {
   }, [autoUdiPreview.udiDi, autoUdiPreview.serial]);
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => {
+        if (!hasStoredDocumentFile(d)) return false;
         if (d.deviceId === selectedDevice.id) return true;
         if (d.assignmentScope === "batch" && d.assignedBatch && d.assignedBatch === selectedDevice.batch) {
           return true;
@@ -2477,7 +2484,7 @@ export default function MedSafePage() {
 
 
   const totalDevices = devices.length;
-  const totalDocs = docs.length;
+  const totalDocs = docs.filter((d) => hasStoredDocumentFile(d)).length;
   const totalArchived = devices.filter((d) => d.isArchived).length;
 
   type DeviceGroup = {

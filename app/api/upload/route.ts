@@ -77,8 +77,10 @@ export async function POST(req: Request) {
     );
   } catch (err) {
     console.error("Upload-Fehler:", err);
+    const detail =
+      err instanceof Error ? err.message : "Unerwarteter Fehler beim Upload";
     return NextResponse.json(
-      { error: "Unerwarteter Fehler beim Upload" },
+      { error: detail },
       { status: 500 }
     );
   }
