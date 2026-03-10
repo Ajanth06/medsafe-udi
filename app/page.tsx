@@ -97,6 +97,38 @@ const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
   recall: "Recall (Rückruf)",
 };
 
+const REQUIRED_DOC_PATTERNS = [
+  {
+    key: "doc",
+    label: "Declaration of Conformity",
+    patterns: ["konformität", "declaration of conformity", "doc"],
+  },
+  {
+    key: "ifu",
+    label: "IFU / Gebrauchsanweisung",
+    patterns: ["ifu", "gebrauchsanweisung", "instruction for use"],
+  },
+  {
+    key: "risk",
+    label: "Risikoanalyse",
+    patterns: ["risikoanalyse", "risk analysis", "fmea"],
+  },
+  {
+    key: "test",
+    label: "EMC / Prüfbericht",
+    patterns: ["emc", "prüfbericht", "testbericht", "iq/oq/pq"],
+  },
+] as const;
+
+type AiInsight = {
+  deviceType: string;
+  riskSignals: string[];
+  missingDocs: string[];
+  recommendation: string;
+  complianceScore: number;
+  documentStatus: string;
+};
+
 // ---------- HELFER ----------
 
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
@@ -227,6 +259,99 @@ function copyToClipboard(value: string) {
   textarea.select();
   document.execCommand("copy");
   document.body.removeChild(textarea);
+}
+
+function inferDeviceType(productName: string): string {
+  const n = productName.toLowerCase();
+  if (n.includes("freez") || n.includes("kühl") || n.includes("cool")) return "Kühl-/Thermogerät";
+  if (n.includes("pump") || n.includes("infus")) return "Pumpensystem";
+  if (n.includes("monitor") || n.includes("sensor")) return "Monitoringgerät";
+  if (n.includes("software") || n.includes("app")) return "Software as Medical Device";
+  return "Allgemeines Medizinprodukt";
+}
+
+function buildIntendedUseDraft(productName: string, deviceType: string): string {
+  if (!productName.trim()) return "";
+  return `${productName.trim()} ist ein ${deviceType}, vorgesehen zur sicheren Anwendung im klinischen Umfeld gemäß Zweckbestimmung und gültigen MDR-/QMS-Anforderungen.`;
+}
+
+function findMissingRequiredDocs(deviceDocs: Doc[]): string[] {
+  const normalized = deviceDocs
+    .map((d) => `${d.name || ""} ${d.category || ""}`.toLowerCase())
+    .join(" ");
+
+  return REQUIRED_DOC_PATTERNS.filter((req) =>
+    !req.patterns.some((pattern) => normalized.includes(pattern))
+  ).map((req) => req.label);
+}
+
+function getDeviceValidationWarnings(device: Device, allDevices: Device[]): string[] {
+  const warnings: string[] = [];
+
+  if (device.udiDi && !/^TH-DI-\d{6}$/.test(device.udiDi)) {
+    warnings.push("UDI-DI-Struktur ist ungewöhnlich.");
+  }
+
+  if (device.serial && !/^TH-SN-\d{6}-\d{3}$/.test(device.serial)) {
+    warnings.push("Seriennummer-Struktur ist ungewöhnlich.");
+  }
+
+  const duplicateSerial = allDevices.filter((d) => d.serial === device.serial);
+  if (device.serial && duplicateSerial.length > 1) {
+    warnings.push("Doppelte Seriennummer erkannt.");
+  }
+
+  if (device.batch && !/^\d{6}$/.test(device.batch)) {
+    warnings.push("Charge-Format ist ungewöhnlich.");
+  }
+
+  return warnings;
+}
+
+function computeDeviceComplianceScore(device: Device, deviceDocs: Doc[]): number {
+  let score = 100;
+  const missingDocs = findMissingRequiredDocs(deviceDocs);
+
+  if (!device.riskClass?.trim()) score -= 12;
+  if (!device.intendedPurpose?.trim()) score -= 10;
+  if (!device.udiPi?.trim()) score -= 8;
+  if (!device.validationStatus?.trim()) score -= 6;
+  score -= missingDocs.length * 8;
+
+  if (device.status === "blocked") score -= 10;
+  if (device.status === "recall") score -= 18;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function buildAiInsightDraft(
+  productName: string,
+  riskClass: string,
+  quantity: number,
+  deviceDocs: Doc[]
+): AiInsight {
+  const deviceType = inferDeviceType(productName);
+  const missingDocs = findMissingRequiredDocs(deviceDocs);
+  const riskSignals: string[] = [];
+
+  if (!riskClass) riskSignals.push("Risikoklasse fehlt");
+  if (riskClass === "IIb" || riskClass === "III") riskSignals.push("Erhöhte regulatorische Anforderungen");
+  if (quantity > 50) riskSignals.push("Große Charge benötigt enges Monitoring");
+  if (missingDocs.length > 0) riskSignals.push("Dokumentlücken erkannt");
+
+  const score = Math.max(0, Math.min(100, 92 - missingDocs.length * 8 - (riskSignals.length > 2 ? 8 : 0)));
+
+  return {
+    deviceType,
+    riskSignals,
+    missingDocs,
+    recommendation:
+      missingDocs.length > 0
+        ? "Empfohlene Risikoanalyse starten und fehlende Dokumente ergänzen."
+        : "FMEA-Draft erzeugen und Validierungsstatus pflegen.",
+    complianceScore: score,
+    documentStatus: missingDocs.length ? "Unvollständig" : "Vollständig",
+  };
 }
 
 // ---------- Mapping DB <-> UI ----------
@@ -404,6 +529,9 @@ export default function MedSafePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [udiPiSearch, setUdiPiSearch] = useState("");
   const [isGroupPinned, setIsGroupPinned] = useState(false);
+  const [aiFmeaDraft, setAiFmeaDraft] = useState<string | null>(null);
+  const [aiDeviceSummary, setAiDeviceSummary] = useState<string | null>(null);
+  const [aiAuditReport, setAiAuditReport] = useState<string | null>(null);
 
   // ---------- AUTH ----------
 
@@ -573,6 +701,10 @@ export default function MedSafePage() {
     const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
     const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
+    const intendedUseDraft = buildIntendedUseDraft(
+      newProductName.trim(),
+      inferDeviceType(newProductName)
+    );
 
     const newDevices: Device[] = [];
 
@@ -601,7 +733,7 @@ export default function MedSafePage() {
         riskClass: newRiskClass,
         mdrClass: "",
         mdrRule: "",
-        intendedPurpose: "",
+        intendedPurpose: intendedUseDraft,
         internalRiskLevel: "",
         blockComment: "",
         responsible: "",
@@ -678,6 +810,76 @@ export default function MedSafePage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
     setFile(f);
+  };
+
+  const handleGenerateFmeaDraft = () => {
+    if (!newProductName.trim()) {
+      setMessage("Bitte zuerst einen Produktnamen eingeben.");
+      return;
+    }
+
+    const deviceType = inferDeviceType(newProductName);
+    const risk = newRiskClass || "nicht gesetzt";
+    const draft = [
+      `FMEA Draft für ${newProductName.trim()} (${deviceType}, Klasse ${risk})`,
+      "",
+      "1) Failure Mode: Leistungsverlust / Funktionsausfall",
+      "   Ursache: Komponentendrift, Verschleiß, Softwarefehler",
+      "   Maßnahme: Eingangstest + Burn-In + Inprozess-Monitoring",
+      "",
+      "2) Failure Mode: Falsche Anzeige / Bedienfehler",
+      "   Ursache: UI-Unklarheit, Kalibrierabweichung",
+      "   Maßnahme: IFU-Update, Usability-Test, Plausibilitätsprüfungen",
+      "",
+      "3) Failure Mode: Dokumentationslücke",
+      "   Ursache: Fehlende Freigabe / fehlende Pflichtdokumente",
+      "   Maßnahme: CAPA-Task, Dokumentenlenkung, QA-Review",
+    ].join("\n");
+
+    setAiFmeaDraft(draft);
+  };
+
+  const handleGenerateDeviceSummary = () => {
+    if (!selectedDevice) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
+    }
+    const summary = [
+      `Device Summary: ${selectedDevice.name}`,
+      `Zweckbestimmung: ${selectedDevice.intendedPurpose || "Nicht gepflegt"}`,
+      `Risikoübersicht: Klasse ${selectedDevice.riskClass || "–"}, Status ${
+        DEVICE_STATUS_LABELS[selectedDevice.status]
+      }`,
+      `Dokumentstatus: ${
+        selectedMissingDocs.length
+          ? `Unvollständig (${selectedMissingDocs.join(", ")})`
+          : "Vollständig"
+      }`,
+      `Compliance Score: ${selectedComplianceScore ?? 0}%`,
+    ].join("\n");
+    setAiDeviceSummary(summary);
+  };
+
+  const handlePrepareAuditReport = () => {
+    const scopeDevices = selectedDevice
+      ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
+      : devices;
+    const scopeIds = new Set(scopeDevices.map((d) => d.id));
+    const scopeDocs = docs.filter((d) => scopeIds.has(d.deviceId));
+    const scopeAudit = audit.filter((a) => !a.deviceId || scopeIds.has(a.deviceId));
+
+    const report = [
+      "Audit Preparation Report",
+      `Erstellt am: ${new Date().toLocaleString()}`,
+      `Geräte im Scope: ${scopeDevices.length}`,
+      `Dokumente im Scope: ${scopeDocs.length}`,
+      `Risiko-/Recall-Fälle: ${
+        scopeDevices.filter((d) => d.status === "blocked" || d.status === "recall").length
+      }`,
+      `Änderungen/Aktivitäten: ${scopeAudit.length}`,
+    ].join("\n");
+
+    setAiAuditReport(report);
   };
 
   const handleUploadDoc = async () => {
@@ -1068,10 +1270,42 @@ export default function MedSafePage() {
     ? audit.filter((a) => a.deviceId === selectedDeviceId)
     : audit;
 
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const aiSearchMode = (() => {
+    if (!normalizedSearchTerm) return "default" as const;
+    if (
+      normalizedSearchTerm.includes("ohne risikoanalyse") ||
+      normalizedSearchTerm.includes("without risk analysis")
+    ) {
+      return "without-risk-analysis" as const;
+    }
+    if (
+      normalizedSearchTerm.includes("fehlende dokumente") ||
+      normalizedSearchTerm.includes("mit fehlenden dokumenten") ||
+      normalizedSearchTerm.includes("missing document")
+    ) {
+      return "missing-docs" as const;
+    }
+    return "default" as const;
+  })();
+
   const filteredDevices = devices.filter((device) => {
     if (device.isArchived) return false;
-    if (!searchTerm.trim()) return true;
-    const needle = searchTerm.toLowerCase();
+    if (!normalizedSearchTerm) return true;
+
+    if (aiSearchMode === "without-risk-analysis") {
+      const docsForCurrent = docs.filter((d) => d.deviceId === device.id);
+      const hasRiskDocument = docsForCurrent.some((d) =>
+        `${d.name || ""} ${d.category || ""}`.toLowerCase().includes("risiko")
+      );
+      return !hasRiskDocument;
+    }
+
+    if (aiSearchMode === "missing-docs") {
+      const docsForCurrent = docs.filter((d) => d.deviceId === device.id);
+      return findMissingRequiredDocs(docsForCurrent).length > 0;
+    }
+
     const haystack = [
       device.name,
       device.serial,
@@ -1089,11 +1323,29 @@ export default function MedSafePage() {
       .join(" ")
       .toLowerCase();
 
-    return haystack.includes(needle);
+    return haystack.includes(normalizedSearchTerm);
   });
 
   const selectedDevice = selectedDeviceId
     ? devices.find((d) => d.id === selectedDeviceId) || null
+    : null;
+
+  const aiIntendedUseDraft = buildIntendedUseDraft(
+    newProductName,
+    inferDeviceType(newProductName)
+  );
+  const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
+  const selectedDeviceDocs = selectedDevice
+    ? docs.filter((d) => d.deviceId === selectedDevice.id)
+    : [];
+  const selectedMissingDocs = selectedDevice
+    ? findMissingRequiredDocs(selectedDeviceDocs)
+    : [];
+  const selectedValidationWarnings = selectedDevice
+    ? getDeviceValidationWarnings(selectedDevice, devices)
+    : [];
+  const selectedComplianceScore = selectedDevice
+    ? computeDeviceComplianceScore(selectedDevice, selectedDeviceDocs)
     : null;
 
 
@@ -1133,6 +1385,21 @@ export default function MedSafePage() {
     ? devices.filter(
         (d) => d.isArchived && d.name === selectedDevice.name && d.batch === selectedDevice.batch
       )
+    : [];
+  const recallSignals = selectedDevice
+    ? (() => {
+        const sameBatch = devices.filter((d) => d.batch === selectedDevice.batch);
+        const recallCount = sameBatch.filter((d) => d.status === "recall").length;
+        const blockedCount = sameBatch.filter((d) => d.status === "blocked").length;
+        const serviceIssues = sameBatch.filter((d) =>
+          (d.serviceNotes || "").toLowerCase().includes("fehler")
+        ).length;
+        const signals: string[] = [];
+        if (recallCount >= 2) signals.push("Mehrere Recall-Fälle in derselben Charge");
+        if (blockedCount >= 2) signals.push("Gehäufte Quarantänefälle erkannt");
+        if (serviceIssues >= 2) signals.push("Mehrere Service-Fehlermeldungen in der Charge");
+        return signals;
+      })()
     : [];
 
   const handleTogglePinnedGroup = () => {
@@ -1396,12 +1663,55 @@ if (!user) {
           </div>
 
 
-          <button
-            onClick={handleSaveDevice}
-            className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
-          >
-            Geräte speichern
-          </button>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+            <div className="xl:col-span-2 flex flex-wrap gap-2">
+              <button
+                onClick={handleSaveDevice}
+                className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+              >
+                Geräte speichern
+              </button>
+              <button
+                onClick={handleGenerateFmeaDraft}
+                className="mt-2 inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
+              >
+                Generate FMEA Draft
+              </button>
+            </div>
+            <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 px-4 py-3 text-xs space-y-2">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200">
+                AI Device Insight
+              </div>
+              <div>Gerätetyp: <span className="text-sky-100">{aiInsight.deviceType}</span></div>
+              <div>Dokumentstatus: <span className="text-sky-100">{aiInsight.documentStatus}</span></div>
+              <div>Compliance Status: <span className="font-semibold text-emerald-300">{aiInsight.complianceScore}%</span></div>
+              <div>
+                Risiken:{" "}
+                {aiInsight.riskSignals.length
+                  ? aiInsight.riskSignals.join(", ")
+                  : "Keine auffälligen Signale"}
+              </div>
+              <div className="text-amber-200">{aiInsight.recommendation}</div>
+            </div>
+          </div>
+
+          {aiIntendedUseDraft && (
+            <div className="rounded-xl border border-violet-500/30 bg-violet-950/25 px-4 py-3 text-xs">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200 mb-1">
+                Auto Intended Use (Draft)
+              </div>
+              <div className="text-slate-200">{aiIntendedUseDraft}</div>
+            </div>
+          )}
+
+          {aiFmeaDraft && (
+            <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/25 px-4 py-3 text-xs whitespace-pre-wrap">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200 mb-1">
+                AI FMEA Draft
+              </div>
+              {aiFmeaDraft}
+            </div>
+          )}
         </section>
 
         {/* Aktive Gruppen */}
@@ -1434,6 +1744,15 @@ if (!user) {
             </div>
           </div>
 
+          {aiSearchMode !== "default" && (
+            <div className="rounded-lg border border-indigo-500/40 bg-indigo-950/30 px-3 py-2 text-xs text-indigo-200">
+              Intelligente Suche aktiv:{" "}
+              {aiSearchMode === "without-risk-analysis"
+                ? "zeige Geräte ohne Risikoanalyse"
+                : "zeige Geräte mit fehlenden Dokumenten"}
+            </div>
+          )}
+
           {devices.length === 0 ? (
             <p className="text-sm text-slate-400">Noch keine Geräte angelegt.</p>
           ) : groupedDevices.length === 0 ? (
@@ -1464,6 +1783,8 @@ if (!user) {
                 const hasRiskStatus = devicesOfGroup.some(
                   (d) => d.status === "blocked" || d.status === "recall"
                 );
+                const representativeDocs = docs.filter((doc) => doc.deviceId === device.id);
+                const complianceScore = computeDeviceComplianceScore(device, representativeDocs);
 
                 const statusClass =
                   statusLabel === "Gemischter Status"
@@ -1511,6 +1832,9 @@ if (!user) {
                       </div>
                       <div className="text-xs text-slate-500 mt-1 break-all">
                         UDI-DI: {device.udiDi}
+                      </div>
+                      <div className="mt-2 inline-flex rounded-full border border-emerald-500/40 bg-emerald-900/20 px-2 py-0.5 text-[10px] text-emerald-200">
+                        Device Compliance Score: {complianceScore}%
                       </div>
                       {device.udiPi && (
                         <div className="text-xs text-slate-300 mt-1 break-all">
@@ -1921,6 +2245,18 @@ if (!user) {
                 >
                   DHR als JSON exportieren
                 </button>
+                <button
+                  onClick={handleGenerateDeviceSummary}
+                  className="text-xs md:text-sm rounded-lg border border-cyan-500/60 px-3 py-2 bg-cyan-900/30 hover:bg-cyan-800/40"
+                >
+                  Generate Device Summary
+                </button>
+                <button
+                  onClick={handlePrepareAuditReport}
+                  className="text-xs md:text-sm rounded-lg border border-indigo-500/60 px-3 py-2 bg-indigo-900/30 hover:bg-indigo-800/40"
+                >
+                  Prepare Audit Report
+                </button>
               </div>
             )}
           </div>
@@ -1932,6 +2268,54 @@ if (!user) {
             </p>
           ) : (
             <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-4 py-3 text-xs">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200 mb-1">
+                    Device Health Score
+                  </div>
+                  <div className="text-2xl font-semibold text-emerald-300">
+                    {selectedComplianceScore ?? 0}%
+                  </div>
+                  {selectedMissingDocs.length > 0 && (
+                    <div className="mt-1 text-amber-200">
+                      Fehlt: {selectedMissingDocs.join(", ")}
+                    </div>
+                  )}
+                </div>
+                {recallSignals.length > 0 ? (
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-xs">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-rose-200 mb-1">
+                      AI Risk Warning
+                    </div>
+                    <div className="text-rose-100">
+                      Diese Charge könnte ein erhöhtes Ausfallrisiko haben.
+                    </div>
+                    <ul className="mt-1 list-disc pl-4 text-rose-200/90">
+                      {recallSignals.map((signal) => (
+                        <li key={signal}>{signal}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs text-slate-300">
+                    AI Risk Warning: Keine auffällige Recall-Häufung in der Charge erkannt.
+                  </div>
+                )}
+              </div>
+
+              {selectedValidationWarnings.length > 0 && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
+                  <div className="text-[11px] uppercase tracking-[0.18em] mb-1">
+                    KI-Fehlererkennung
+                  </div>
+                  <ul className="list-disc pl-4">
+                    {selectedValidationWarnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3 text-sm">
                 <div>
                   <div className="text-slate-400 text-xs">Produktname</div>
@@ -2091,6 +2475,27 @@ if (!user) {
                   </div>
                 </div>
               </div>
+
+              {(aiDeviceSummary || aiAuditReport) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {aiDeviceSummary && (
+                    <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 px-4 py-3 whitespace-pre-wrap">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200 mb-1">
+                        AI Device Summary
+                      </div>
+                      {aiDeviceSummary}
+                    </div>
+                  )}
+                  {aiAuditReport && (
+                    <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 px-4 py-3 whitespace-pre-wrap">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-200 mb-1">
+                        Audit Preparation
+                      </div>
+                      {aiAuditReport}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -2112,6 +2517,22 @@ if (!user) {
               Bitte oben ein Gerät wählen – dann siehst du hier die verknüpften
               Dokumente.
             </p>
+          )}
+
+          {selectedDevice && selectedMissingDocs.length > 0 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
+              <div className="text-[11px] uppercase tracking-[0.18em] mb-1">
+                AI Compliance Alert
+              </div>
+              <div>
+                Für dieses Gerät fehlen wahrscheinlich folgende Dokumente:
+              </div>
+              <ul className="list-disc pl-4 mt-1">
+                {selectedMissingDocs.map((missing) => (
+                  <li key={missing}>{missing}</li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
