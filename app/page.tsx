@@ -2490,19 +2490,6 @@ export default function MedSafePage() {
   const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
   const activeAiInsight = aiInsightServer ?? aiInsight;
   const activeIntendedUseDraft = intendedUseDraftText || aiIntendedUseServer || "";
-  const autoUdiPreview = useMemo(() => {
-    const now = new Date();
-    const productionDate = formatDateYYMMDD(now);
-    const batch = productionDate;
-    const devicesSameBatch = devices.filter((d) => d.batch === batch);
-    const serialRunningNumber = String(devicesSameBatch.length + 1).padStart(3, "0");
-    const deviceIndex = devices.length + 1;
-    const udiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
-    const serial = `TH-SN-${productionDate}-${serialRunningNumber}`;
-    const udiPi = `(11)${productionDate}(21)${serial}(10)${batch}`;
-    return { udiDi, serial, udiPi };
-  }, [devices]);
-  const [autoUdiPreviewHash, setAutoUdiPreviewHash] = useState("");
 
   const recentDevicesForUdiTable = useMemo(
     () =>
@@ -2515,19 +2502,6 @@ export default function MedSafePage() {
     [devices]
   );
 
-  useEffect(() => {
-    let isMounted = true;
-    hashUdi(autoUdiPreview.udiDi, autoUdiPreview.serial)
-      .then((hash) => {
-        if (isMounted) setAutoUdiPreviewHash(hash);
-      })
-      .catch(() => {
-        if (isMounted) setAutoUdiPreviewHash("");
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [autoUdiPreview.udiDi, autoUdiPreview.serial]);
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => {
         if (!hasStoredDocumentFile(d)) return false;
@@ -2570,6 +2544,78 @@ export default function MedSafePage() {
   const totalDevices = devices.length;
   const totalDocs = docs.filter((d) => hasStoredDocumentFile(d)).length;
   const totalArchived = devices.filter((d) => d.isArchived).length;
+  const selectedDeviceIdentityCard = selectedDevice ? (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3 text-sm">
+      <div>
+        <div className="text-slate-400 text-xs">Produktname</div>
+        <div className="font-semibold">{selectedDevice.name || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">Hersteller</div>
+        <div>{selectedDevice.manufacturerName || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">Gerätekategorie</div>
+        <div>{selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">Basic UDI-DI</div>
+        <div className="break-all">{selectedDevice.basicUdiDi || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">Seriennummer (DHR)</div>
+        <div className="break-all">{selectedDevice.serial || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">DHR-ID (Geräte-Historie)</div>
+        <div className="break-all">{selectedDevice.dhrId || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">DMR-ID</div>
+        <div className="break-all">{selectedDevice.dmrId || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">Charge</div>
+        <div>{selectedDevice.batch || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">UDI-DI</div>
+        <div className="break-all">{selectedDevice.udiDi || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs flex items-center justify-between gap-2">
+          <span>UDI-PI (ohne Verfallsdatum)</span>
+          {selectedDevice.udiPi && (
+            <button
+              className="text-[10px] text-emerald-300 hover:text-emerald-200"
+              onClick={() => copyToClipboard(selectedDevice.udiPi || "")}
+            >
+              Kopieren
+            </button>
+          )}
+        </div>
+        <div className="break-all text-slate-200">{selectedDevice.udiPi || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs flex items-center justify-between gap-2">
+          <span>UDI-Hash (fälschungssichere ID)</span>
+          {selectedDevice.udiHash && (
+            <button
+              className="text-[10px] text-emerald-300 hover:text-emerald-200"
+              onClick={() => copyToClipboard(selectedDevice.udiHash || "")}
+            >
+              Kopieren
+            </button>
+          )}
+        </div>
+        <div className="break-all text-xs text-slate-200">{selectedDevice.udiHash || "–"}</div>
+      </div>
+      <div>
+        <div className="text-slate-400 text-xs">Angelegt am</div>
+        <div>{selectedDevice.createdAt ? new Date(selectedDevice.createdAt).toLocaleString() : "–"}</div>
+      </div>
+    </div>
+  ) : null;
 
   type DeviceGroup = {
     key: string;
@@ -2959,21 +3005,21 @@ if (!user) {
           </section>
         )}
 
-        {/* MedSafe GPT Copilot */}
+        {/* MedSafe AI */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <h2 className="text-lg font-semibold">MedSafe GPT Copilot</h2>
+            <h2 className="text-lg font-semibold">MedSafe AI</h2>
             <div className="text-xs text-slate-400">
               Chat, MDR-Hinweise und automatische QMS-Dokumententwürfe
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-3">
-              <div className="text-xs text-slate-300 font-medium">Copilot Chat</div>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/60 p-3 space-y-2 text-xs">
+          <div className="grid grid-cols-1 gap-4">
+            <div className="rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-950/50 via-orange-950/40 to-slate-900 p-3 space-y-3">
+              <div className="text-xs text-amber-100 font-medium">Copilot Chat</div>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-orange-500/30 bg-orange-950/25 p-3 space-y-2 text-xs">
                 {aiChatHistory.length === 0 ? (
-                  <div className="text-slate-400">
+                  <div className="text-amber-200/80">
                     Stelle eine Frage wie: &quot;Welche MDR-Lücken hat dieses Gerät?&quot;
                   </div>
                 ) : (
@@ -2982,30 +3028,33 @@ if (!user) {
                       <div
                         className={
                           "font-medium " +
-                          (entry.role === "user" ? "text-sky-300" : "text-emerald-300")
+                          (entry.role === "user" ? "text-amber-300" : "text-orange-300")
                         }
                       >
-                        {entry.role === "user" ? "Du" : "MedSafe GPT"}
+                        {entry.role === "user" ? "Du" : "MedSafe AI"}
                       </div>
                       <div className="whitespace-pre-wrap text-slate-100">{entry.content}</div>
                     </div>
                   ))
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="rounded-lg border border-slate-600 bg-black p-2">
+                <div className="mb-2 text-[11px] text-slate-300">Frage an Copilot</div>
+                <div className="flex gap-2">
                 <textarea
-                  className="w-full min-h-[72px] rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
-                  placeholder="Frag MedSafe GPT nach Risiken, Dokumenten, Audit-Vorbereitung ..."
+                  className="w-full min-h-[72px] bg-transparent px-3 py-2 text-sm outline-none border-0 focus:outline-none focus:ring-0"
+                  placeholder="Frag MedSafe AI nach Risiken, Dokumenten, Audit-Vorbereitung ..."
                   value={aiCopilotInput}
                   onChange={(e) => setAiCopilotInput(e.target.value)}
                 />
                 <button
                   onClick={handleSendCopilotMessage}
                   disabled={aiBusyTask === "copilot-chat"}
-                  className="self-end rounded-lg border border-sky-500/60 bg-sky-900/30 px-4 py-2 text-sm font-medium hover:bg-sky-800/40 disabled:opacity-60"
+                  className="self-end rounded-lg border border-orange-400/60 bg-orange-900/40 px-4 py-2 text-sm font-medium hover:bg-orange-800/50 disabled:opacity-60"
                 >
                   {aiBusyTask === "copilot-chat" ? "Sende…" : "Senden"}
                 </button>
+                </div>
               </div>
             </div>
 
@@ -3053,28 +3102,6 @@ if (!user) {
                 setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
               }
             />
-          </div>
-
-          <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 space-y-2">
-            <div className="text-xs font-medium text-slate-200">
-              Auto-UDI Vorschau (separat)
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-              <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2">
-                <div className="text-slate-400">UDI-DI</div>
-                <div className="break-all text-slate-100">{autoUdiPreview.udiDi}</div>
-              </div>
-              <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2">
-                <div className="text-slate-400">UDI-PI</div>
-                <div className="break-all text-slate-100">{autoUdiPreview.udiPi}</div>
-              </div>
-              <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2">
-                <div className="text-slate-400">Crypto-Hash</div>
-                <div className="break-all text-slate-100">
-                  {autoUdiPreviewHash || "Wird berechnet..."}
-                </div>
-              </div>
-            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
@@ -3299,6 +3326,12 @@ if (!user) {
             </div>
           )}
         </section>
+
+        {selectedDeviceIdentityCard && (
+          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+            {selectedDeviceIdentityCard}
+          </section>
+        )}
 
         {/* Aktive Gruppen */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
@@ -3962,87 +3995,6 @@ if (!user) {
                   </ul>
                 </div>
               )}
-
-              <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3 text-sm">
-                <div>
-                  <div className="text-slate-400 text-xs">Produktname</div>
-                  <div className="font-semibold">{selectedDevice.name || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Hersteller</div>
-                  <div>{selectedDevice.manufacturerName || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Gerätekategorie</div>
-                  <div>{selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Basic UDI-DI</div>
-                  <div className="break-all">{selectedDevice.basicUdiDi || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Seriennummer (DHR)</div>
-                  <div className="break-all">{selectedDevice.serial || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">
-                    DHR-ID (Geräte-Historie)
-                  </div>
-                  <div className="break-all">{selectedDevice.dhrId || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">DMR-ID</div>
-                  <div className="break-all">{selectedDevice.dmrId || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Charge</div>
-                  <div>{selectedDevice.batch || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">UDI-DI</div>
-                  <div className="break-all">{selectedDevice.udiDi || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs flex items-center justify-between gap-2">
-                    <span>UDI-PI (ohne Verfallsdatum)</span>
-                    {selectedDevice.udiPi && (
-                      <button
-                        className="text-[10px] text-emerald-300 hover:text-emerald-200"
-                        onClick={() => copyToClipboard(selectedDevice.udiPi || "")}
-                      >
-                        Kopieren
-                      </button>
-                    )}
-                  </div>
-                  <div className="break-all text-slate-200">
-                    {selectedDevice.udiPi || "–"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs flex items-center justify-between gap-2">
-                    <span>UDI-Hash (fälschungssichere ID)</span>
-                    {selectedDevice.udiHash && (
-                      <button
-                        className="text-[10px] text-emerald-300 hover:text-emerald-200"
-                        onClick={() => copyToClipboard(selectedDevice.udiHash || "")}
-                      >
-                        Kopieren
-                      </button>
-                    )}
-                  </div>
-                  <div className="break-all text-xs text-slate-200">
-                    {selectedDevice.udiHash || "–"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Angelegt am</div>
-                  <div>
-                    {selectedDevice.createdAt
-                      ? new Date(selectedDevice.createdAt).toLocaleString()
-                      : "–"}
-                  </div>
-                </div>
-              </div>
 
               {/* Service / PMS */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
