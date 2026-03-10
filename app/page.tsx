@@ -1881,34 +1881,34 @@ export default function MedSafePage() {
     setMessage("Upload läuft …");
 
     try {
-      const effectiveFile =
-        file ??
-        new File(
-          [
-            [
-              `# ${docName || "Dokumententwurf"}`,
-              "",
-              `Erstellt am: ${new Date().toISOString()}`,
-              `Gerät: ${selectedDevice?.name || "–"}`,
-              `Seriennummer: ${selectedDevice?.serial || "–"}`,
-              `Charge: ${selectedDevice?.batch || "–"}`,
-              `Dokumenttyp: ${docType}`,
-              `Status: ${docStatus}`,
-              `Version: ${docVersion || "-"}`,
-              `Revision: ${docRevision || "-"}`,
-              `Freigegeben von: ${docApprovedBy || "-"}`,
-              `Pflichtdokument: ${docIsMandatory ? "ja" : "nein"}`,
-              "",
-              "## Ziel / Zweck",
-              docPurpose || "Automatisch erzeugter Draft",
-            ].join("\n"),
-          ],
-          `${toSafeFilename(docName || docType || "dokument")}.md`,
-          { type: "text/markdown" }
-        );
+      const autoDraftName = `${toSafeFilename(docName || docType || "dokument")}.md`;
+      const autoDraftContent = [
+        `# ${docName || "Dokumententwurf"}`,
+        "",
+        `Erstellt am: ${new Date().toISOString()}`,
+        `Gerät: ${selectedDevice?.name || "–"}`,
+        `Seriennummer: ${selectedDevice?.serial || "–"}`,
+        `Charge: ${selectedDevice?.batch || "–"}`,
+        `Dokumenttyp: ${docType}`,
+        `Status: ${docStatus}`,
+        `Version: ${docVersion || "-"}`,
+        `Revision: ${docRevision || "-"}`,
+        `Freigegeben von: ${docApprovedBy || "-"}`,
+        `Pflichtdokument: ${docIsMandatory ? "ja" : "nein"}`,
+        "",
+        "## Ziel / Zweck",
+        docPurpose || "Automatisch erzeugter Draft",
+      ].join("\n");
+      const autoDraftBlob = new Blob([autoDraftContent], {
+        type: "text/markdown",
+      });
 
       const formData = new FormData();
-      formData.append("file", effectiveFile);
+      if (file) {
+        formData.append("file", file);
+      } else {
+        formData.append("file", autoDraftBlob, autoDraftName);
+      }
       formData.append("deviceId", selectedDeviceId); // ⬅️ WICHTIG: Gerät mitsenden
 
       const res = await fetch("/api/upload", {
@@ -1925,7 +1925,7 @@ export default function MedSafePage() {
       const newDoc: Doc = {
         id: crypto.randomUUID(),
         deviceId: selectedDeviceId,
-        name: docName || effectiveFile.name,
+        name: docName || (file?.name || autoDraftName),
         cid: data.cid,
         url: data.url,
         createdAt: new Date().toISOString(),
