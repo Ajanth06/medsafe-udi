@@ -339,6 +339,25 @@ function toNullableDateOrTimestamp(value?: string) {
   return value;
 }
 
+function extractMissingColumnName(errorMessage: string): string | null {
+  const patterns = [
+    /column\s+"?([a-zA-Z0-9_]+)"?\s+of relation\s+"?[a-zA-Z0-9_]+"?\s+does not exist/i,
+    /Could not find the ['"]([a-zA-Z0-9_]+)['"] column/i,
+  ];
+  for (const pattern of patterns) {
+    const match = errorMessage.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function extractNotNullColumnName(errorMessage: string): string | null {
+  const match = errorMessage.match(
+    /null value in column\s+"?([a-zA-Z0-9_]+)"?\s+of relation/i
+  );
+  return match?.[1] ?? null;
+}
+
 function devicesToCSV(devices: Device[]): string {
   const header = [
     "Name",
@@ -1430,6 +1449,11 @@ export default function MedSafePage() {
   // ---------- GERÄTE SPEICHERN ----------
 
   const handleSaveDevice = async () => {
+    if (!user) {
+      setMessage("Bitte zuerst einloggen. Ohne Login kann kein Gerät in Supabase gespeichert werden.");
+      return;
+    }
+
     if (!newProductName.trim()) {
       setMessage("Bitte einen Produktnamen eingeben.");
       return;
@@ -1552,14 +1576,9 @@ export default function MedSafePage() {
         }))
       );
 
-      if (
-        error &&
-        /(device_category|generic_device_group|basic_udi_di|manufacturer_name|device_version_variants|device_description|principle_of_operation|key_components|accessories|risk_file_id|fmea_id|hazard_analysis_ref|ce_status|notified_body|conformity_route|clinical_evaluation_ref|gspr_checklist_link|warnings_precautions)/i.test(
-          error.message || ""
-        )
-      ) {
-        // Fallback für ältere Schemas ohne neue MDR-Spalten.
-        const legacyPayload = newDevices.map((d) => ({
+      if (error) {
+        // Robuster Fallback: kompatibler Payload + automatisches Entfernen unbekannter Spalten.
+        let compatibilityPayload = newDevices.map((d) => ({
           id: d.id,
           name: d.name,
           udi_di: d.udiDi,
@@ -1593,19 +1612,53 @@ export default function MedSafePage() {
           service_notes: d.serviceNotes ?? null,
           pms_notes: d.pmsNotes ?? null,
           device_category: d.genericDeviceGroup ?? null,
-        }));
-        const retry = await supabase.from("devices").insert(legacyPayload);
-        error = retry.error ?? null;
+          generic_device_group: d.genericDeviceGroup ?? null,
+          user_id: user.id,
+          created_by: createdByLabel,
+        })) as Array<Record<string, unknown>>;
 
-        // Zweiter Fallback: sogar ohne device_category (sehr altes Schema).
-        if (error && /device_category/i.test(error.message || "")) {
-          const ultraLegacyPayload = legacyPayload.map((row) => {
-            const copy = { ...row } as Record<string, unknown>;
-            delete copy.device_category;
-            return copy;
-          });
-          const retry2 = await supabase.from("devices").insert(ultraLegacyPayload);
-          error = retry2.error ?? null;
+        for (let attempt = 0; attempt < 25 && error; attempt++) {
+          const errorMessage = error.message || "";
+          const missingColumn = extractMissingColumnName(errorMessage);
+          if (missingColumn) {
+            compatibilityPayload = compatibilityPayload.map((row) => {
+              const next = { ...row };
+              delete next[missingColumn];
+              return next;
+            });
+            const retry = await supabase.from("devices").insert(compatibilityPayload);
+            error = retry.error ?? null;
+            continue;
+          }
+
+          if (/row-level security|permission denied|new row violates row-level security/i.test(errorMessage)) {
+            setMessage(
+              "Speichern von Geräten ist durch Supabase-RLS blockiert. Bitte RLS-Policy für Tabelle devices prüfen."
+            );
+            return;
+          }
+
+          const notNullColumn = extractNotNullColumnName(errorMessage);
+          if (notNullColumn === "user_id") {
+            compatibilityPayload = compatibilityPayload.map((row) => ({
+              ...row,
+              user_id: user.id,
+            }));
+            const retry = await supabase.from("devices").insert(compatibilityPayload);
+            error = retry.error ?? null;
+            continue;
+          }
+          if (notNullColumn === "created_by") {
+            compatibilityPayload = compatibilityPayload.map((row) => ({
+              ...row,
+              created_by: createdByLabel,
+            }));
+            const retry = await supabase.from("devices").insert(compatibilityPayload);
+            error = retry.error ?? null;
+            continue;
+          }
+
+          break;
         }
       }
 
