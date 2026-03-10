@@ -11,6 +11,10 @@ type Device = {
   batch?: string;
   serial: string;
   deviceCategory?: string;
+  riskClass?: string;
+  intendedPurpose?: string;
+  udiDi?: string;
+  udiPi?: string;
   isArchived?: boolean;
 };
 
@@ -51,6 +55,13 @@ type GroupHealth = {
   requiredApproved: number;
   missingLabels: string[];
   docs: Doc[];
+};
+
+type AiDocDraftResult = {
+  title?: string;
+  documentType?: string;
+  contentMarkdown?: string;
+  checklist?: string[];
 };
 
 const DOC_TYPE_OPTIONS: Array<{ value: DocType; label: string; patterns: string[] }> = [
@@ -121,6 +132,10 @@ const mapDevice = (row: any): Device => ({
   batch: row.batch ?? "",
   serial: row.serial ?? "",
   deviceCategory: row.device_category ?? "",
+  riskClass: row.risk_class ?? "",
+  intendedPurpose: row.intended_purpose ?? "",
+  udiDi: row.udi_di ?? "",
+  udiPi: row.udi_pi ?? "",
   isArchived: row.is_archived ?? false,
 });
 
@@ -144,6 +159,86 @@ const mapDoc = (row: any): Doc => ({
   purpose: row.purpose ?? "",
 });
 
+const copyToClipboard = (value: string) => {
+  if (!value) return;
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+};
+
+const downloadTextFile = (filename: string, content: string, mimeType: string) => {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const markdownToPlainText = (value: string) =>
+  value
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`(.*?)`/g, "$1")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .trim();
+
+const toExcelCsv = (title: string, draft: string, checklist: string[]) => {
+  const rows = [
+    ["Title", title || "QMS Draft"],
+    ["CreatedAt", new Date().toISOString()],
+    ["Draft", markdownToPlainText(draft).replace(/\n/g, " ")],
+    ...checklist.map((item) => ["Checklist", item]),
+  ];
+
+  return rows
+    .map((row) => row.map((cell) => `"${String(cell || "").replace(/"/g, '""')}"`).join(";"))
+    .join("\n");
+};
+
+const toWordHtml = (title: string, draft: string, checklist: string[]) => {
+  const checklistHtml = checklist.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(title || "QMS Document Draft")}</title>
+</head>
+<body>
+  <h1>${escapeHtml(title || "QMS Document Draft")}</h1>
+  <pre>${escapeHtml(draft)}</pre>
+  <h2>Checklist</h2>
+  <ul>${checklistHtml}</ul>
+</body>
+</html>`;
+};
+
+const slugifyKey = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-_]/g, "");
+
 export default function DocsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -157,6 +252,11 @@ export default function DocsPage() {
     group: string;
     device: string;
   }>({ group: "", device: "" });
+  const [aiDocType, setAiDocType] = useState("IFU");
+  const [aiDocDraft, setAiDocDraft] = useState<AiDocDraftResult | null>(null);
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [draftRevision, setDraftRevision] = useState("R1");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -312,6 +412,147 @@ export default function DocsPage() {
     };
   }, [docsForGroup]);
 
+  const handleGenerateQmsDocumentDraft = async () => {
+    if (!selectedDevice) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
+    }
+
+    setIsGeneratingDraft(true);
+    setMessage(null);
+
+    const payload = {
+      documentType: aiDocType,
+      source: "docs-module",
+      selectedDevice: {
+        id: selectedDevice.id,
+        name: selectedDevice.name,
+        serial: selectedDevice.serial,
+        batch: selectedDevice.batch,
+        deviceCategory: selectedDevice.deviceCategory,
+        riskClass: selectedDevice.riskClass,
+        intendedPurpose: selectedDevice.intendedPurpose,
+        udiDi: selectedDevice.udiDi,
+        udiPi: selectedDevice.udiPi,
+      },
+      requiredDocuments: {
+        total: groupHealth.requiredTotal,
+        present: groupHealth.requiredPresent,
+        approved: groupHealth.requiredApproved,
+        missing: groupHealth.missingLabels,
+      },
+      availableDocuments: docsForDevice.map((doc) => ({
+        name: doc.name,
+        type: getDocTypeLabel(detectDocType(doc)),
+        version: doc.version || "",
+        revision: doc.revision || "",
+        status: doc.docStatus || "",
+        approvedBy: doc.approvedBy || "",
+        mandatory: Boolean(doc.isMandatory),
+      })),
+    };
+
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: "generate-qms-document",
+          payload,
+        }),
+      });
+
+      const raw = (await response.json()) as {
+        error?: string;
+        result?: AiDocDraftResult;
+      };
+
+      if (!response.ok) {
+        throw new Error(raw.error || "KI-Fehler bei Dokumentgenerierung.");
+      }
+
+      const result = raw.result;
+      if (!result?.contentMarkdown?.trim()) {
+        throw new Error(
+          "KI konnte keinen belastbaren Dokumententwurf erzeugen. Bitte Kontext ergänzen."
+        );
+      }
+      setAiDocDraft(result);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Unbekannter KI-Fehler.";
+      setMessage(text);
+    } finally {
+      setIsGeneratingDraft(false);
+    }
+  };
+
+  const handleSaveDraftToSupabase = async () => {
+    if (!user?.id) {
+      setMessage("Bitte zuerst einloggen.");
+      return;
+    }
+    if (!selectedDevice) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
+    }
+    if (!aiDocDraft?.contentMarkdown?.trim()) {
+      setMessage("Bitte zuerst einen Dokumententwurf generieren.");
+      return;
+    }
+
+    setIsSavingDraft(true);
+    setMessage(null);
+
+    const title = aiDocDraft.title || aiDocType || "qms-draft";
+    const safeTitle = slugifyKey(title) || "qms-draft";
+    const keyParts = [
+      slugifyKey(selectedDevice.name || "device"),
+      slugifyKey(selectedDevice.batch || "nobatch"),
+      slugifyKey(aiDocType || "document"),
+    ].filter(Boolean);
+    const documentKey = keyParts.join("__");
+    const filename = `${safeTitle}.md`;
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([aiDocDraft.contentMarkdown], filename, {
+        type: "text/markdown;charset=utf-8",
+      })
+    );
+    formData.append("documentKey", documentKey);
+    formData.append("revision", draftRevision || "R1");
+    formData.append("userId", user.id);
+
+    try {
+      const response = await fetch("/api/qms-documents", {
+        method: "POST",
+        body: formData,
+      });
+
+      const raw = (await response.json()) as {
+        error?: string;
+        doc?: { version?: number; revision?: string };
+      };
+
+      if (!response.ok) {
+        throw new Error(raw.error || "Speichern in Supabase fehlgeschlagen.");
+      }
+
+      setMessage(
+        `Dokument gespeichert: ${documentKey} (Version ${raw.doc?.version ?? "?"}, Revision ${
+          raw.doc?.revision || draftRevision || "R1"
+        })`
+      );
+    } catch (err) {
+      const text =
+        err instanceof Error ? err.message : "Unerwarteter Fehler beim Speichern.";
+      setMessage(text);
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   if (!user) {
     return (
       <main className="min-h-[40vh] flex items-center justify-center text-slate-300">
@@ -399,6 +640,127 @@ export default function DocsPage() {
           {groupHealth.missingLabels.length > 0 && (
             <div className="text-xs text-amber-300">
               Fehlende Pflichtdokumente: {groupHealth.missingLabels.join(", ")}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold">QMS Dokument Draft</div>
+              <div className="text-xs text-slate-400">
+                Aktiv: nutzt Daten aus der Geräteübersicht (ausgewähltes Gerät + Dokumentstatus).
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col md:flex-row gap-2">
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+              value={aiDocType}
+              onChange={(e) => setAiDocType(e.target.value)}
+            >
+              <option value="IFU">IFU</option>
+              <option value="Risk Analysis">Risk Analysis</option>
+              <option value="SOP">SOP</option>
+              <option value="CAPA">CAPA</option>
+              <option value="Change Control">Change Control</option>
+              <option value="Audit Report">Audit Report</option>
+            </select>
+            <button
+              onClick={handleGenerateQmsDocumentDraft}
+              disabled={isGeneratingDraft}
+              className="rounded-lg border border-emerald-500/60 bg-emerald-900/30 px-4 py-2 text-sm font-medium hover:bg-emerald-800/40 disabled:opacity-60"
+            >
+              {isGeneratingDraft ? "Generating..." : "Generate Document"}
+            </button>
+          </div>
+
+          {aiDocDraft?.contentMarkdown && (
+            <div className="space-y-2">
+              <div className="text-xs text-slate-300">
+                {aiDocDraft.title || "Dokumententwurf"}
+              </div>
+              <textarea
+                className="w-full min-h-[260px] rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-100 outline-none"
+                value={aiDocDraft.contentMarkdown}
+                onChange={(e) =>
+                  setAiDocDraft((prev) =>
+                    prev ? { ...prev, contentMarkdown: e.target.value } : prev
+                  )
+                }
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
+                  onClick={() => copyToClipboard(aiDocDraft.contentMarkdown || "")}
+                >
+                  Text kopieren
+                </button>
+                <button
+                  className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
+                  onClick={() =>
+                    downloadTextFile(
+                      `${(aiDocDraft.title || aiDocType || "qms-draft")
+                        .replace(/\s+/g, "-")
+                        .toLowerCase()}.md`,
+                      aiDocDraft.contentMarkdown || "",
+                      "text/markdown;charset=utf-8"
+                    )
+                  }
+                >
+                  Als .md herunterladen
+                </button>
+                <button
+                  className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
+                  onClick={() =>
+                    downloadTextFile(
+                      `${(aiDocDraft.title || aiDocType || "qms-draft")
+                        .replace(/\s+/g, "-")
+                        .toLowerCase()}.csv`,
+                      toExcelCsv(
+                        aiDocDraft.title || aiDocType,
+                        aiDocDraft.contentMarkdown || "",
+                        aiDocDraft.checklist || []
+                      ),
+                      "text/csv;charset=utf-8"
+                    )
+                  }
+                >
+                  Als Excel (.csv) herunterladen
+                </button>
+                <button
+                  className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
+                  onClick={() =>
+                    downloadTextFile(
+                      `${(aiDocDraft.title || aiDocType || "qms-draft")
+                        .replace(/\s+/g, "-")
+                        .toLowerCase()}.doc`,
+                      toWordHtml(
+                        aiDocDraft.title || aiDocType,
+                        aiDocDraft.contentMarkdown || "",
+                        aiDocDraft.checklist || []
+                      ),
+                      "application/msword;charset=utf-8"
+                    )
+                  }
+                >
+                  Als Word (.doc) herunterladen
+                </button>
+                <input
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-2 text-xs w-[88px]"
+                  value={draftRevision}
+                  onChange={(e) => setDraftRevision(e.target.value)}
+                  placeholder="R1"
+                />
+                <button
+                  className="rounded-lg border border-sky-500/40 bg-sky-900/20 px-3 py-2 text-xs text-sky-100 disabled:opacity-60"
+                  onClick={handleSaveDraftToSupabase}
+                  disabled={isSavingDraft}
+                >
+                  {isSavingDraft ? "Speichert..." : "In Supabase speichern"}
+                </button>
+              </div>
             </div>
           )}
         </section>
