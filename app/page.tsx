@@ -1866,16 +1866,38 @@ export default function MedSafePage() {
       setMessage("Bitte zuerst ein Gerät auswählen.");
       return;
     }
-    if (!file) {
-      setMessage("Bitte eine Datei auswählen.");
-      return;
-    }
     setIsUploading(true);
     setMessage("Upload läuft …");
 
     try {
+      const effectiveFile =
+        file ??
+        new File(
+          [
+            [
+              `# ${docName || "Dokumententwurf"}`,
+              "",
+              `Erstellt am: ${new Date().toISOString()}`,
+              `Gerät: ${selectedDevice?.name || "–"}`,
+              `Seriennummer: ${selectedDevice?.serial || "–"}`,
+              `Charge: ${selectedDevice?.batch || "–"}`,
+              `Dokumenttyp: ${docType}`,
+              `Status: ${docStatus}`,
+              `Version: ${docVersion || "-"}`,
+              `Revision: ${docRevision || "-"}`,
+              `Freigegeben von: ${docApprovedBy || "-"}`,
+              `Pflichtdokument: ${docIsMandatory ? "ja" : "nein"}`,
+              "",
+              "## Ziel / Zweck",
+              docPurpose || "Automatisch erzeugter Draft",
+            ].join("\n"),
+          ],
+          `${(docName || docType || "dokument").replace(/\s+/g, "-").toLowerCase()}.md`,
+          { type: "text/markdown;charset=utf-8" }
+        );
+
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", effectiveFile);
       formData.append("deviceId", selectedDeviceId); // ⬅️ WICHTIG: Gerät mitsenden
 
       const res = await fetch("/api/upload", {
@@ -1892,7 +1914,7 @@ export default function MedSafePage() {
       const newDoc: Doc = {
         id: crypto.randomUUID(),
         deviceId: selectedDeviceId,
-        name: docName || file.name,
+        name: docName || effectiveFile.name,
         cid: data.cid,
         url: data.url,
         createdAt: new Date().toISOString(),
@@ -1993,7 +2015,11 @@ export default function MedSafePage() {
       setDocAssignmentScope("device");
       setFile(null);
       if (metadataPersisted) {
-        setMessage("Dokument erfolgreich gespeichert.");
+        setMessage(
+          file
+            ? "Dokument erfolgreich gespeichert."
+            : "Dokument erfolgreich gespeichert (Auto-Draft wurde als .md erstellt)."
+        );
       } else {
         setMessage(
           "Dokument gespeichert. Hinweis: Einige Dokument-Metadaten werden erst nach DB-Migration persistiert."
