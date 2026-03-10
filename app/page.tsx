@@ -784,11 +784,18 @@ function buildAiInsightDraft(
 // ---------- Mapping DB <-> UI ----------
 
 function mapDeviceRowToDevice(row: any): Device {
+  const fallbackBasicUdiDi = generateBasicUdiDi(
+    row.manufacturer_name ?? "",
+    row.name ?? ""
+  );
   return {
     id: row.id,
     name: row.name,
     udiDi: row.udi_di,
-    basicUdiDi: row.basic_udi_di ?? "",
+    basicUdiDi:
+      typeof row.basic_udi_di === "string" && row.basic_udi_di.trim().length > 0
+        ? row.basic_udi_di
+        : fallbackBasicUdiDi,
     serial: row.serial,
     udiHash: row.udi_hash,
     createdAt: row.created_at,
