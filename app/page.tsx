@@ -120,6 +120,14 @@ const DOC_CATEGORIES = [
   "Sonstiges",
 ];
 
+const WARNING_SUGGESTIONS = [
+  "Nur durch geschultes Fachpersonal anwenden.",
+  "Vor Gebrauch IFU vollständig lesen.",
+  "Außerhalb spezifizierter Temperaturbereiche nicht betreiben.",
+  "Bei sichtbarer Beschädigung nicht verwenden.",
+  "Nach Wartungsintervallen gemäß QMS prüfen.",
+];
+
 const DOC_TYPE_OPTIONS: Array<{ value: DocType; label: string; patterns: string[] }> = [
   {
     value: "declaration_of_conformity",
@@ -2970,7 +2978,7 @@ if (!user) {
             <div>
               <input
                 className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-                placeholder="Warnhinweise / Vorsichtsmaßnahmen"
+                placeholder="Warnhinweise"
                 value={iuLimitations}
                 onChange={(e) => setIuLimitations(e.target.value)}
               />
@@ -2978,6 +2986,20 @@ if (!user) {
                 suggestion={aiRowSuggestions.warningsAndLimitations}
                 onApply={() => setIuLimitations(aiRowSuggestions.warningsAndLimitations)}
               />
+              <div className="mt-1 flex flex-wrap gap-1">
+                {WARNING_SUGGESTIONS.map((item) => (
+                  <button
+                    key={`top-warning-${item}`}
+                    type="button"
+                    className="rounded border border-slate-600 bg-slate-800/70 px-2 py-0.5 text-[10px] text-slate-300 hover:border-sky-500/50"
+                    onClick={() =>
+                      setIuLimitations((prev) => (prev ? `${prev}\n- ${item}` : `- ${item}`))
+                    }
+                  >
+                    + {item}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -3084,9 +3106,9 @@ if (!user) {
               value={iuIntendedUser}
               onChange={(e) => setIuIntendedUser(e.target.value)}
             >
-                  <option value="Fachpersonal">Vorgesehener Anwender: Fachpersonal</option>
-                  <option value="Geschultes Laborpersonal">Vorgesehener Anwender: Laborpersonal</option>
-                  <option value="Patient / Laie">Vorgesehener Anwender: Patient / Laie</option>
+                  <option value="Fachpersonal">Anwender: Fachpersonal</option>
+                  <option value="Geschultes Laborpersonal">Anwender: Laborpersonal</option>
+                  <option value="Patient / Laie">Anwender: Patient / Laie</option>
                 </select>
                 <AiSuggestionHint
                   suggestion={aiRowSuggestions.intendedUser}
@@ -3099,10 +3121,10 @@ if (!user) {
                   value={iuUseEnvironment}
                   onChange={(e) => setIuUseEnvironment(e.target.value)}
                 >
-                  <option value="Klinik">Nutzungsumgebung: Klinik</option>
-                  <option value="Labor">Nutzungsumgebung: Labor</option>
-                  <option value="Homecare">Nutzungsumgebung: Homecare</option>
-                  <option value="OP / sterile Umgebung">Nutzungsumgebung: OP / sterile Umgebung</option>
+                  <option value="Klinik">Umgebung: Klinik</option>
+                  <option value="Labor">Umgebung: Labor</option>
+                  <option value="Homecare">Umgebung: Homecare</option>
+                  <option value="OP / sterile Umgebung">Umgebung: OP / sterile Umgebung</option>
                 </select>
                 <AiSuggestionHint
                   suggestion={aiRowSuggestions.useEnvironment}
@@ -3139,7 +3161,7 @@ if (!user) {
             <div>
               <textarea
                 className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-                placeholder="Warnhinweise, Vorsichtsmaßnahmen, Leistungsgrenzen"
+                placeholder="Warnhinweise"
                 value={iuLimitations}
                 onChange={(e) => setIuLimitations(e.target.value)}
               />
@@ -3147,6 +3169,20 @@ if (!user) {
                 suggestion={aiRowSuggestions.warningsAndLimitations}
                 onApply={() => setIuLimitations(aiRowSuggestions.warningsAndLimitations)}
               />
+              <div className="mt-1 flex flex-wrap gap-1">
+                {WARNING_SUGGESTIONS.map((item) => (
+                  <button
+                    key={`details-warning-${item}`}
+                    type="button"
+                    className="rounded border border-slate-600 bg-slate-800/70 px-2 py-0.5 text-[10px] text-slate-300 hover:border-sky-500/50"
+                    onClick={() =>
+                      setIuLimitations((prev) => (prev ? `${prev}\n- ${item}` : `- ${item}`))
+                    }
+                  >
+                    + {item}
+                  </button>
+                ))}
+              </div>
             </div>
               </div>
 
