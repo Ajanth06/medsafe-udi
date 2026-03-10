@@ -64,6 +64,12 @@ type AiDocDraftResult = {
   checklist?: string[];
 };
 
+type UploadApiResponse = {
+  cid?: string;
+  url?: string;
+  error?: string;
+};
+
 const DOC_TYPE_OPTIONS: Array<{ value: DocType; label: string; patterns: string[] }> = [
   {
     value: "declaration_of_conformity",
@@ -157,6 +163,25 @@ const mapDoc = (row: any): Doc => ({
   assignedProductGroup: row.assigned_product_group ?? "",
   isMandatory: row.is_mandatory ?? false,
   purpose: row.purpose ?? "",
+});
+
+const mapDocToDb = (doc: Doc) => ({
+  device_id: doc.deviceId,
+  name: doc.name,
+  cid: doc.cid,
+  url: doc.url,
+  created_at: doc.createdAt,
+  category: doc.category ?? null,
+  doc_type: doc.docType ?? null,
+  version: doc.version ?? null,
+  revision: doc.revision ?? null,
+  doc_status: doc.docStatus ?? null,
+  approved_by: doc.approvedBy ?? null,
+  assignment_scope: doc.assignmentScope ?? "device",
+  assigned_batch: doc.assignedBatch ?? null,
+  assigned_product_group: doc.assignedProductGroup ?? null,
+  is_mandatory: doc.isMandatory ?? false,
+  purpose: doc.purpose ?? null,
 });
 
 const copyToClipboard = (value: string) => {
@@ -256,6 +281,7 @@ export default function DocsPage() {
   const [aiDocDraft, setAiDocDraft] = useState<AiDocDraftResult | null>(null);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isAutoGeneratingMissing, setIsAutoGeneratingMissing] = useState(false);
   const [draftRevision, setDraftRevision] = useState("R1");
 
   useEffect(() => {
@@ -412,6 +438,95 @@ export default function DocsPage() {
     };
   }, [docsForGroup]);
 
+  const missingRequiredTypes = useMemo(
+    () =>
+      REQUIRED_DOC_TYPES.filter(
+        (requiredType) => !docsForGroup.some((doc) => detectDocType(doc) === requiredType)
+      ),
+    [docsForGroup]
+  );
+
+  const runAiDocumentDraft = async (payload: unknown) => {
+    const response = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: "generate-qms-document",
+        payload,
+      }),
+    });
+
+    const raw = (await response.json()) as {
+      error?: string;
+      result?: AiDocDraftResult;
+    };
+
+    if (!response.ok) {
+      throw new Error(raw.error || "KI-Fehler bei Dokumentgenerierung.");
+    }
+
+    const result = raw.result;
+    if (!result?.contentMarkdown?.trim()) {
+      throw new Error(
+        "KI konnte keinen belastbaren Dokumententwurf erzeugen. Bitte Kontext ergänzen."
+      );
+    }
+    return result;
+  };
+
+  const uploadMarkdownToDocsBucket = async (deviceId: string, filename: string, content: string) => {
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([content], filename, {
+        type: "text/markdown;charset=utf-8",
+      })
+    );
+    formData.append("deviceId", deviceId);
+
+    const uploadResponse = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const uploadRaw = (await uploadResponse.json()) as UploadApiResponse;
+    if (!uploadResponse.ok || !uploadRaw.cid || !uploadRaw.url) {
+      throw new Error(uploadRaw.error || "Upload fehlgeschlagen.");
+    }
+    return { cid: uploadRaw.cid, url: uploadRaw.url };
+  };
+
+  const insertDocWithFallback = async (doc: Doc) => {
+    let { error } = await supabase.from("docs").insert({
+      id: doc.id,
+      ...mapDocToDb(doc),
+    });
+
+    if (
+      error &&
+      /doc_type|assignment_scope|assigned_batch|assigned_product_group|is_mandatory|purpose/i.test(
+        error.message || ""
+      )
+    ) {
+      const legacyPayload = {
+        id: doc.id,
+        device_id: doc.deviceId,
+        name: doc.name,
+        cid: doc.cid,
+        url: doc.url,
+        created_at: doc.createdAt,
+        category: doc.category ?? null,
+        version: doc.version ?? null,
+        revision: doc.revision ?? null,
+        doc_status: doc.docStatus ?? null,
+        approved_by: doc.approvedBy ?? null,
+      };
+      const retry = await supabase.from("docs").insert(legacyPayload);
+      error = retry.error ?? null;
+    }
+    if (error) throw new Error(error.message || "Dokument-Metadaten konnten nicht gespeichert werden.");
+  };
+
   const handleGenerateQmsDocumentDraft = async () => {
     if (!selectedDevice) {
       setMessage("Bitte zuerst ein Gerät auswählen.");
@@ -453,30 +568,7 @@ export default function DocsPage() {
     };
 
     try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task: "generate-qms-document",
-          payload,
-        }),
-      });
-
-      const raw = (await response.json()) as {
-        error?: string;
-        result?: AiDocDraftResult;
-      };
-
-      if (!response.ok) {
-        throw new Error(raw.error || "KI-Fehler bei Dokumentgenerierung.");
-      }
-
-      const result = raw.result;
-      if (!result?.contentMarkdown?.trim()) {
-        throw new Error(
-          "KI konnte keinen belastbaren Dokumententwurf erzeugen. Bitte Kontext ergänzen."
-        );
-      }
+      const result = await runAiDocumentDraft(payload);
       setAiDocDraft(result);
     } catch (err) {
       const text = err instanceof Error ? err.message : "Unbekannter KI-Fehler.";
@@ -539,6 +631,35 @@ export default function DocsPage() {
         throw new Error(raw.error || "Speichern in Supabase fehlgeschlagen.");
       }
 
+      const now = new Date().toISOString();
+      const upload = await uploadMarkdownToDocsBucket(
+        selectedDevice.id,
+        filename,
+        aiDocDraft.contentMarkdown
+      );
+
+      const newDoc: Doc = {
+        id: crypto.randomUUID(),
+        deviceId: selectedDevice.id,
+        name: title,
+        cid: upload.cid,
+        url: upload.url,
+        createdAt: now,
+        category: aiDocType,
+        docType: "other",
+        version: "1.0",
+        revision: draftRevision || "R1",
+        docStatus: "Draft",
+        approvedBy: "",
+        assignmentScope: "device",
+        assignedBatch: "",
+        assignedProductGroup: "",
+        isMandatory: false,
+        purpose: "KI-generierter QMS-Draft",
+      };
+      await insertDocWithFallback(newDoc);
+      setDocs((prev) => [newDoc, ...prev]);
+
       setMessage(
         `Dokument gespeichert: ${documentKey} (Version ${raw.doc?.version ?? "?"}, Revision ${
           raw.doc?.revision || draftRevision || "R1"
@@ -551,6 +672,105 @@ export default function DocsPage() {
     } finally {
       setIsSavingDraft(false);
     }
+  };
+
+  const handleAutoGenerateMissingDocuments = async () => {
+    if (!selectedDevice) {
+      setMessage("Bitte zuerst ein Gerät auswählen.");
+      return;
+    }
+    if (missingRequiredTypes.length === 0) {
+      setMessage("Keine fehlenden Pflichtdokumente vorhanden.");
+      return;
+    }
+
+    setIsAutoGeneratingMissing(true);
+    setMessage(null);
+
+    const createdDocs: Doc[] = [];
+    const failedTypes: string[] = [];
+
+    for (const docType of missingRequiredTypes) {
+      const docTypeLabel = getDocTypeLabel(docType);
+      try {
+        const draft = await runAiDocumentDraft({
+          documentType: docTypeLabel,
+          source: "docs-module-autogen-missing",
+          selectedDevice: {
+            id: selectedDevice.id,
+            name: selectedDevice.name,
+            serial: selectedDevice.serial,
+            batch: selectedDevice.batch,
+            genericDeviceGroup: selectedDevice.genericDeviceGroup,
+            riskClass: selectedDevice.riskClass,
+            intendedPurpose: selectedDevice.intendedPurpose,
+            udiDi: selectedDevice.udiDi,
+            udiPi: selectedDevice.udiPi,
+          },
+          requiredDocuments: {
+            total: groupHealth.requiredTotal,
+            present: groupHealth.requiredPresent,
+            approved: groupHealth.requiredApproved,
+            missing: groupHealth.missingLabels,
+          },
+          requestedDocType: docType,
+        });
+
+        const docTitle =
+          draft.title?.trim() || `${docTypeLabel} – ${selectedDevice.name} – ${selectedDevice.batch || "nobatch"}`;
+        const filename = `${slugifyKey(docTitle) || slugifyKey(docTypeLabel) || "document"}.md`;
+        const upload = await uploadMarkdownToDocsBucket(
+          selectedDevice.id,
+          filename,
+          draft.contentMarkdown || ""
+        );
+
+        const now = new Date().toISOString();
+        const newDoc: Doc = {
+          id: crypto.randomUUID(),
+          deviceId: selectedDevice.id,
+          name: docTitle,
+          cid: upload.cid,
+          url: upload.url,
+          createdAt: now,
+          category: docTypeLabel,
+          docType,
+          version: "1.0",
+          revision: draftRevision || "R1",
+          docStatus: "Draft",
+          approvedBy: "",
+          assignmentScope: "device",
+          assignedBatch: "",
+          assignedProductGroup: "",
+          isMandatory: true,
+          purpose: `Automatisch erzeugtes Pflichtdokument (${docTypeLabel})`,
+        };
+
+        await insertDocWithFallback(newDoc);
+        createdDocs.push(newDoc);
+      } catch (err) {
+        console.error(err);
+        failedTypes.push(docTypeLabel);
+      }
+    }
+
+    if (createdDocs.length > 0) {
+      setDocs((prev) => [...createdDocs, ...prev]);
+    }
+
+    if (createdDocs.length > 0 && failedTypes.length === 0) {
+      setMessage(`${createdDocs.length} Pflichtdokument(e) wurden automatisch erstellt.`);
+    } else if (createdDocs.length > 0 && failedTypes.length > 0) {
+      setMessage(
+        `${createdDocs.length} Pflichtdokument(e) erstellt. Fehlgeschlagen: ${failedTypes.join(", ")}.`
+      );
+    } else {
+      setMessage(
+        `Automatische Erstellung fehlgeschlagen. Betroffen: ${failedTypes.join(", ")}.`
+      );
+    }
+
+    setIsAutoGeneratingMissing(false);
   };
 
   if (!user) {
@@ -625,7 +845,18 @@ export default function DocsPage() {
         </section>
 
         <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
-          <div className="text-sm font-semibold">Pflichtdokument-Matrix (Gruppe)</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold">Pflichtdokument-Matrix (Gruppe)</div>
+            <button
+              onClick={handleAutoGenerateMissingDocuments}
+              disabled={isAutoGeneratingMissing || missingRequiredTypes.length === 0}
+              className="rounded-lg border border-violet-500/50 bg-violet-900/25 px-3 py-2 text-xs text-violet-100 disabled:opacity-50"
+            >
+              {isAutoGeneratingMissing
+                ? "Erstellt Pflichtdokumente..."
+                : "Fehlende Dokumente mit KI erstellen"}
+            </button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
             <div className="rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2">
               Vorhanden: {groupHealth.requiredPresent} / {groupHealth.requiredTotal}
