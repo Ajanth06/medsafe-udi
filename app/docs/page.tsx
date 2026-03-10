@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -146,7 +145,6 @@ const mapDoc = (row: any): Doc => ({
 });
 
 export default function DocsPage() {
-  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -155,6 +153,19 @@ export default function DocsPage() {
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [queryInitialized, setQueryInitialized] = useState(false);
+  const [initialQuery, setInitialQuery] = useState<{
+    group: string;
+    device: string;
+  }>({ group: "", device: "" });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setInitialQuery({
+      group: params.get("group") || "",
+      device: params.get("device") || "",
+    });
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -211,13 +222,13 @@ export default function DocsPage() {
     if (queryInitialized) return;
     if (groupedDevices.length === 0 && devices.length === 0) return;
 
-    const groupParam = searchParams.get("group");
-    const deviceParam = searchParams.get("device");
+    const groupParam = initialQuery.group;
+    const deviceParam = initialQuery.device;
 
     if (groupParam) setSelectedGroupKey(groupParam);
     if (deviceParam) setSelectedDeviceId(deviceParam);
     setQueryInitialized(true);
-  }, [groupedDevices, devices, searchParams, queryInitialized]);
+  }, [groupedDevices, devices, initialQuery, queryInitialized]);
 
   useEffect(() => {
     if (!selectedGroupKey && groupedDevices.length > 0) {

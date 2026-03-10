@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import {
@@ -219,7 +218,6 @@ async function groupKeyToUuid(groupKey: string) {
 }
 
 export default function RiskAnalysisPage() {
-  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -243,6 +241,21 @@ export default function RiskAnalysisPage() {
   const [branchInputs, setBranchInputs] = useState<Record<string, string>>({});
   const [isGenerating, setIsGenerating] = useState(false);
   const [queryInitialized, setQueryInitialized] = useState(false);
+  const [initialQuery, setInitialQuery] = useState<{
+    scope: string;
+    group: string;
+    device: string;
+  }>({ scope: "", group: "", device: "" });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setInitialQuery({
+      scope: params.get("scope") || "",
+      group: params.get("group") || "",
+      device: params.get("device") || "",
+    });
+  }, []);
 
   const decorateRow = (row: FmeaRowDb): FmeaRowUi => {
     const derived = computeDerived(row);
@@ -357,9 +370,9 @@ export default function RiskAnalysisPage() {
     if (queryInitialized) return;
     if (devices.length === 0) return;
 
-    const scopeParam = searchParams.get("scope");
-    const groupParam = searchParams.get("group");
-    const deviceParam = searchParams.get("device");
+    const scopeParam = initialQuery.scope;
+    const groupParam = initialQuery.group;
+    const deviceParam = initialQuery.device;
 
     if (scopeParam === "device" || deviceParam) {
       setScope("device");
@@ -376,7 +389,7 @@ export default function RiskAnalysisPage() {
     }
 
     setQueryInitialized(true);
-  }, [devices, searchParams, queryInitialized]);
+  }, [devices, initialQuery, queryInitialized]);
 
   const addRiskAudit = async (
     riskAnalysisId: string,
