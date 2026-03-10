@@ -136,6 +136,26 @@ type AiApiResponse<T> = {
   error?: string;
 };
 
+type AiChatResult = {
+  assistantReply?: string;
+  actionItems?: string[];
+  riskNotes?: string[];
+};
+
+type AiDocDraftResult = {
+  title?: string;
+  documentType?: string;
+  contentMarkdown?: string;
+  checklist?: string[];
+};
+
+type ChatEntry = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+};
+
 type IntendedUseReviewStatus = "Draft" | "Review" | "Approved";
 
 type IntendedUseAiResult = {
@@ -278,6 +298,16 @@ function copyToClipboard(value: string) {
   textarea.select();
   document.execCommand("copy");
   document.body.removeChild(textarea);
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function inferDeviceType(productName: string): string {
@@ -568,6 +598,10 @@ export default function MedSafePage() {
   const [aiInsightServer, setAiInsightServer] = useState<AiInsight | null>(null);
   const [aiIntendedUseServer, setAiIntendedUseServer] = useState<string | null>(null);
   const [aiBusyTask, setAiBusyTask] = useState<string | null>(null);
+  const [aiCopilotInput, setAiCopilotInput] = useState("");
+  const [aiChatHistory, setAiChatHistory] = useState<ChatEntry[]>([]);
+  const [aiDocDraft, setAiDocDraft] = useState<AiDocDraftResult | null>(null);
+  const [aiDocType, setAiDocType] = useState("SOP");
 
   // ---------- AUTH ----------
 
@@ -859,6 +893,83 @@ export default function MedSafePage() {
     }
     setMessage(
       "KI konnte keinen belastbaren Intended-Use-Draft erzeugen. Bitte Kontextfelder ergänzen und erneut generieren."
+    );
+  };
+
+  const handleSendCopilotMessage = async () => {
+    const userMessage = aiCopilotInput.trim();
+    if (!userMessage) return;
+
+    const userEntry: ChatEntry = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: userMessage,
+      timestamp: new Date().toISOString(),
+    };
+
+    setAiChatHistory((prev) => [...prev, userEntry]);
+    setAiCopilotInput("");
+
+    const ai = await runAiTask<AiChatResult>("copilot-chat", {
+      message: userMessage,
+      history: aiChatHistory.slice(-8).map((entry) => ({
+        role: entry.role,
+        content: entry.content,
+      })),
+      selectedDevice: selectedDevice
+        ? {
+            name: selectedDevice.name,
+            riskClass: selectedDevice.riskClass,
+            status: selectedDevice.status,
+            batch: selectedDevice.batch,
+          }
+        : null,
+      appContext: {
+        totalDevices: devices.length,
+        totalDocs: docs.length,
+      },
+    });
+
+    const assistantEntry: ChatEntry = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content:
+        ai?.assistantReply?.trim() ||
+        "Ich konnte gerade keine belastbare Antwort erzeugen. Bitte konkretisiere die Frage.",
+      timestamp: new Date().toISOString(),
+    };
+    setAiChatHistory((prev) => [...prev, assistantEntry]);
+  };
+
+  const handleGenerateQmsDocumentDraft = async () => {
+    const ai = await runAiTask<AiDocDraftResult>("generate-qms-document", {
+      documentType: aiDocType,
+      productName: newProductName || selectedDevice?.name || "",
+      riskClass: newRiskClass || selectedDevice?.riskClass || "",
+      intendedUse: activeIntendedUseDraft || selectedDevice?.intendedPurpose || "",
+      deviceCategory: iuDeviceCategory,
+      clinicalPurpose: iuClinicalPurpose,
+      targetPopulation: iuTargetPopulation,
+      intendedUser: iuIntendedUser,
+      useEnvironment: iuUseEnvironment,
+      contraindications: iuContraindications,
+      limitations: iuLimitations,
+    });
+
+    if (ai?.contentMarkdown?.trim()) {
+      setAiDocDraft(ai);
+      if (ai.title) setDocName(ai.title);
+      if (ai.documentType) {
+        const bestCategory = DOC_CATEGORIES.find((cat) =>
+          cat.toLowerCase().includes(ai.documentType!.toLowerCase())
+        );
+        if (bestCategory) setDocCategory(bestCategory);
+      }
+      return;
+    }
+
+    setMessage(
+      "KI konnte keinen Dokumententwurf erstellen. Bitte mehr Kontext eingeben und erneut versuchen."
     );
   };
 
@@ -1895,6 +2006,126 @@ if (!user) {
             {message}
           </div>
         )}
+
+        {/* MedSafe GPT Copilot */}
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <h2 className="text-lg font-semibold">MedSafe GPT Copilot</h2>
+            <div className="text-xs text-slate-400">
+              Chat, MDR-Hinweise und automatische QMS-Dokumententwürfe
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-3">
+              <div className="text-xs text-slate-300 font-medium">Copilot Chat</div>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/60 p-3 space-y-2 text-xs">
+                {aiChatHistory.length === 0 ? (
+                  <div className="text-slate-400">
+                    Stelle eine Frage wie: &quot;Welche MDR-Lücken hat dieses Gerät?&quot;
+                  </div>
+                ) : (
+                  aiChatHistory.map((entry) => (
+                    <div key={entry.id} className="space-y-1">
+                      <div
+                        className={
+                          "font-medium " +
+                          (entry.role === "user" ? "text-sky-300" : "text-emerald-300")
+                        }
+                      >
+                        {entry.role === "user" ? "Du" : "MedSafe GPT"}
+                      </div>
+                      <div className="whitespace-pre-wrap text-slate-100">{entry.content}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="flex gap-2">
+                <textarea
+                  className="w-full min-h-[72px] rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                  placeholder="Frag MedSafe GPT nach Risiken, Dokumenten, Audit-Vorbereitung ..."
+                  value={aiCopilotInput}
+                  onChange={(e) => setAiCopilotInput(e.target.value)}
+                />
+                <button
+                  onClick={handleSendCopilotMessage}
+                  disabled={aiBusyTask === "copilot-chat"}
+                  className="self-end rounded-lg border border-sky-500/60 bg-sky-900/30 px-4 py-2 text-sm font-medium hover:bg-sky-800/40 disabled:opacity-60"
+                >
+                  {aiBusyTask === "copilot-chat" ? "Sende…" : "Senden"}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-3">
+              <div className="text-xs text-slate-300 font-medium">QMS Dokument Draft</div>
+              <div className="flex gap-2">
+                <select
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                  value={aiDocType}
+                  onChange={(e) => setAiDocType(e.target.value)}
+                >
+                  <option value="SOP">SOP</option>
+                  <option value="Risk Analysis">Risk Analysis</option>
+                  <option value="IFU">IFU</option>
+                  <option value="CAPA">CAPA</option>
+                  <option value="Change Control">Change Control</option>
+                  <option value="Audit Report">Audit Report</option>
+                </select>
+                <button
+                  onClick={handleGenerateQmsDocumentDraft}
+                  disabled={aiBusyTask === "generate-qms-document"}
+                  className="rounded-lg border border-emerald-500/60 bg-emerald-900/30 px-4 py-2 text-sm font-medium hover:bg-emerald-800/40 disabled:opacity-60"
+                >
+                  {aiBusyTask === "generate-qms-document"
+                    ? "Generating…"
+                    : "Generate Document"}
+                </button>
+              </div>
+
+              {aiDocDraft?.contentMarkdown && (
+                <div className="space-y-2">
+                  <div className="text-xs text-slate-300">
+                    {aiDocDraft.title || "Dokumententwurf"}
+                  </div>
+                  <textarea
+                    className="w-full min-h-[220px] rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-100 outline-none"
+                    value={aiDocDraft.contentMarkdown}
+                    onChange={(e) =>
+                      setAiDocDraft((prev) =>
+                        prev ? { ...prev, contentMarkdown: e.target.value } : prev
+                      )
+                    }
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
+                      onClick={() =>
+                        copyToClipboard(aiDocDraft.contentMarkdown || "")
+                      }
+                    >
+                      Text kopieren
+                    </button>
+                    <button
+                      className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
+                      onClick={() =>
+                        downloadTextFile(
+                          `${(aiDocDraft.title || aiDocType || "qms-draft")
+                            .replace(/\s+/g, "-")
+                            .toLowerCase()}.md`,
+                          aiDocDraft.contentMarkdown || "",
+                          "text/markdown;charset=utf-8"
+                        )
+                      }
+                    >
+                      Als .md herunterladen
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
 
         {/* Neue Geräte */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
