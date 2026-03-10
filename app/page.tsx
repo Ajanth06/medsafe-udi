@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 import Lottie from "lottie-react";
@@ -305,6 +305,27 @@ function generateBasicUdiDi(manufacturerName: string, productName: string): stri
   const manufacturer = slugifyName(manufacturerName || "MFR").replace(/-/g, "").slice(0, 6);
   const product = slugifyName(productName || "DEVICE").replace(/-/g, "").slice(0, 8);
   return `TH-BDI-${manufacturer || "MFR"}-${product || "DEVICE"}`;
+}
+
+type AiSuggestionHintProps = {
+  suggestion: string;
+  onApply: () => void;
+};
+
+function AiSuggestionHint({ suggestion, onApply }: AiSuggestionHintProps) {
+  if (!suggestion.trim()) return null;
+  return (
+    <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-sky-500/30 bg-sky-950/20 px-2 py-1 text-[11px]">
+      <span className="text-sky-100 break-all">KI Vorschlag: {suggestion}</span>
+      <button
+        type="button"
+        onClick={onApply}
+        className="shrink-0 rounded border border-sky-500/50 bg-sky-900/20 px-2 py-0.5 text-[10px] text-sky-100"
+      >
+        Übernehmen
+      </button>
+    </div>
+  );
 }
 
 function generateNonconformityId(): string {
@@ -1022,6 +1043,55 @@ export default function MedSafePage() {
       setNewFmeaId(`FMEA-${slug}`);
     }
   };
+
+  const aiRowSuggestions = useMemo(() => {
+    const inferredType = inferDeviceType(newProductName || "Device");
+    const inferredRiskClass = (() => {
+      const text = `${newProductName} ${iuGenericDeviceGroup}`.toLowerCase();
+      if (
+        text.includes("implant") ||
+        text.includes("schrittmacher") ||
+        text.includes("pacemaker") ||
+        text.includes("stent")
+      ) {
+        return "III";
+      }
+      if (text.includes("software") || text.includes("monitor")) return "IIa";
+      if (text.includes("refrigerator") || text.includes("freez") || text.includes("kühl"))
+        return "I";
+      return "IIa";
+    })();
+
+    return {
+      productName: newProductName.trim() || `${inferredType} ${new Date().getFullYear()}`,
+      manufacturerName: newManufacturerName.trim() || "Muster MedTech GmbH",
+      riskClass: newRiskClass.trim() || inferredRiskClass,
+      genericDeviceGroup: iuGenericDeviceGroup.trim() || inferredType,
+      intendedIndication:
+        iuIntendedIndication.trim() ||
+        `${newProductName || "Das Produkt"} dient der sicheren medizinischen Anwendung gemäß Zweckbestimmung.`,
+      targetPopulation: iuTargetPopulation.trim() || "Erwachsene Patienten",
+      intendedUser: iuIntendedUser.trim() || "Fachpersonal",
+      useEnvironment: iuUseEnvironment.trim() || "Klinik",
+      contraindications:
+        iuContraindications.trim() ||
+        "Nicht anwenden bei ungeeigneter Indikation oder außerhalb der spezifizierten Umgebung.",
+      warningsAndLimitations:
+        iuLimitations.trim() ||
+        "Nur durch geschultes Personal verwenden. Sicherheits- und IFU-Hinweise beachten.",
+    };
+  }, [
+    newProductName,
+    newManufacturerName,
+    newRiskClass,
+    iuGenericDeviceGroup,
+    iuIntendedIndication,
+    iuTargetPopulation,
+    iuIntendedUser,
+    iuUseEnvironment,
+    iuContraindications,
+    iuLimitations,
+  ]);
 
   // ---------- AUTH ----------
 
@@ -2693,6 +2763,35 @@ if (!user) {
           </div>
         )}
 
+        {selectedDevice && (
+          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <h2 className="text-sm font-semibold">UDI Sidebar (wie früher)</h2>
+              <div className="text-[11px] text-slate-400">
+                Schnellansicht für das ausgewählte Gerät
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-2 text-xs">
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="text-slate-400">UDI-DI</div>
+                <div className="break-all text-slate-100">{selectedDevice.udiDi || "–"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="text-slate-400">UDI-PI</div>
+                <div className="break-all text-slate-100">{selectedDevice.udiPi || "–"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="text-slate-400">UDI-Hash</div>
+                <div className="break-all text-slate-100">{selectedDevice.udiHash || "–"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="text-slate-400">Seriennummer</div>
+                <div className="break-all text-slate-100">{selectedDevice.serial || "–"}</div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* MedSafe GPT Copilot */}
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -2750,24 +2849,36 @@ if (!user) {
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <h2 className="text-lg font-semibold">Neue Geräte anlegen</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Produktname (z.B. FREEZO FZ-380)"
-              value={newProductName}
-              onChange={(e) => setNewProductName(e.target.value)}
-            />
-            <select
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              value={newRiskClass}
-              onChange={(e) => setNewRiskClass(e.target.value)}
-            >
-              <option value="">Risikoklasse (I / IIa / IIb / III)</option>
-              <option value="I">I</option>
-              <option value="IIa">IIa</option>
-              <option value="IIb">IIb</option>
-              <option value="III">III</option>
-            </select>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Produktname (z.B. FREEZO FZ-380)"
+                value={newProductName}
+                onChange={(e) => setNewProductName(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.productName}
+                onApply={() => setNewProductName(aiRowSuggestions.productName)}
+              />
+            </div>
+            <div>
+              <select
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                value={newRiskClass}
+                onChange={(e) => setNewRiskClass(e.target.value)}
+              >
+                <option value="">Risikoklasse (I / IIa / IIb / III)</option>
+                <option value="I">I</option>
+                <option value="IIa">IIa</option>
+                <option value="IIb">IIb</option>
+                <option value="III">III</option>
+              </select>
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.riskClass}
+                onApply={() => setNewRiskClass(aiRowSuggestions.riskClass)}
+              />
+            </div>
             <div className="bg-slate-800 rounded-lg px-3 py-2 text-xs border border-slate-700">
               <div className="text-slate-400">Angelegt von</div>
               <div className="text-slate-100 truncate">{createdByLabel}</div>
@@ -2785,13 +2896,19 @@ if (!user) {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Hersteller (Pflicht)"
-              value={newManufacturerName}
-              onChange={(e) => setNewManufacturerName(e.target.value)}
-            />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Hersteller (Pflicht)"
+                value={newManufacturerName}
+                onChange={(e) => setNewManufacturerName(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.manufacturerName}
+                onApply={() => setNewManufacturerName(aiRowSuggestions.manufacturerName)}
+              />
+            </div>
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
               placeholder="Basic UDI-DI (optional, sonst Auto)"
@@ -2848,21 +2965,34 @@ if (!user) {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              placeholder="Generische Gerätegruppe (z.B. Implantierbares Herzgerät, Refrigerator)"
-              value={iuGenericDeviceGroup}
-              onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
-            />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              placeholder="Vorgesehene Patientenpopulation"
-              value={iuTargetPopulation}
-              onChange={(e) => setIuTargetPopulation(e.target.value)}
-            />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                placeholder="Generische Gerätegruppe (z.B. Implantierbares Herzgerät, Refrigerator)"
+                value={iuGenericDeviceGroup}
+                onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.genericDeviceGroup}
+                onApply={() => setIuGenericDeviceGroup(aiRowSuggestions.genericDeviceGroup)}
+              />
+            </div>
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                placeholder="Vorgesehene Patientenpopulation"
+                value={iuTargetPopulation}
+                onChange={(e) => setIuTargetPopulation(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.targetPopulation}
+                onApply={() => setIuTargetPopulation(aiRowSuggestions.targetPopulation)}
+              />
+            </div>
+            <div>
             <select
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
               value={iuIntendedUser}
               onChange={(e) => setIuIntendedUser(e.target.value)}
             >
@@ -2870,8 +3000,14 @@ if (!user) {
                   <option value="Geschultes Laborpersonal">Vorgesehener Anwender: Laborpersonal</option>
                   <option value="Patient / Laie">Vorgesehener Anwender: Patient / Laie</option>
                 </select>
+                <AiSuggestionHint
+                  suggestion={aiRowSuggestions.intendedUser}
+                  onApply={() => setIuIntendedUser(aiRowSuggestions.intendedUser)}
+                />
+            </div>
+            <div>
                 <select
-                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
                   value={iuUseEnvironment}
                   onChange={(e) => setIuUseEnvironment(e.target.value)}
                 >
@@ -2880,27 +3016,50 @@ if (!user) {
                   <option value="Homecare">Nutzungsumgebung: Homecare</option>
                   <option value="OP / sterile Umgebung">Nutzungsumgebung: OP / sterile Umgebung</option>
                 </select>
+                <AiSuggestionHint
+                  suggestion={aiRowSuggestions.useEnvironment}
+                  onApply={() => setIuUseEnvironment(aiRowSuggestions.useEnvironment)}
+                />
               </div>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <textarea
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-                  placeholder="Zweckbestimmung / medizinische Indikation (Pflicht)"
-                  value={iuIntendedIndication}
-                  onChange={(e) => setIuIntendedIndication(e.target.value)}
-                />
-                <textarea
-                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-                  placeholder="Kontraindikationen / Ausschlüsse (MDR Annex I, 23.4c)"
-                  value={iuContraindications}
-                  onChange={(e) => setIuContraindications(e.target.value)}
-                />
-                <textarea
-                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-                  placeholder="Warnhinweise, Vorsichtsmaßnahmen, Leistungsgrenzen"
-                  value={iuLimitations}
-                  onChange={(e) => setIuLimitations(e.target.value)}
-                />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+            <div>
+              <textarea
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+                placeholder="Zweckbestimmung / medizinische Indikation (Pflicht)"
+                value={iuIntendedIndication}
+                onChange={(e) => setIuIntendedIndication(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.intendedIndication}
+                onApply={() => setIuIntendedIndication(aiRowSuggestions.intendedIndication)}
+              />
+            </div>
+            <div>
+              <textarea
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+                placeholder="Kontraindikationen / Ausschlüsse (MDR Annex I, 23.4c)"
+                value={iuContraindications}
+                onChange={(e) => setIuContraindications(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.contraindications}
+                onApply={() => setIuContraindications(aiRowSuggestions.contraindications)}
+              />
+            </div>
+            <div>
+              <textarea
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+                placeholder="Warnhinweise, Vorsichtsmaßnahmen, Leistungsgrenzen"
+                value={iuLimitations}
+                onChange={(e) => setIuLimitations(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.warningsAndLimitations}
+                onApply={() => setIuLimitations(aiRowSuggestions.warningsAndLimitations)}
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
