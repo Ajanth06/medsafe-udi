@@ -1455,11 +1455,6 @@ export default function MedSafePage() {
   // ---------- GERÄTE SPEICHERN ----------
 
   const handleSaveDevice = async () => {
-    if (!user) {
-      setMessage("Bitte zuerst einloggen. Ohne Login kann kein Gerät in Supabase gespeichert werden.");
-      return;
-    }
-
     if (!newProductName.trim()) {
       setMessage("Bitte einen Produktnamen eingeben.");
       return;
@@ -1619,8 +1614,10 @@ export default function MedSafePage() {
           pms_notes: d.pmsNotes ?? null,
           device_category: d.genericDeviceGroup ?? null,
           generic_device_group: d.genericDeviceGroup ?? null,
-          user_id: user.id,
-          created_by: createdByLabel,
+          ...(user?.id ? { user_id: user.id } : {}),
+          ...(createdByLabel && createdByLabel !== "—"
+            ? { created_by: createdByLabel }
+            : {}),
         })) as Array<Record<string, unknown>>;
 
         for (let attempt = 0; attempt < 25 && error; attempt++) {
@@ -1645,7 +1642,7 @@ export default function MedSafePage() {
           }
 
           const notNullColumn = extractNotNullColumnName(errorMessage);
-          if (notNullColumn === "user_id") {
+          if (notNullColumn === "user_id" && user?.id) {
             compatibilityPayload = compatibilityPayload.map((row) => ({
               ...row,
               user_id: user.id,
@@ -1657,7 +1654,7 @@ export default function MedSafePage() {
           if (notNullColumn === "created_by") {
             compatibilityPayload = compatibilityPayload.map((row) => ({
               ...row,
-              created_by: createdByLabel,
+              created_by: createdByLabel && createdByLabel !== "—" ? createdByLabel : "system",
             }));
             const retry = await supabase.from("devices").insert(compatibilityPayload);
             error = retry.error ?? null;
@@ -1865,10 +1862,6 @@ export default function MedSafePage() {
   };
 
   const handleUploadDoc = async () => {
-    if (!user) {
-      setMessage("Bitte zuerst einloggen.");
-      return;
-    }
     if (!selectedDeviceId) {
       setMessage("Bitte zuerst ein Gerät auswählen.");
       return;
@@ -1926,8 +1919,10 @@ export default function MedSafePage() {
       let payload = {
         id: newDoc.id,
         ...mapDocToDb(newDoc),
-        user_id: user.id,
-        created_by: createdByLabel,
+        ...(user?.id ? { user_id: user.id } : {}),
+        ...(createdByLabel && createdByLabel !== "—"
+          ? { created_by: createdByLabel }
+          : {}),
       } as Record<string, unknown>;
       let { error } = await supabase.from("docs").insert(payload);
 
@@ -1959,14 +1954,17 @@ export default function MedSafePage() {
         }
 
         const notNullColumn = extractNotNullColumnName(errorMessage);
-        if (notNullColumn === "user_id") {
+        if (notNullColumn === "user_id" && user?.id) {
           payload = { ...payload, user_id: user.id };
           const retry = await supabase.from("docs").insert(payload);
           error = retry.error ?? null;
           continue;
         }
         if (notNullColumn === "created_by") {
-          payload = { ...payload, created_by: createdByLabel };
+          payload = {
+            ...payload,
+            created_by: createdByLabel && createdByLabel !== "—" ? createdByLabel : "system",
+          };
           const retry = await supabase.from("docs").insert(payload);
           error = retry.error ?? null;
           continue;
