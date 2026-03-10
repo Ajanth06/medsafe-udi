@@ -219,6 +219,25 @@ type AiApiResponse<T> = {
   error?: string;
 };
 
+type ComplianceAreaKey =
+  | "device_data"
+  | "udi_integrity"
+  | "documentation"
+  | "risk_management"
+  | "governance";
+
+type ComplianceArea = {
+  key: ComplianceAreaKey;
+  label: string;
+  score: number;
+  reasons: string[];
+};
+
+type ComplianceBreakdown = {
+  overall: number;
+  areas: ComplianceArea[];
+};
+
 type AiChatResult = {
   assistantReply?: string;
   actionItems?: string[];
@@ -435,22 +454,6 @@ function getDeviceValidationWarnings(device: Device, allDevices: Device[]): stri
   return warnings;
 }
 
-function computeDeviceComplianceScore(device: Device, deviceDocs: Doc[]): number {
-  let score = 100;
-  const missingDocs = findMissingRequiredDocs(deviceDocs);
-
-  if (!device.riskClass?.trim()) score -= 12;
-  if (!device.intendedPurpose?.trim()) score -= 10;
-  if (!device.udiPi?.trim()) score -= 8;
-  if (!device.validationStatus?.trim()) score -= 6;
-  score -= missingDocs.length * 8;
-
-  if (device.status === "blocked") score -= 10;
-  if (device.status === "recall") score -= 18;
-
-  return Math.max(0, Math.min(100, score));
-}
-
 function isDocApproved(doc: Doc): boolean {
   const status = (doc.docStatus || "").toLowerCase();
   return (status === "final" || status === "controlled") && Boolean(doc.approvedBy?.trim());
@@ -478,6 +481,185 @@ function getRequiredDocTypesForCategory(category?: string): DocType[] {
     CATEGORY_REQUIRED_DOC_MATRIX[key] ||
     CATEGORY_REQUIRED_DOC_MATRIX.default
   );
+}
+
+function computeComplianceBreakdown(
+  device: Device,
+  deviceDocs: Doc[],
+  allDevices: Device[],
+  deviceAuditEntries: AuditEntry[] = []
+): ComplianceBreakdown {
+  const byKey = (key: ComplianceAreaKey, label: string, score: number, reasons: string[]) => ({
+    key,
+    label,
+    score: Math.max(0, Math.min(100, Math.round(score))),
+    reasons,
+  });
+
+  // 1) Device Data
+  let deviceDataScore = 100;
+  const deviceDataReasons: string[] = [];
+  if (!device.deviceCategory?.trim()) {
+    deviceDataScore -= 20;
+    deviceDataReasons.push("Gerätekategorie fehlt.");
+  }
+  if (!device.riskClass?.trim()) {
+    deviceDataScore -= 20;
+    deviceDataReasons.push("Risikoklasse fehlt.");
+  }
+  if (!device.intendedPurpose?.trim()) {
+    deviceDataScore -= 25;
+    deviceDataReasons.push("Zweckbestimmung fehlt.");
+  }
+  if (!device.batch?.trim()) {
+    deviceDataScore -= 15;
+    deviceDataReasons.push("Charge fehlt.");
+  }
+  if (!device.serial?.trim()) {
+    deviceDataScore -= 20;
+    deviceDataReasons.push("Seriennummer fehlt.");
+  }
+
+  // 2) UDI Integrity
+  let udiScore = 100;
+  const udiReasons: string[] = [];
+  if (!device.udiDi?.trim()) {
+    udiScore -= 25;
+    udiReasons.push("UDI-DI fehlt.");
+  } else if (!/^TH-DI-\d{6}$/.test(device.udiDi)) {
+    udiScore -= 12;
+    udiReasons.push("UDI-DI-Format ist unklar.");
+  }
+  if (!device.udiPi?.trim()) {
+    udiScore -= 20;
+    udiReasons.push("UDI-PI fehlt.");
+  }
+  if (!device.udiHash?.trim()) {
+    udiScore -= 20;
+    udiReasons.push("UDI-Hash fehlt.");
+  }
+  if (device.serial && !/^TH-SN-\d{6}-\d{3}$/.test(device.serial)) {
+    udiScore -= 10;
+    udiReasons.push("Seriennummer-Format ist unklar.");
+  }
+  if (device.serial && allDevices.filter((d) => d.serial === device.serial).length > 1) {
+    udiScore -= 15;
+    udiReasons.push("Doppelte Seriennummer erkannt.");
+  }
+  if (device.batch && !/^\d{6}$/.test(device.batch)) {
+    udiScore -= 8;
+    udiReasons.push("Charge hat kein erwartetes Format.");
+  }
+
+  // 3) Documentation
+  const requiredDocTypes = getRequiredDocTypesForCategory(
+    device.deviceCategory || inferDeviceType(device.name || "")
+  );
+  const presentRequiredTypes = requiredDocTypes.filter((requiredType) =>
+    deviceDocs.some((doc) => detectDocType(doc) === requiredType)
+  );
+  const approvedRequiredTypes = requiredDocTypes.filter((requiredType) =>
+    deviceDocs.some((doc) => detectDocType(doc) === requiredType && isDocApproved(doc))
+  );
+  const missingRequiredTypes = requiredDocTypes.filter(
+    (requiredType) => !presentRequiredTypes.includes(requiredType)
+  );
+  const unapprovedRequiredCount =
+    presentRequiredTypes.length - approvedRequiredTypes.length;
+
+  let documentationScore = 100;
+  const documentationReasons: string[] = [];
+  documentationScore -= missingRequiredTypes.length * 15;
+  documentationScore -= Math.max(0, unapprovedRequiredCount) * 6;
+  if (missingRequiredTypes.length > 0) {
+    documentationReasons.push(
+      `Fehlende Pflichtdokumente: ${missingRequiredTypes
+        .map((type) => getDocTypeLabel(type))
+        .join(", ")}.`
+    );
+  }
+  if (unapprovedRequiredCount > 0) {
+    documentationReasons.push(
+      `${unapprovedRequiredCount} Pflichtdokument(e) sind noch nicht freigegeben.`
+    );
+  }
+
+  // 4) Risk Management
+  let riskManagementScore = 100;
+  const riskManagementReasons: string[] = [];
+  const hasRiskManagementFile = deviceDocs.some(
+    (doc) => detectDocType(doc) === "risk_management_file"
+  );
+  if (!device.riskClass?.trim()) {
+    riskManagementScore -= 25;
+    riskManagementReasons.push("Risikoklasse fehlt.");
+  }
+  if (!hasRiskManagementFile) {
+    riskManagementScore -= 30;
+    riskManagementReasons.push("Risk Management File fehlt.");
+  }
+  if (device.status === "blocked") {
+    riskManagementScore -= 20;
+    riskManagementReasons.push("Gerät in Quarantäne-Status.");
+  }
+  if (device.status === "recall") {
+    riskManagementScore -= 35;
+    riskManagementReasons.push("Gerät im Recall-Status.");
+  }
+  if (
+    device.nonconformitySeverity === "kritisch" &&
+    !device.nonconformityAction?.trim()
+  ) {
+    riskManagementScore -= 12;
+    riskManagementReasons.push("Kritische Abweichung ohne dokumentierte Maßnahme.");
+  }
+
+  // 5) Governance
+  let governanceScore = 100;
+  const governanceReasons: string[] = [];
+  if (!device.validationStatus?.trim()) {
+    governanceScore -= 20;
+    governanceReasons.push("Validierungsstatus nicht gepflegt.");
+  }
+  if (!device.dmrId?.trim()) {
+    governanceScore -= 15;
+    governanceReasons.push("DMR-ID fehlt.");
+  }
+  if (!device.dhrId?.trim()) {
+    governanceScore -= 15;
+    governanceReasons.push("DHR-ID fehlt.");
+  }
+  if (deviceDocs.filter(isDocApproved).length === 0) {
+    governanceScore -= 20;
+    governanceReasons.push("Kein freigegebenes Dokument vorhanden.");
+  }
+  if (deviceAuditEntries.length === 0) {
+    governanceScore -= 10;
+    governanceReasons.push("Keine Audit-Aktivitäten protokolliert.");
+  }
+
+  const areas: ComplianceArea[] = [
+    byKey("device_data", "Device Data", deviceDataScore, deviceDataReasons),
+    byKey("udi_integrity", "UDI Integrity", udiScore, udiReasons),
+    byKey("documentation", "Documentation", documentationScore, documentationReasons),
+    byKey("risk_management", "Risk Management", riskManagementScore, riskManagementReasons),
+    byKey("governance", "Governance", governanceScore, governanceReasons),
+  ];
+
+  const overall = Math.round(
+    areas.reduce((sum, area) => sum + area.score, 0) / areas.length
+  );
+
+  return { overall, areas };
+}
+
+function computeDeviceComplianceScore(
+  device: Device,
+  deviceDocs: Doc[],
+  allDevices: Device[],
+  deviceAuditEntries: AuditEntry[] = []
+): number {
+  return computeComplianceBreakdown(device, deviceDocs, allDevices, deviceAuditEntries).overall;
 }
 
 function buildAiInsightDraft(
@@ -1996,8 +2178,19 @@ export default function MedSafePage() {
   const selectedValidationWarnings = selectedDevice
     ? getDeviceValidationWarnings(selectedDevice, devices)
     : [];
+  const selectedDeviceAuditEntries = selectedDevice
+    ? audit.filter((entry) => entry.deviceId === selectedDevice.id)
+    : [];
+  const selectedComplianceBreakdown = selectedDevice
+    ? computeComplianceBreakdown(
+        selectedDevice,
+        selectedDeviceDocs,
+        devices,
+        selectedDeviceAuditEntries
+      )
+    : null;
   const selectedComplianceScore = selectedDevice
-    ? computeDeviceComplianceScore(selectedDevice, selectedDeviceDocs)
+    ? selectedComplianceBreakdown?.overall ?? 0
     : null;
 
 
@@ -2775,7 +2968,11 @@ if (!user) {
                 const hasRiskStatus = devicesOfGroup.some(
                   (d) => d.status === "blocked" || d.status === "recall"
                 );
-                const complianceScore = computeDeviceComplianceScore(device, docHealth.groupDocs);
+                const complianceScore = computeDeviceComplianceScore(
+                  device,
+                  docHealth.groupDocs,
+                  devices
+                );
 
                 const statusClass =
                   statusLabel === "Gemischter Status"
@@ -3326,6 +3523,32 @@ if (!user) {
                   </div>
                 )}
               </div>
+
+              {selectedComplianceBreakdown && (
+                <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs">
+                  <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                    Compliance Score Aufschlüsselung
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                    {selectedComplianceBreakdown.areas.map((area) => (
+                      <div
+                        key={area.key}
+                        className="rounded-lg border border-slate-700 bg-slate-800/70 px-2 py-2"
+                      >
+                        <div className="text-slate-300 text-[10px]">{area.label}</div>
+                        <div className="text-base font-semibold text-slate-100">
+                          {area.score}%
+                        </div>
+                        {area.reasons.length > 0 && (
+                          <div className="mt-1 text-[10px] text-amber-200">
+                            {area.reasons[0]}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {selectedValidationWarnings.length > 0 && (
                 <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
