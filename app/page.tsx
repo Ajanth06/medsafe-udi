@@ -2351,6 +2351,19 @@ export default function MedSafePage() {
   const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
   const activeAiInsight = aiInsightServer ?? aiInsight;
   const activeIntendedUseDraft = intendedUseDraftText || aiIntendedUseServer || "";
+  const autoUdiPreview = useMemo(() => {
+    const now = new Date();
+    const productionDate = formatDateYYMMDD(now);
+    const batch = productionDate;
+    const devicesSameBatch = devices.filter((d) => d.batch === batch);
+    const serialRunningNumber = String(devicesSameBatch.length + 1).padStart(3, "0");
+    const deviceIndex = devices.length + 1;
+    const udiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
+    const serial = `TH-SN-${productionDate}-${serialRunningNumber}`;
+    const udiPi = `(11)${productionDate}(21)${serial}(10)${batch}`;
+    return { udiDi, serial, udiPi };
+  }, [devices]);
+  const [autoUdiPreviewHash, setAutoUdiPreviewHash] = useState("");
 
   const recentDevicesForUdiTable = useMemo(
     () =>
@@ -2362,6 +2375,20 @@ export default function MedSafePage() {
         .slice(0, 25),
     [devices]
   );
+
+  useEffect(() => {
+    let isMounted = true;
+    hashUdi(autoUdiPreview.udiDi, autoUdiPreview.serial)
+      .then((hash) => {
+        if (isMounted) setAutoUdiPreviewHash(hash);
+      })
+      .catch(() => {
+        if (isMounted) setAutoUdiPreviewHash("");
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [autoUdiPreview.udiDi, autoUdiPreview.serial]);
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => {
         if (d.deviceId === selectedDevice.id) return true;
@@ -2891,6 +2918,28 @@ if (!user) {
                 setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
               }
             />
+          </div>
+
+          <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 space-y-2">
+            <div className="text-xs font-medium text-slate-200">
+              Auto-UDI Vorschau (separat)
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+              <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2">
+                <div className="text-slate-400">UDI-DI</div>
+                <div className="break-all text-slate-100">{autoUdiPreview.udiDi}</div>
+              </div>
+              <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2">
+                <div className="text-slate-400">UDI-PI</div>
+                <div className="break-all text-slate-100">{autoUdiPreview.udiPi}</div>
+              </div>
+              <div className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2">
+                <div className="text-slate-400">Crypto-Hash</div>
+                <div className="break-all text-slate-100">
+                  {autoUdiPreviewHash || "Wird berechnet..."}
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
