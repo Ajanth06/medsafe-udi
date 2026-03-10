@@ -1490,6 +1490,24 @@ export default function MedSafePage() {
     const resolvedRiskClass = newRiskClass.trim() || aiRowSuggestions.riskClass;
     const resolvedGenericGroup =
       iuGenericDeviceGroup.trim() || aiRowSuggestions.genericDeviceGroup;
+    const resolvedWarnings =
+      iuLimitations.trim() || aiRowSuggestions.warningsAndLimitations;
+    const resolvedDeviceDescription =
+      newDeviceDescription.trim() ||
+      `${newProductName || "Das Produkt"} ist ein ${
+        resolvedGenericGroup || inferDeviceType(newProductName)
+      } für die sichere Anwendung gemäß Zweckbestimmung.`;
+    const resolvedPrinciple =
+      newPrincipleOfOperation.trim() ||
+      "Kontrollierter Gerätebetrieb gemäß IFU und spezifizierter Leistungsgrenzen.";
+    const resolvedKeyComponents =
+      newKeyComponents.trim() || "Steuereinheit, sicherheitsrelevante Komponenten, Schnittstellen.";
+    const resolvedRiskFileId =
+      newRiskFileId.trim() ||
+      `RMF-${slugifyName(newProductName || "DEVICE").slice(0, 10)}`;
+    const resolvedFmeaId =
+      newFmeaId.trim() ||
+      `FMEA-${slugifyName(newProductName || "DEVICE").slice(0, 10)}`;
     const resolvedIntendedPurpose =
       activeIntendedUseDraft.trim() || aiRowSuggestions.intendedIndication;
     const autoBasicUdiDi = generateBasicUdiDi(resolvedManufacturer, newProductName);
@@ -1525,19 +1543,19 @@ export default function MedSafePage() {
         createdAt: new Date().toISOString(),
         manufacturerName: resolvedManufacturer,
         deviceVersionVariants: newDeviceVersionVariants.trim(),
-        deviceDescription: newDeviceDescription.trim(),
-        principleOfOperation: newPrincipleOfOperation.trim(),
-        keyComponents: newKeyComponents.trim(),
+        deviceDescription: resolvedDeviceDescription,
+        principleOfOperation: resolvedPrinciple,
+        keyComponents: resolvedKeyComponents,
         accessories: newAccessories.trim(),
-        riskFileId: newRiskFileId.trim(),
-        fmeaId: newFmeaId.trim(),
+        riskFileId: resolvedRiskFileId,
+        fmeaId: resolvedFmeaId,
         hazardAnalysisRef: newHazardAnalysisRef.trim(),
         ceStatus: newCeStatus.trim(),
         notifiedBody: newNotifiedBody.trim(),
         conformityRoute: newConformityRoute.trim(),
         clinicalEvaluationRef: newClinicalEvaluationRef.trim(),
         gsprChecklistLink: newGsprChecklistLink.trim(),
-        warningsPrecautions: iuLimitations.trim(),
+        warningsPrecautions: resolvedWarnings,
         batch,
         productionDate,
         udiPi,
