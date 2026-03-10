@@ -71,9 +71,18 @@ function buildPrompt(task: AiTask, payload: unknown): string {
       ].join("\n");
     case "intended-use":
       return [
+        "Handle wie ein MDR-/ISO-13485-Professor.",
         "Erzeuge eine professionelle Draft-Zweckbestimmung (Intended Use) auf Deutsch.",
-        "Antworte als JSON mit Feld:",
-        `{"intendedUse": string}`,
+        "Nutze streng den gelieferten Kontext und erfinde keine klinischen Claims.",
+        "Antworte als JSON mit Feldern:",
+        `{
+  "intendedUse": string,
+  "missingContext": string[],
+  "regulatoryWarnings": string[],
+  "reviewStatusSuggestion": "Draft" | "Review" | "Approved"
+}`,
+        "Wenn relevante Angaben fehlen, liste sie in missingContext.",
+        "Wenn der Text für Freigabe noch riskant ist, setze reviewStatusSuggestion auf Review.",
         `Input:\n${input}`,
       ].join("\n");
     default:

@@ -136,6 +136,15 @@ type AiApiResponse<T> = {
   error?: string;
 };
 
+type IntendedUseReviewStatus = "Draft" | "Review" | "Approved";
+
+type IntendedUseAiResult = {
+  intendedUse?: string;
+  missingContext?: string[];
+  regulatoryWarnings?: string[];
+  reviewStatusSuggestion?: string;
+};
+
 // ---------- HELFER ----------
 
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
@@ -518,6 +527,21 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
+  const [iuDeviceCategory, setIuDeviceCategory] = useState("");
+  const [iuClinicalPurpose, setIuClinicalPurpose] = useState("");
+  const [iuTargetPopulation, setIuTargetPopulation] = useState("");
+  const [iuIntendedUser, setIuIntendedUser] = useState("Fachpersonal");
+  const [iuUseEnvironment, setIuUseEnvironment] = useState("Klinik");
+  const [iuContraindications, setIuContraindications] = useState("");
+  const [iuLimitations, setIuLimitations] = useState("");
+  const [iuReviewStatus, setIuReviewStatus] =
+    useState<IntendedUseReviewStatus>("Draft");
+  const [intendedUseDraftText, setIntendedUseDraftText] = useState("");
+  const [intendedUseTouched, setIntendedUseTouched] = useState(false);
+  const [iuMissingContext, setIuMissingContext] = useState<string[]>([]);
+  const [iuRegulatoryWarnings, setIuRegulatoryWarnings] = useState<string[]>(
+    []
+  );
   const createdByLabel =
     (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
 
@@ -673,6 +697,8 @@ export default function MedSafePage() {
     if (!newProductName.trim()) {
       setAiInsightServer(null);
       setAiIntendedUseServer(null);
+      setIuMissingContext([]);
+      setIuRegulatoryWarnings([]);
       return;
     }
 
@@ -681,21 +707,49 @@ export default function MedSafePage() {
         productName: newProductName.trim(),
         riskClass: newRiskClass || "",
         quantity,
+        deviceCategory: iuDeviceCategory || "",
+        clinicalPurpose: iuClinicalPurpose || "",
       });
       if (insight) setAiInsightServer(insight);
 
-      const intended = await runAiTask<{ intendedUse?: string }>("intended-use", {
+      const intended = await runAiTask<IntendedUseAiResult>("intended-use", {
         productName: newProductName.trim(),
         riskClass: newRiskClass || "",
         inferredDeviceType: inferDeviceType(newProductName),
+        deviceCategory: iuDeviceCategory || "",
+        clinicalPurpose: iuClinicalPurpose || "",
+        targetPopulation: iuTargetPopulation || "",
+        intendedUser: iuIntendedUser || "",
+        useEnvironment: iuUseEnvironment || "",
+        contraindications: iuContraindications || "",
+        limitations: iuLimitations || "",
       });
       if (intended?.intendedUse) {
         setAiIntendedUseServer(intended.intendedUse);
+        if (!intendedUseTouched) {
+          setIntendedUseDraftText(intended.intendedUse);
+        }
       }
+      setIuMissingContext(Array.isArray(intended?.missingContext) ? intended.missingContext : []);
+      setIuRegulatoryWarnings(
+        Array.isArray(intended?.regulatoryWarnings) ? intended.regulatoryWarnings : []
+      );
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [newProductName, newRiskClass, quantity]);
+  }, [
+    newProductName,
+    newRiskClass,
+    quantity,
+    iuDeviceCategory,
+    iuClinicalPurpose,
+    iuTargetPopulation,
+    iuIntendedUser,
+    iuUseEnvironment,
+    iuContraindications,
+    iuLimitations,
+    intendedUseTouched,
+  ]);
 
 
   // ---------- AUDIT ----------
@@ -743,11 +797,62 @@ export default function MedSafePage() {
     }
   };
 
+  const handleGenerateIntendedUseDraft = async () => {
+    if (!newProductName.trim()) {
+      setMessage("Bitte zuerst einen Produktnamen eingeben.");
+      return;
+    }
+
+    const intended = await runAiTask<IntendedUseAiResult>("intended-use", {
+      productName: newProductName.trim(),
+      riskClass: newRiskClass || "",
+      inferredDeviceType: inferDeviceType(newProductName),
+      deviceCategory: iuDeviceCategory || "",
+      clinicalPurpose: iuClinicalPurpose || "",
+      targetPopulation: iuTargetPopulation || "",
+      intendedUser: iuIntendedUser || "",
+      useEnvironment: iuUseEnvironment || "",
+      contraindications: iuContraindications || "",
+      limitations: iuLimitations || "",
+    });
+
+    if (intended?.intendedUse?.trim()) {
+      setAiIntendedUseServer(intended.intendedUse);
+      setIntendedUseDraftText(intended.intendedUse);
+      setIntendedUseTouched(false);
+      setIuMissingContext(
+        Array.isArray(intended.missingContext) ? intended.missingContext : []
+      );
+      setIuRegulatoryWarnings(
+        Array.isArray(intended.regulatoryWarnings) ? intended.regulatoryWarnings : []
+      );
+      if (intended.reviewStatusSuggestion === "Review") {
+        setIuReviewStatus("Review");
+      }
+      return;
+    }
+
+    const fallback = buildIntendedUseDraft(
+      newProductName.trim(),
+      inferDeviceType(newProductName)
+    );
+    setIntendedUseDraftText(fallback);
+    setIntendedUseTouched(false);
+  };
+
   // ---------- GERÄTE SPEICHERN ----------
 
   const handleSaveDevice = async () => {
     if (!newProductName.trim()) {
       setMessage("Bitte einen Produktnamen eingeben.");
+      return;
+    }
+    if (!iuDeviceCategory.trim()) {
+      setMessage("Bitte eine Gerätekategorie für den Intended-Use-Draft angeben.");
+      return;
+    }
+    if (!iuClinicalPurpose.trim()) {
+      setMessage("Bitte den klinischen Zweck angeben (MDR-relevant).");
       return;
     }
 
@@ -767,7 +872,7 @@ export default function MedSafePage() {
     const nameSlug = slugifyName(newProductName);
     const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
     const intendedUseDraft =
-      aiIntendedUseServer ||
+      activeIntendedUseDraft ||
       buildIntendedUseDraft(newProductName.trim(), inferDeviceType(newProductName));
 
     const newDevices: Device[] = [];
@@ -804,7 +909,7 @@ export default function MedSafePage() {
         isArchived: false,
         dmrId: dmrIdForBatch,
         dhrId,
-        validationStatus: "",
+        validationStatus: `IntendedUse-${iuReviewStatus}`,
         nonconformityCategory: "",
         nonconformitySeverity: "",
         nonconformityAction: "",
@@ -838,6 +943,19 @@ export default function MedSafePage() {
       setNewProductName("");
       setQuantity(1);
       setNewRiskClass("");
+      setIuDeviceCategory("");
+      setIuClinicalPurpose("");
+      setIuTargetPopulation("");
+      setIuIntendedUser("Fachpersonal");
+      setIuUseEnvironment("Klinik");
+      setIuContraindications("");
+      setIuLimitations("");
+      setIuReviewStatus("Draft");
+      setIntendedUseDraftText("");
+      setIntendedUseTouched(false);
+      setIuMissingContext([]);
+      setIuRegulatoryWarnings([]);
+      setAiIntendedUseServer(null);
       setSelectedDeviceId(newDevices[0]?.id ?? null);
 
       if (qty === 1) {
@@ -1464,7 +1582,8 @@ export default function MedSafePage() {
   );
   const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
   const activeAiInsight = aiInsightServer ?? aiInsight;
-  const activeIntendedUseDraft = aiIntendedUseServer ?? aiIntendedUseDraft;
+  const activeIntendedUseDraft =
+    intendedUseDraftText || aiIntendedUseServer || aiIntendedUseDraft;
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => d.deviceId === selectedDevice.id)
     : [];
@@ -1792,9 +1911,72 @@ if (!user) {
             />
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Gerätekategorie (z.B. Refrigerator, Implantat)"
+              value={iuDeviceCategory}
+              onChange={(e) => setIuDeviceCategory(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Zielpopulation / Material"
+              value={iuTargetPopulation}
+              onChange={(e) => setIuTargetPopulation(e.target.value)}
+            />
+            <select
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              value={iuIntendedUser}
+              onChange={(e) => setIuIntendedUser(e.target.value)}
+            >
+              <option value="Fachpersonal">Anwender: Fachpersonal</option>
+              <option value="Geschultes Laborpersonal">Anwender: Laborpersonal</option>
+              <option value="Patient / Laie">Anwender: Patient / Laie</option>
+            </select>
+            <select
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              value={iuUseEnvironment}
+              onChange={(e) => setIuUseEnvironment(e.target.value)}
+            >
+              <option value="Klinik">Umgebung: Klinik</option>
+              <option value="Labor">Umgebung: Labor</option>
+              <option value="Homecare">Umgebung: Homecare</option>
+              <option value="OP / sterile Umgebung">Umgebung: OP / sterile Umgebung</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <textarea
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+              placeholder="Klinischer Zweck (Pflicht für belastbaren Intended Use)"
+              value={iuClinicalPurpose}
+              onChange={(e) => setIuClinicalPurpose(e.target.value)}
+            />
+            <textarea
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+              placeholder="Kontraindikationen / Ausschlüsse"
+              value={iuContraindications}
+              onChange={(e) => setIuContraindications(e.target.value)}
+            />
+            <textarea
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+              placeholder="Grenzen / Leistungsgrenzen"
+              value={iuLimitations}
+              onChange={(e) => setIuLimitations(e.target.value)}
+            />
+          </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
             <div className="xl:col-span-2 flex flex-wrap gap-2">
+              <button
+                onClick={handleGenerateIntendedUseDraft}
+                disabled={aiBusyTask === "intended-use"}
+                className="mt-2 inline-flex items-center rounded-lg border border-violet-500/60 bg-violet-900/30 hover:bg-violet-800/40 px-4 py-2 text-sm font-medium"
+              >
+                {aiBusyTask === "intended-use"
+                  ? "Generating…"
+                  : "Generate Intended Use Draft"}
+              </button>
               <button
                 onClick={handleSaveDevice}
                 className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
@@ -1808,6 +1990,17 @@ if (!user) {
               >
                 {aiBusyTask === "fmea-draft" ? "Generating…" : "Generate FMEA Draft"}
               </button>
+              <select
+                className="mt-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                value={iuReviewStatus}
+                onChange={(e) =>
+                  setIuReviewStatus(e.target.value as IntendedUseReviewStatus)
+                }
+              >
+                <option value="Draft">Intended Use Status: Draft</option>
+                <option value="Review">Intended Use Status: Review</option>
+                <option value="Approved">Intended Use Status: Approved</option>
+              </select>
             </div>
             <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 px-4 py-3 text-xs space-y-2">
               <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200">
@@ -1832,9 +2025,46 @@ if (!user) {
           {activeIntendedUseDraft && (
             <div className="rounded-xl border border-violet-500/30 bg-violet-950/25 px-4 py-3 text-xs">
               <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200 mb-1">
-                Auto Intended Use (Draft)
+                Intended Use Draft (MDR Review)
               </div>
-              <div className="text-slate-200">{activeIntendedUseDraft}</div>
+              <textarea
+                className="w-full min-h-[130px] rounded-lg border border-violet-500/30 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400"
+                value={activeIntendedUseDraft}
+                onChange={(e) => {
+                  setIntendedUseDraftText(e.target.value);
+                  setIntendedUseTouched(true);
+                }}
+              />
+              <div className="mt-2 flex items-center gap-2 text-[11px]">
+                <span className="text-slate-400">Workflow:</span>
+                <span className="rounded-full border border-violet-400/40 bg-violet-900/30 px-2 py-0.5 text-violet-200">
+                  {iuReviewStatus}
+                </span>
+              </div>
+              {iuMissingContext.length > 0 && (
+                <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-amber-100">
+                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em]">
+                    Fehlender Kontext
+                  </div>
+                  <ul className="list-disc pl-4">
+                    {iuMissingContext.map((ctx) => (
+                      <li key={ctx}>{ctx}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {iuRegulatoryWarnings.length > 0 && (
+                <div className="mt-2 rounded-lg border border-rose-500/30 bg-rose-950/20 px-3 py-2 text-rose-100">
+                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em]">
+                    Regulatory Warnings
+                  </div>
+                  <ul className="list-disc pl-4">
+                    {iuRegulatoryWarnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
