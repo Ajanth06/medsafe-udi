@@ -120,13 +120,6 @@ const DOC_CATEGORIES = [
   "Sonstiges",
 ];
 
-const WARNING_SUGGESTIONS = [
-  "Nur durch geschultes Fachpersonal anwenden.",
-  "Vor Gebrauch IFU vollständig lesen.",
-  "Außerhalb spezifizierter Temperaturbereiche nicht betreiben.",
-  "Bei sichtbarer Beschädigung nicht verwenden.",
-  "Nach Wartungsintervallen gemäß QMS prüfen.",
-];
 
 const DOC_TYPE_OPTIONS: Array<{ value: DocType; label: string; patterns: string[] }> = [
   {
@@ -291,12 +284,26 @@ type IntendedUseAiResult = {
 
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
   const input = `${udiDi}|${serial}`;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-  return hashHex;
+  const hasWebCrypto =
+    typeof crypto !== "undefined" &&
+    typeof crypto.subtle !== "undefined" &&
+    typeof crypto.subtle.digest === "function";
+
+  if (hasWebCrypto) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Fallback for environments where WebCrypto is unavailable.
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  }
+  return Math.abs(h >>> 0).toString(16).padStart(8, "0");
 }
 
 function formatDateYYMMDD(date: Date): string {
@@ -316,26 +323,6 @@ function generateBasicUdiDi(manufacturerName: string, productName: string): stri
   return `TH-BDI-${manufacturer || "MFR"}-${product || "DEVICE"}`;
 }
 
-type AiSuggestionHintProps = {
-  suggestion: string;
-  onApply: () => void;
-};
-
-function AiSuggestionHint({ suggestion, onApply }: AiSuggestionHintProps) {
-  if (!suggestion.trim()) return null;
-  return (
-    <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-sky-500/30 bg-sky-950/20 px-2 py-1 text-[11px]">
-      <span className="text-sky-100 break-all">KI Vorschlag: {suggestion}</span>
-      <button
-        type="button"
-        onClick={onApply}
-        className="shrink-0 rounded border border-sky-500/50 bg-sky-900/20 px-2 py-0.5 text-[10px] text-sky-100"
-      >
-        Übernehmen
-      </button>
-    </div>
-  );
-}
 
 function generateNonconformityId(): string {
   const year = new Date().getFullYear();
@@ -1028,35 +1015,6 @@ export default function MedSafePage() {
   const [aiCopilotInput, setAiCopilotInput] = useState("");
   const [aiChatHistory, setAiChatHistory] = useState<ChatEntry[]>([]);
 
-  const applyMdrFieldSuggestions = () => {
-    const inferred = inferDeviceType(newProductName || "Device");
-    if (!newDeviceDescription.trim()) {
-      setNewDeviceDescription(
-        `${newProductName || "Das Produkt"} ist ein ${inferred} für die sichere Anwendung gemäß Zweckbestimmung.`
-      );
-    }
-    if (!newPrincipleOfOperation.trim()) {
-      setNewPrincipleOfOperation("Kontrollierter Gerätebetrieb gemäß IFU und spezifizierter Leistungsgrenzen.");
-    }
-    if (!newKeyComponents.trim()) {
-      setNewKeyComponents("Steuereinheit, sicherheitsrelevante Komponenten, Schnittstellen.");
-    }
-    if (!newCeStatus.trim()) {
-      setNewCeStatus("in Vorbereitung");
-    }
-    if (!newConformityRoute.trim()) {
-      setNewConformityRoute("MDR 2017/745");
-    }
-    if (!newRiskFileId.trim()) {
-      const slug = slugifyName(newProductName || "DEVICE").slice(0, 10);
-      setNewRiskFileId(`RMF-${slug}`);
-    }
-    if (!newFmeaId.trim()) {
-      const slug = slugifyName(newProductName || "DEVICE").slice(0, 10);
-      setNewFmeaId(`FMEA-${slug}`);
-    }
-  };
-
   const aiRowSuggestions = useMemo(() => {
     const inferredType = inferDeviceType(newProductName || "Device");
     const inferredRiskClass = (() => {
@@ -1717,7 +1675,8 @@ export default function MedSafePage() {
       );
     } catch (e: any) {
       console.error("Supabase Devices Insert Exception:", e);
-      setMessage("Fehler beim Speichern in Supabase.");
+      const detail = e?.message ? String(e.message) : "Unbekannter Fehler.";
+      setMessage(`Fehler beim Speichern in Supabase: ${detail}`);
     }
   };
 
@@ -2918,10 +2877,6 @@ if (!user) {
                 value={newProductName}
                 onChange={(e) => setNewProductName(e.target.value)}
               />
-              <AiSuggestionHint
-                suggestion={aiRowSuggestions.productName}
-                onApply={() => setNewProductName(aiRowSuggestions.productName)}
-              />
             </div>
             <div>
               <select
@@ -2935,10 +2890,6 @@ if (!user) {
                 <option value="IIb">IIb</option>
                 <option value="III">III</option>
               </select>
-              <AiSuggestionHint
-                suggestion={aiRowSuggestions.riskClass}
-                onApply={() => setNewRiskClass(aiRowSuggestions.riskClass)}
-              />
             </div>
             <div className="bg-slate-800 rounded-lg px-3 py-2 text-xs border border-slate-700">
               <div className="text-slate-400">Angelegt von</div>
@@ -2987,10 +2938,6 @@ if (!user) {
                 value={newManufacturerName}
                 onChange={(e) => setNewManufacturerName(e.target.value)}
               />
-              <AiSuggestionHint
-                suggestion={aiRowSuggestions.manufacturerName}
-                onApply={() => setNewManufacturerName(aiRowSuggestions.manufacturerName)}
-              />
             </div>
             <div>
               <input
@@ -2998,10 +2945,6 @@ if (!user) {
                 placeholder="Gerätegruppe"
                 value={iuGenericDeviceGroup}
                 onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
-              />
-              <AiSuggestionHint
-                suggestion={aiRowSuggestions.genericDeviceGroup}
-                onApply={() => setIuGenericDeviceGroup(aiRowSuggestions.genericDeviceGroup)}
               />
             </div>
             <div>
@@ -3011,24 +2954,6 @@ if (!user) {
                 value={iuLimitations}
                 onChange={(e) => setIuLimitations(e.target.value)}
               />
-              <AiSuggestionHint
-                suggestion={aiRowSuggestions.warningsAndLimitations}
-                onApply={() => setIuLimitations(aiRowSuggestions.warningsAndLimitations)}
-              />
-              <div className="mt-1 flex flex-wrap gap-1">
-                {WARNING_SUGGESTIONS.map((item) => (
-                  <button
-                    key={`top-warning-${item}`}
-                    type="button"
-                    className="rounded border border-slate-600 bg-slate-800/70 px-2 py-0.5 text-[10px] text-slate-300 hover:border-sky-500/50"
-                    onClick={() =>
-                      setIuLimitations((prev) => (prev ? `${prev}\n- ${item}` : `- ${item}`))
-                    }
-                  >
-                    + {item}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
 
