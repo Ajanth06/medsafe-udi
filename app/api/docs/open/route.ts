@@ -11,6 +11,9 @@ export async function GET(req: Request) {
     const fallbackUrl = searchParams.get("url");
 
     if (!cid || !cid.trim()) {
+      if (fallbackUrl && fallbackUrl.trim()) {
+        return NextResponse.redirect(fallbackUrl);
+      }
       return NextResponse.json({ error: "cid fehlt." }, { status: 400 });
     }
 
