@@ -3992,58 +3992,6 @@ if (!user) {
                   <div>{selectedDevice.batch || "–"}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-xs">Geräteversion / Varianten</div>
-                  <div>{selectedDevice.deviceVersionVariants || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Device Description</div>
-                  <div>{selectedDevice.deviceDescription || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Principle of Operation</div>
-                  <div>{selectedDevice.principleOfOperation || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Key Components</div>
-                  <div>{selectedDevice.keyComponents || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Accessories</div>
-                  <div>{selectedDevice.accessories || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Risk File ID</div>
-                  <div>{selectedDevice.riskFileId || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">FMEA ID</div>
-                  <div>{selectedDevice.fmeaId || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Hazard Analysis Referenz</div>
-                  <div>{selectedDevice.hazardAnalysisRef || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">CE Status</div>
-                  <div>{selectedDevice.ceStatus || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Notified Body</div>
-                  <div>{selectedDevice.notifiedBody || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Conformity Route</div>
-                  <div>{selectedDevice.conformityRoute || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Clinical Evaluation Referenz</div>
-                  <div>{selectedDevice.clinicalEvaluationRef || "–"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">GSPR Checklist Link</div>
-                  <div className="break-all">{selectedDevice.gsprChecklistLink || "–"}</div>
-                </div>
-                <div>
                   <div className="text-slate-400 text-xs">UDI-DI</div>
                   <div className="break-all">{selectedDevice.udiDi || "–"}</div>
                 </div>
