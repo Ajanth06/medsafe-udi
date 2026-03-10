@@ -1865,6 +1865,10 @@ export default function MedSafePage() {
   };
 
   const handleUploadDoc = async () => {
+    if (!user) {
+      setMessage("Bitte zuerst einloggen.");
+      return;
+    }
     if (!selectedDeviceId) {
       setMessage("Bitte zuerst ein Gerät auswählen.");
       return;
@@ -1919,39 +1923,56 @@ export default function MedSafePage() {
       };
 
       let metadataPersisted = true;
-      let { error } = await supabase.from("docs").insert({
+      let payload = {
         id: newDoc.id,
         ...mapDocToDb(newDoc),
-      });
+        user_id: user.id,
+        created_by: createdByLabel,
+      } as Record<string, unknown>;
+      let { error } = await supabase.from("docs").insert(payload);
 
-      // Fallback für ältere DB-Schemata ohne neue Dokument-Metadaten
-      if (
-        error &&
-        /doc_type|assignment_scope|assigned_batch|assigned_product_group|is_mandatory|purpose/i.test(
-          error.message || ""
-        )
-      ) {
-        const legacyPayload = {
-          id: newDoc.id,
-          device_id: newDoc.deviceId,
-          name: newDoc.name,
-          cid: newDoc.cid,
-          url: newDoc.url,
-          created_at: newDoc.createdAt,
-          category: newDoc.category ?? null,
-          version: newDoc.version ?? null,
-          revision: newDoc.revision ?? null,
-          doc_status: newDoc.docStatus ?? null,
-          approved_by: newDoc.approvedBy ?? null,
-        };
-        const retry = await supabase.from("docs").insert(legacyPayload);
-        error = retry.error ?? null;
-        if (!error) {
-          metadataPersisted = false;
+      for (let attempt = 0; attempt < 25 && error; attempt++) {
+        const errorMessage = error.message || "";
+
+        if (/row-level security|permission denied|new row violates row-level security/i.test(errorMessage)) {
           setMessage(
-            "Dokument gespeichert. Hinweis: Neue Dokument-Metadaten werden erst nach DB-Migration persistiert."
+            "Speichern von Dokumenten ist durch Supabase-RLS blockiert. Bitte RLS-Policy für Tabelle docs prüfen."
           );
+          return;
         }
+
+        const missingColumn = extractMissingColumnName(errorMessage);
+        if (missingColumn) {
+          if (
+            /doc_type|assignment_scope|assigned_batch|assigned_product_group|is_mandatory|purpose/i.test(
+              missingColumn
+            )
+          ) {
+            metadataPersisted = false;
+          }
+          const nextPayload = { ...payload };
+          delete nextPayload[missingColumn];
+          payload = nextPayload;
+          const retry = await supabase.from("docs").insert(payload);
+          error = retry.error ?? null;
+          continue;
+        }
+
+        const notNullColumn = extractNotNullColumnName(errorMessage);
+        if (notNullColumn === "user_id") {
+          payload = { ...payload, user_id: user.id };
+          const retry = await supabase.from("docs").insert(payload);
+          error = retry.error ?? null;
+          continue;
+        }
+        if (notNullColumn === "created_by") {
+          payload = { ...payload, created_by: createdByLabel };
+          const retry = await supabase.from("docs").insert(payload);
+          error = retry.error ?? null;
+          continue;
+        }
+
+        break;
       }
 
       if (error) {
@@ -1975,11 +1996,17 @@ export default function MedSafePage() {
       setFile(null);
       if (metadataPersisted) {
         setMessage("Dokument erfolgreich gespeichert.");
+      } else {
+        setMessage(
+          "Dokument gespeichert. Hinweis: Einige Dokument-Metadaten werden erst nach DB-Migration persistiert."
+        );
       }
 
       const docsForAi = [
         newDoc,
-        ...docs.filter((d) => d.deviceId === selectedDeviceId),
+        ...docs.filter(
+          (d) => d.deviceId === selectedDeviceId && hasStoredDocumentFile(d)
+        ),
       ];
       const compliance = await runAiTask<{
         missingDocs?: string[];
@@ -2367,7 +2394,9 @@ export default function MedSafePage() {
     if (!normalizedSearchTerm) return true;
 
     if (aiSearchMode === "without-risk-analysis") {
-      const docsForCurrent = docs.filter((d) => d.deviceId === device.id);
+      const docsForCurrent = docs.filter(
+        (d) => d.deviceId === device.id && hasStoredDocumentFile(d)
+      );
       const hasRiskDocument = docsForCurrent.some((d) =>
         `${d.name || ""} ${d.category || ""}`.toLowerCase().includes("risiko")
       );
@@ -2375,7 +2404,9 @@ export default function MedSafePage() {
     }
 
     if (aiSearchMode === "missing-docs") {
-      const docsForCurrent = docs.filter((d) => d.deviceId === device.id);
+      const docsForCurrent = docs.filter(
+        (d) => d.deviceId === device.id && hasStoredDocumentFile(d)
+      );
       return findMissingRequiredDocs(docsForCurrent).length > 0;
     }
 
@@ -2514,6 +2545,7 @@ export default function MedSafePage() {
     const groupBatch = groupDevices[0]?.batch ?? "";
 
     const relevant = docs.filter((doc) => {
+      if (!hasStoredDocumentFile(doc)) return false;
       if (deviceIds.has(doc.deviceId)) return true;
       if (doc.assignmentScope === "batch" && groupBatch && doc.assignedBatch === groupBatch) {
         return true;
@@ -2657,7 +2689,9 @@ export default function MedSafePage() {
       return;
     }
 
-    const dhrDocs = docs.filter((d) => d.deviceId === selectedDevice.id);
+    const dhrDocs = docs.filter(
+      (d) => d.deviceId === selectedDevice.id && hasStoredDocumentFile(d)
+    );
     const dhrAudit = audit.filter((a) => a.deviceId === selectedDevice.id);
 
     const payload = {
@@ -3554,7 +3588,7 @@ if (!user) {
                     })();
                     const isEditing = editRowId === d.id;
                     const docCountForDevice = docs.filter(
-                      (doc) => doc.deviceId === d.id
+                      (doc) => doc.deviceId === d.id && hasStoredDocumentFile(doc)
                     ).length;
                     return (
                       <>
@@ -4085,7 +4119,12 @@ if (!user) {
                         Verknüpfte Dokumente (DHR)
                       </div>
                       <div className="font-semibold text-lg">
-                        {docs.filter((d) => d.deviceId === selectedDevice.id).length}
+                        {
+                          docs.filter(
+                            (d) =>
+                              d.deviceId === selectedDevice.id && hasStoredDocumentFile(d)
+                          ).length
+                        }
                       </div>
                     </div>
                     <div>
