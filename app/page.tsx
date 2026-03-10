@@ -317,6 +317,17 @@ function slugifyName(name: string): string {
   return name.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
 }
 
+function toSafeFilename(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized || "dokument";
+}
+
 function generateBasicUdiDi(manufacturerName: string, productName: string): string {
   const manufacturer = slugifyName(manufacturerName || "MFR").replace(/-/g, "").slice(0, 6);
   const product = slugifyName(productName || "DEVICE").replace(/-/g, "").slice(0, 8);
@@ -1892,8 +1903,8 @@ export default function MedSafePage() {
               docPurpose || "Automatisch erzeugter Draft",
             ].join("\n"),
           ],
-          `${(docName || docType || "dokument").replace(/\s+/g, "-").toLowerCase()}.md`,
-          { type: "text/markdown;charset=utf-8" }
+          `${toSafeFilename(docName || docType || "dokument")}.md`,
+          { type: "text/markdown" }
         );
 
       const formData = new FormData();

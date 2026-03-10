@@ -39,10 +39,15 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(arrayBuffer);
 
     // In Bucket "docs" hochladen
+    const effectiveContentType =
+      uploadedFile.type && /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(uploadedFile.type)
+        ? uploadedFile.type
+        : "application/octet-stream";
+
     const { error: uploadError } = await supabaseAdmin.storage
       .from("docs")
       .upload(path, buffer, {
-        contentType: uploadedFile.type || "application/octet-stream",
+        contentType: effectiveContentType,
         upsert: false,
       });
 
