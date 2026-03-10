@@ -47,9 +47,19 @@ type Device = {
   serviceNotes?: string;
 
   pmsNotes?: string;
+  deviceCategory?: string;
 };
 
 type DocStatus = "Draft" | "Controlled" | "Final";
+type DocAssignmentScope = "device" | "batch" | "product_group";
+type DocType =
+  | "declaration_of_conformity"
+  | "ifu"
+  | "risk_management_file"
+  | "test_report"
+  | "labeling"
+  | "dmr_master_document"
+  | "other";
 
 type Doc = {
   id: string;
@@ -59,11 +69,17 @@ type Doc = {
   url: string;
   createdAt: string;
   category?: string;
+  docType?: DocType;
 
   version?: string;
   revision?: string;
   docStatus?: DocStatus;
   approvedBy?: string;
+  assignmentScope?: DocAssignmentScope;
+  assignedBatch?: string;
+  assignedProductGroup?: string;
+  isMandatory?: boolean;
+  purpose?: string;
 };
 
 type AuditEntry = {
@@ -88,7 +104,64 @@ const DOC_CATEGORIES = [
   "Sonstiges",
 ];
 
+const DOC_TYPE_OPTIONS: Array<{ value: DocType; label: string; patterns: string[] }> = [
+  {
+    value: "declaration_of_conformity",
+    label: "Declaration of Conformity",
+    patterns: ["declaration of conformity", "konformität", "doc"],
+  },
+  {
+    value: "ifu",
+    label: "IFU",
+    patterns: ["ifu", "gebrauchsanweisung", "instruction for use"],
+  },
+  {
+    value: "risk_management_file",
+    label: "Risk Management File",
+    patterns: ["risk management", "risikoanalyse", "fmea"],
+  },
+  {
+    value: "test_report",
+    label: "Test Report",
+    patterns: ["test report", "prüfbericht", "emc", "iq/oq/pq"],
+  },
+  {
+    value: "labeling",
+    label: "Labeling",
+    patterns: ["label", "etikett", "labeling"],
+  },
+  {
+    value: "dmr_master_document",
+    label: "DMR Master Document",
+    patterns: ["dmr", "master document"],
+  },
+  {
+    value: "other",
+    label: "Sonstiges",
+    patterns: [],
+  },
+];
+
+const CATEGORY_REQUIRED_DOC_MATRIX: Record<string, DocType[]> = {
+  default: [
+    "declaration_of_conformity",
+    "ifu",
+    "risk_management_file",
+    "test_report",
+    "labeling",
+    "dmr_master_document",
+  ],
+};
+
 const DOC_STATUS_OPTIONS: DocStatus[] = ["Draft", "Controlled", "Final"];
+const DOC_ASSIGNMENT_SCOPE_OPTIONS: Array<{
+  value: DocAssignmentScope;
+  label: string;
+}> = [
+  { value: "device", label: "Gerät" },
+  { value: "batch", label: "Charge" },
+  { value: "product_group", label: "Produktgruppe" },
+];
 
 const DEVICE_STATUS_LABELS: Record<DeviceStatus, string> = {
   released: "Freigegeben (Inverkehrbringen)",
@@ -117,6 +190,16 @@ const REQUIRED_DOC_PATTERNS = [
     key: "test",
     label: "EMC / Prüfbericht",
     patterns: ["emc", "prüfbericht", "testbericht", "iq/oq/pq"],
+  },
+  {
+    key: "labeling",
+    label: "Labeling",
+    patterns: ["label", "etikett", "labeling"],
+  },
+  {
+    key: "dmr",
+    label: "DMR Master Document",
+    patterns: ["dmr", "master document"],
   },
 ] as const;
 
@@ -368,6 +451,35 @@ function computeDeviceComplianceScore(device: Device, deviceDocs: Doc[]): number
   return Math.max(0, Math.min(100, score));
 }
 
+function isDocApproved(doc: Doc): boolean {
+  const status = (doc.docStatus || "").toLowerCase();
+  return (status === "final" || status === "controlled") && Boolean(doc.approvedBy?.trim());
+}
+
+function detectDocType(doc: Doc): DocType {
+  if (doc.docType && DOC_TYPE_OPTIONS.some((opt) => opt.value === doc.docType)) {
+    return doc.docType;
+  }
+  const text = `${doc.name || ""} ${doc.category || ""}`.toLowerCase();
+  const match = DOC_TYPE_OPTIONS.find(
+    (opt) => opt.value !== "other" && opt.patterns.some((pattern) => text.includes(pattern))
+  );
+  return match?.value || "other";
+}
+
+function getDocTypeLabel(docType: DocType): string {
+  return DOC_TYPE_OPTIONS.find((opt) => opt.value === docType)?.label || docType;
+}
+
+function getRequiredDocTypesForCategory(category?: string): DocType[] {
+  const key = (category || "").trim().toLowerCase();
+  if (!key) return CATEGORY_REQUIRED_DOC_MATRIX.default;
+  return (
+    CATEGORY_REQUIRED_DOC_MATRIX[key] ||
+    CATEGORY_REQUIRED_DOC_MATRIX.default
+  );
+}
+
 function buildAiInsightDraft(
   productName: string,
   riskClass: string,
@@ -434,6 +546,7 @@ function mapDeviceRowToDevice(row: any): Device {
     nextServiceDate: row.next_service_date ?? "",
     serviceNotes: row.service_notes ?? "",
     pmsNotes: row.pms_notes ?? "",
+    deviceCategory: row.device_category ?? "",
   };
 }
 
@@ -475,6 +588,7 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
 
     service_notes: device.serviceNotes ?? null,
     pms_notes: device.pmsNotes ?? null,
+    device_category: device.deviceCategory ?? null,
   };
 }
 
@@ -487,10 +601,16 @@ function mapDocRowToDoc(row: any): Doc {
     url: row.url,
     createdAt: row.created_at,
     category: row.category ?? "",
+    docType: (row.doc_type || "other") as DocType,
     version: row.version ?? "",
     revision: row.revision ?? "",
     docStatus: (row.doc_status || "Controlled") as DocStatus,
     approvedBy: row.approved_by ?? "",
+    assignmentScope: (row.assignment_scope || "device") as DocAssignmentScope,
+    assignedBatch: row.assigned_batch ?? "",
+    assignedProductGroup: row.assigned_product_group ?? "",
+    isMandatory: row.is_mandatory ?? false,
+    purpose: row.purpose ?? "",
   };
 }
 
@@ -502,10 +622,16 @@ function mapDocToDb(doc: Doc | Partial<Doc>): any {
     url: doc.url,
     created_at: doc.createdAt,
     category: doc.category ?? null,
+    doc_type: doc.docType ?? null,
     version: doc.version ?? null,
     revision: doc.revision ?? null,
     doc_status: doc.docStatus ?? null,
     approved_by: doc.approvedBy ?? null,
+    assignment_scope: doc.assignmentScope ?? "device",
+    assigned_batch: doc.assignedBatch ?? null,
+    assigned_product_group: doc.assignedProductGroup ?? null,
+    is_mandatory: doc.isMandatory ?? false,
+    purpose: doc.purpose ?? null,
   };
 }
 
@@ -578,10 +704,15 @@ export default function MedSafePage() {
 
   const [docName, setDocName] = useState("");
   const [docCategory, setDocCategory] = useState<string>(DOC_CATEGORIES[0]);
+  const [docType, setDocType] = useState<DocType>("declaration_of_conformity");
   const [docVersion, setDocVersion] = useState("");
   const [docRevision, setDocRevision] = useState("");
   const [docStatus, setDocStatus] = useState<DocStatus>("Controlled");
   const [docApprovedBy, setDocApprovedBy] = useState("");
+  const [docAssignmentScope, setDocAssignmentScope] =
+    useState<DocAssignmentScope>("device");
+  const [docIsMandatory, setDocIsMandatory] = useState(false);
+  const [docPurpose, setDocPurpose] = useState("");
   const [file, setFile] = useState<File | null>(null);
 
   const [isUploading, setIsUploading] = useState(false);
@@ -962,6 +1093,16 @@ export default function MedSafePage() {
       setAiDocDraft(ai);
       if (ai.title) setDocName(ai.title);
       if (ai.documentType) {
+        const normalizedType = ai.documentType.toLowerCase();
+        const mappedDocType =
+          DOC_TYPE_OPTIONS.find(
+            (opt) =>
+              opt.value !== "other" &&
+              (opt.label.toLowerCase().includes(normalizedType) ||
+                normalizedType.includes(opt.label.toLowerCase()) ||
+                opt.patterns.some((pattern) => normalizedType.includes(pattern)))
+          )?.value || "other";
+        setDocType(mappedDocType);
         const bestCategory = DOC_CATEGORIES.find((cat) =>
           cat.toLowerCase().includes(ai.documentType!.toLowerCase())
         );
@@ -1060,16 +1201,56 @@ export default function MedSafePage() {
         archivedAt: "",
         archiveReason: "",
         nonconformityId: "",
+        deviceCategory: iuDeviceCategory || inferDeviceType(newProductName),
       });
     }
 
     try {
-      const { error } = await supabase.from("devices").insert(
+      let { error } = await supabase.from("devices").insert(
         newDevices.map((d) => ({
           id: d.id,
           ...mapDeviceToDb(d),
         }))
       );
+
+      if (error && /device_category/i.test(error.message || "")) {
+        const legacyPayload = newDevices.map((d) => ({
+          id: d.id,
+          name: d.name,
+          udi_di: d.udiDi,
+          serial: d.serial,
+          udi_hash: d.udiHash,
+          created_at: d.createdAt,
+          batch: d.batch ?? null,
+          production_date: d.productionDate ?? null,
+          udi_pi: d.udiPi ?? null,
+          status: d.status,
+          risk_class: d.riskClass ?? null,
+          mdr_class: d.mdrClass ?? null,
+          mdr_rule: d.mdrRule ?? null,
+          intended_purpose: d.intendedPurpose ?? null,
+          internal_risk_level: d.internalRiskLevel ?? null,
+          block_comment: d.blockComment ?? null,
+          responsible: d.responsible ?? null,
+          is_archived: d.isArchived ?? false,
+          dmr_id: d.dmrId ?? null,
+          dhr_id: d.dhrId ?? null,
+          validation_status: d.validationStatus ?? null,
+          archived_at: toNullableDateOrTimestamp(d.archivedAt),
+          archive_reason: d.archiveReason ?? null,
+          nonconformity_category: d.nonconformityCategory ?? null,
+          nonconformity_severity: d.nonconformitySeverity ?? null,
+          nonconformity_action: d.nonconformityAction ?? null,
+          nonconformity_responsible: d.nonconformityResponsible ?? null,
+          nonconformity_id: d.nonconformityId ?? null,
+          last_service_date: toNullableDateOrTimestamp(d.lastServiceDate),
+          next_service_date: toNullableDateOrTimestamp(d.nextServiceDate),
+          service_notes: d.serviceNotes ?? null,
+          pms_notes: d.pmsNotes ?? null,
+        }));
+        const retry = await supabase.from("devices").insert(legacyPayload);
+        error = retry.error ?? null;
+      }
 
       if (error) {
         console.error("Supabase Devices Insert Error:", error);
@@ -1260,6 +1441,10 @@ export default function MedSafePage() {
       setMessage("Bitte eine Datei auswählen.");
       return;
     }
+    if (!docPurpose.trim()) {
+      setMessage("Bitte das Ziel/Zweck des Dokuments angeben.");
+      return;
+    }
 
     setIsUploading(true);
     setMessage("Upload läuft …");
@@ -1288,16 +1473,59 @@ export default function MedSafePage() {
         url: data.url,
         createdAt: new Date().toISOString(),
         category: docCategory,
+        docType,
         version: docVersion || "",
         revision: docRevision || "",
         docStatus: docStatus || "Controlled",
         approvedBy: docApprovedBy || "",
+        assignmentScope: docAssignmentScope,
+        assignedBatch:
+          docAssignmentScope === "batch"
+            ? selectedDevice?.batch || ""
+            : "",
+        assignedProductGroup:
+          docAssignmentScope === "product_group"
+            ? selectedDevice?.name || ""
+            : "",
+        isMandatory: docIsMandatory,
+        purpose: docPurpose || "",
       };
 
-      const { error } = await supabase.from("docs").insert({
+      let metadataPersisted = true;
+      let { error } = await supabase.from("docs").insert({
         id: newDoc.id,
         ...mapDocToDb(newDoc),
       });
+
+      // Fallback für ältere DB-Schemata ohne neue Dokument-Metadaten
+      if (
+        error &&
+        /doc_type|assignment_scope|assigned_batch|assigned_product_group|is_mandatory|purpose/i.test(
+          error.message || ""
+        )
+      ) {
+        const legacyPayload = {
+          id: newDoc.id,
+          device_id: newDoc.deviceId,
+          name: newDoc.name,
+          cid: newDoc.cid,
+          url: newDoc.url,
+          created_at: newDoc.createdAt,
+          category: newDoc.category ?? null,
+          version: newDoc.version ?? null,
+          revision: newDoc.revision ?? null,
+          doc_status: newDoc.docStatus ?? null,
+          approved_by: newDoc.approvedBy ?? null,
+        };
+        const retry = await supabase.from("docs").insert(legacyPayload);
+        error = retry.error ?? null;
+        if (!error) {
+          metadataPersisted = false;
+          setMessage(
+            "Dokument gespeichert. Hinweis: Neue Dokument-Metadaten werden erst nach DB-Migration persistiert."
+          );
+        }
+      }
 
       if (error) {
         console.error("Supabase Docs Insert Error:", error);
@@ -1310,11 +1538,17 @@ export default function MedSafePage() {
       setDocs((prev) => [newDoc, ...prev]);
 
       setDocName("");
+      setDocType("declaration_of_conformity");
       setDocVersion("");
       setDocRevision("");
       setDocApprovedBy("");
+      setDocPurpose("");
+      setDocIsMandatory(false);
+      setDocAssignmentScope("device");
       setFile(null);
-      setMessage("Dokument erfolgreich gespeichert.");
+      if (metadataPersisted) {
+        setMessage("Dokument erfolgreich gespeichert.");
+      }
 
       const docsForAi = [
         newDoc,
@@ -1344,6 +1578,8 @@ export default function MedSafePage() {
           newDoc.version || "-"
         }, Revision: ${newDoc.revision || "-"}, Status: ${
           newDoc.docStatus
+        }, Scope: ${newDoc.assignmentScope || "device"}, Pflicht: ${
+          newDoc.isMandatory ? "ja" : "nein"
         }) hochgeladen (CID: ${shortCid}…).`
       );
     } catch (err: any) {
@@ -1651,7 +1887,24 @@ export default function MedSafePage() {
   };
 
   const docsForDevice = selectedDeviceId
-    ? docs.filter((d) => d.deviceId === selectedDeviceId)
+    ? (() => {
+        const device = devices.find((d) => d.id === selectedDeviceId);
+        if (!device) return docs.filter((d) => d.deviceId === selectedDeviceId);
+        return docs.filter((d) => {
+          if (d.deviceId === selectedDeviceId) return true;
+          if (d.assignmentScope === "batch" && d.assignedBatch && d.assignedBatch === device.batch) {
+            return true;
+          }
+          if (
+            d.assignmentScope === "product_group" &&
+            d.assignedProductGroup &&
+            d.assignedProductGroup === device.name
+          ) {
+            return true;
+          }
+          return false;
+        });
+      })()
     : [];
 
   const auditForView = selectedDeviceId
@@ -1722,7 +1975,20 @@ export default function MedSafePage() {
   const activeAiInsight = aiInsightServer ?? aiInsight;
   const activeIntendedUseDraft = intendedUseDraftText || aiIntendedUseServer || "";
   const selectedDeviceDocs = selectedDevice
-    ? docs.filter((d) => d.deviceId === selectedDevice.id)
+    ? docs.filter((d) => {
+        if (d.deviceId === selectedDevice.id) return true;
+        if (d.assignmentScope === "batch" && d.assignedBatch && d.assignedBatch === selectedDevice.batch) {
+          return true;
+        }
+        if (
+          d.assignmentScope === "product_group" &&
+          d.assignedProductGroup &&
+          d.assignedProductGroup === selectedDevice.name
+        ) {
+          return true;
+        }
+        return false;
+      })
     : [];
   const selectedMissingDocs = selectedDevice
     ? findMissingRequiredDocs(selectedDeviceDocs)
@@ -1759,6 +2025,73 @@ export default function MedSafePage() {
   }
   const groupedDevices: DeviceGroup[] = Object.values(groupsMap);
 
+  const getDocsForGroup = (groupDevices: Device[]): Doc[] => {
+    if (!groupDevices.length) return [];
+    const deviceIds = new Set(groupDevices.map((d) => d.id));
+    const groupName = groupDevices[0]?.name ?? "";
+    const groupBatch = groupDevices[0]?.batch ?? "";
+
+    const relevant = docs.filter((doc) => {
+      if (deviceIds.has(doc.deviceId)) return true;
+      if (doc.assignmentScope === "batch" && groupBatch && doc.assignedBatch === groupBatch) {
+        return true;
+      }
+      if (
+        doc.assignmentScope === "product_group" &&
+        groupName &&
+        doc.assignedProductGroup === groupName
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    const seen = new Set<string>();
+    return relevant.filter((doc) => {
+      if (seen.has(doc.id)) return false;
+      seen.add(doc.id);
+      return true;
+    });
+  };
+
+  const getGroupDocumentHealth = (groupDevices: Device[]) => {
+    const groupDocs = getDocsForGroup(groupDevices);
+    const approvedCount = groupDocs.filter(isDocApproved).length;
+    const inferredCategory =
+      groupDevices[0]?.deviceCategory ||
+      (groupDevices[0] ? inferDeviceType(groupDevices[0].name) : "");
+    const requiredDocTypes = getRequiredDocTypesForCategory(inferredCategory);
+    const presentRequiredTypes = requiredDocTypes.filter((requiredType) =>
+      groupDocs.some((doc) => detectDocType(doc) === requiredType)
+    );
+    const approvedRequiredTypes = requiredDocTypes.filter((requiredType) =>
+      groupDocs.some((doc) => detectDocType(doc) === requiredType && isDocApproved(doc))
+    );
+    const missingRequiredTypes = requiredDocTypes.filter(
+      (requiredType) => !presentRequiredTypes.includes(requiredType)
+    );
+    const presentRequired = presentRequiredTypes.map((docType) => getDocTypeLabel(docType));
+    const missingRequired = missingRequiredTypes.map((docType) => getDocTypeLabel(docType));
+
+    const mandatoryDocs = groupDocs.filter((doc) => doc.isMandatory);
+    const mandatoryApproved = mandatoryDocs.filter(isDocApproved).length;
+    const mandatoryOpen = Math.max(0, mandatoryDocs.length - mandatoryApproved);
+
+    return {
+      inferredCategory,
+      groupDocs,
+      approvedCount,
+      requiredTotal: requiredDocTypes.length,
+      requiredPresentCount: presentRequiredTypes.length,
+      requiredApprovedCount: approvedRequiredTypes.length,
+      missingRequired,
+      presentRequired,
+      mandatoryDocs,
+      mandatoryApproved,
+      mandatoryOpen,
+    };
+  };
+
   const devicesInSameGroup: Device[] = selectedDevice
     ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
     : [];
@@ -1772,6 +2105,11 @@ export default function MedSafePage() {
         (d) => d.isArchived && d.name === selectedDevice.name && d.batch === selectedDevice.batch
       )
     : [];
+  const selectedGroupDocHealth = selectedDevice
+    ? getGroupDocumentHealth(
+        devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
+      )
+    : null;
   const recallSignals = selectedDevice
     ? (() => {
         const sameBatch = devices.filter((d) => d.batch === selectedDevice.batch);
@@ -2423,9 +2761,8 @@ if (!user) {
                 const devicesOfGroup = devices.filter(
                   (d) => d.name === device.name && d.batch === device.batch
                 );
-                const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
-                  return sum + docs.filter((doc) => doc.deviceId === d.id).length;
-                }, 0);
+                const docHealth = getGroupDocumentHealth(devicesOfGroup);
+                const docCountForGroup = docHealth.groupDocs.length;
 
                 const statusSet = new Set(devicesOfGroup.map((d) => d.status));
                 let statusLabel: string;
@@ -2438,8 +2775,7 @@ if (!user) {
                 const hasRiskStatus = devicesOfGroup.some(
                   (d) => d.status === "blocked" || d.status === "recall"
                 );
-                const representativeDocs = docs.filter((doc) => doc.deviceId === device.id);
-                const complianceScore = computeDeviceComplianceScore(device, representativeDocs);
+                const complianceScore = computeDeviceComplianceScore(device, docHealth.groupDocs);
 
                 const statusClass =
                   statusLabel === "Gemischter Status"
@@ -2488,6 +2824,22 @@ if (!user) {
                       <div className="text-xs text-slate-500 mt-1 break-all">
                         UDI-DI: {device.udiDi}
                       </div>
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px]">
+                        <div className="rounded-lg border border-slate-600/60 bg-slate-800/60 px-2 py-1 text-slate-200">
+                          Vorhanden: {docHealth.requiredPresentCount} / {docHealth.requiredTotal}
+                        </div>
+                        <div className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 px-2 py-1 text-emerald-200">
+                          Freigegeben: {docHealth.requiredApprovedCount} / {docHealth.requiredTotal}
+                        </div>
+                        <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 px-2 py-1 text-amber-200">
+                          Fehlend: {docHealth.missingRequired.length}
+                        </div>
+                      </div>
+                      {docHealth.missingRequired.length > 0 && (
+                        <div className="mt-1 text-[10px] text-amber-300">
+                          Fehlende Pflichtdokumente: {docHealth.missingRequired.join(", ")}
+                        </div>
+                      )}
                       <div className="mt-2 inline-flex rounded-full border border-emerald-500/40 bg-emerald-900/20 px-2 py-0.5 text-[10px] text-emerald-200">
                         Device Compliance Score: {complianceScore}%
                       </div>
@@ -2526,9 +2878,8 @@ if (!user) {
               </div>
               {(() => {
                 const devicesOfGroup = devicesInSameGroup;
-                const docCountForGroup = devicesOfGroup.reduce((sum, d) => {
-                  return sum + docs.filter((doc) => doc.deviceId === d.id).length;
-                }, 0);
+                const docHealth = getGroupDocumentHealth(devicesOfGroup);
+                const docCountForGroup = docHealth.groupDocs.length;
                 const statusSet = new Set(devicesOfGroup.map((d) => d.status));
                 let statusLabel: string;
                 if (statusSet.size === 1) {
@@ -2576,6 +2927,22 @@ if (!user) {
                     <div className="text-xs text-slate-500 mt-1 break-all">
                       UDI-DI: {selectedDevice.udiDi}
                     </div>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px]">
+                      <div className="rounded-lg border border-slate-600/60 bg-slate-800/60 px-2 py-1 text-slate-200">
+                        Vorhanden: {docHealth.requiredPresentCount} / {docHealth.requiredTotal}
+                      </div>
+                      <div className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 px-2 py-1 text-emerald-200">
+                        Freigegeben: {docHealth.requiredApprovedCount} / {docHealth.requiredTotal}
+                      </div>
+                      <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 px-2 py-1 text-amber-200">
+                        Fehlend: {docHealth.missingRequired.length}
+                      </div>
+                    </div>
+                    {docHealth.missingRequired.length > 0 && (
+                      <div className="mt-1 text-[10px] text-amber-300">
+                        Fehlende Pflichtdokumente: {docHealth.missingRequired.join(", ")}
+                      </div>
+                    )}
                     {selectedDevice.udiPi && (
                       <div className="text-xs text-slate-300 mt-1 break-all">
                         UDI-PI (Beispiel): {selectedDevice.udiPi}
@@ -2979,6 +3346,10 @@ if (!user) {
                   <div className="font-semibold">{selectedDevice.name || "–"}</div>
                 </div>
                 <div>
+                  <div className="text-slate-400 text-xs">Gerätekategorie</div>
+                  <div>{selectedDevice.deviceCategory || inferDeviceType(selectedDevice.name || "")}</div>
+                </div>
+                <div>
                   <div className="text-slate-400 text-xs">Seriennummer (DHR)</div>
                   <div className="break-all">{selectedDevice.serial || "–"}</div>
                 </div>
@@ -3176,6 +3547,30 @@ if (!user) {
             </p>
           )}
 
+          {selectedGroupDocHealth && (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs">
+              <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                Dokumentstatus Produkt-/Charge-Gruppe
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="rounded-lg border border-slate-600/60 bg-slate-800/60 px-2 py-1 text-slate-200">
+                  Vorhanden: {selectedGroupDocHealth.requiredPresentCount} / {selectedGroupDocHealth.requiredTotal}
+                </div>
+                <div className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 px-2 py-1 text-emerald-200">
+                  Freigegeben: {selectedGroupDocHealth.requiredApprovedCount} / {selectedGroupDocHealth.requiredTotal}
+                </div>
+                <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 px-2 py-1 text-amber-200">
+                  Fehlend: {selectedGroupDocHealth.missingRequired.length}
+                </div>
+              </div>
+              {selectedGroupDocHealth.missingRequired.length > 0 && (
+                <div className="mt-2 text-amber-300">
+                  Fehlende Pflichtdokumente: {selectedGroupDocHealth.missingRequired.join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+
           {selectedDevice && (selectedMissingDocs.length > 0 || aiComplianceAlertText) && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
               <div className="text-[11px] uppercase tracking-[0.18em] mb-1">
@@ -3226,6 +3621,23 @@ if (!user) {
             />
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Dokumenttyp</div>
+              <select
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                value={docType}
+                onChange={(e) => setDocType(e.target.value as DocType)}
+              >
+                {DOC_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Dokumentenlenkung */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
             <div>
@@ -3273,6 +3685,52 @@ if (!user) {
             </div>
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Zuordnung</div>
+              <select
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                value={docAssignmentScope}
+                onChange={(e) =>
+                  setDocAssignmentScope(e.target.value as DocAssignmentScope)
+                }
+              >
+                {DOC_ASSIGNMENT_SCOPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              {selectedDevice && docAssignmentScope !== "device" && (
+                <div className="mt-1 text-[10px] text-slate-400">
+                  {docAssignmentScope === "batch"
+                    ? `Charge: ${selectedDevice.batch || "–"}`
+                    : `Produktgruppe: ${selectedDevice.name || "–"}`}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-slate-400 text-[11px] mb-1">Pflichtdokument</div>
+              <select
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                value={docIsMandatory ? "yes" : "no"}
+                onChange={(e) => setDocIsMandatory(e.target.value === "yes")}
+              >
+                <option value="no">Optional</option>
+                <option value="yes">Pflicht</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <div className="text-slate-400 text-[11px] mb-1">Ziel / Zweck des Dokuments</div>
+              <input
+                className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+                placeholder="z.B. Nachweis der MDR-Konformität für Charge"
+                value={docPurpose}
+                onChange={(e) => setDocPurpose(e.target.value)}
+              />
+            </div>
+          </div>
+
           <button
             onClick={handleUploadDoc}
             disabled={isUploading}
@@ -3284,7 +3742,7 @@ if (!user) {
           {selectedDeviceId && (
             <div className="space-y-2">
               <h3 className="text-sm font-semibold">
-                Dokumente für dieses Gerät (DHR-Dokumente)
+                Dokumente für dieses Gerät / zugehörige Charge / Produktgruppe
               </h3>
 
               {docsForDevice.length === 0 ? (
@@ -3305,10 +3763,28 @@ if (!user) {
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-400 mt-1">
+                        Typ: {getDocTypeLabel(detectDocType(doc))} |{" "}
                         Version: {doc.version || "–"} | Revision: {doc.revision || "–"} |
                         Status: {doc.docStatus || "Controlled"} | Freigegeben von:{" "}
                         {doc.approvedBy || "–"}
                       </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Zuordnung: {doc.assignmentScope || "device"}{" "}
+                        {doc.assignmentScope === "batch" && doc.assignedBatch
+                          ? `(Charge ${doc.assignedBatch})`
+                          : ""}
+                        {doc.assignmentScope === "product_group" &&
+                        doc.assignedProductGroup
+                          ? `(Gruppe ${doc.assignedProductGroup})`
+                          : ""}
+                        {" | "}
+                        Typ: {doc.isMandatory ? "Pflicht" : "Optional"}
+                      </div>
+                      {doc.purpose && (
+                        <div className="text-[11px] text-slate-300 mt-1">
+                          Ziel: {doc.purpose}
+                        </div>
+                      )}
                       <div className="text-xs text-slate-400 break-all">
                         CID: {doc.cid}
                       </div>
