@@ -47,7 +47,7 @@ type Device = {
   serviceNotes?: string;
 
   pmsNotes?: string;
-  deviceCategory?: string;
+  genericDeviceGroup?: string;
 };
 
 type DocStatus = "Draft" | "Controlled" | "Final";
@@ -482,7 +482,7 @@ function computeComplianceBreakdown(
   // 1) Device Data
   let deviceDataScore = 100;
   const deviceDataReasons: string[] = [];
-  if (!device.deviceCategory?.trim()) {
+  if (!device.genericDeviceGroup?.trim()) {
     deviceDataScore -= 20;
     deviceDataReasons.push("Gerätekategorie fehlt.");
   }
@@ -536,7 +536,7 @@ function computeComplianceBreakdown(
 
   // 3) Documentation
   const requiredDocTypes = getRequiredDocTypesForCategory(
-    device.deviceCategory || inferDeviceType(device.name || "")
+    device.genericDeviceGroup || inferDeviceType(device.name || "")
   );
   const presentRequiredTypes = requiredDocTypes.filter((requiredType) =>
     deviceDocs.some((doc) => detectDocType(doc) === requiredType)
@@ -711,7 +711,7 @@ function mapDeviceRowToDevice(row: any): Device {
     nextServiceDate: row.next_service_date ?? "",
     serviceNotes: row.service_notes ?? "",
     pmsNotes: row.pms_notes ?? "",
-    deviceCategory: row.device_category ?? "",
+    genericDeviceGroup: row.generic_device_group ?? row.device_category ?? "",
   };
 }
 
@@ -753,7 +753,8 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
 
     service_notes: device.serviceNotes ?? null,
     pms_notes: device.pmsNotes ?? null,
-    device_category: device.deviceCategory ?? null,
+    generic_device_group: device.genericDeviceGroup ?? null,
+    device_category: device.genericDeviceGroup ?? null,
   };
 }
 
@@ -846,8 +847,8 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
-  const [iuDeviceCategory, setIuDeviceCategory] = useState("");
-  const [iuClinicalPurpose, setIuClinicalPurpose] = useState("");
+  const [iuGenericDeviceGroup, setIuGenericDeviceGroup] = useState("");
+  const [iuIntendedIndication, setIuIntendedIndication] = useState("");
   const [iuTargetPopulation, setIuTargetPopulation] = useState("");
   const [iuIntendedUser, setIuIntendedUser] = useState("Fachpersonal");
   const [iuUseEnvironment, setIuUseEnvironment] = useState("Klinik");
@@ -1039,8 +1040,8 @@ export default function MedSafePage() {
         productName: newProductName.trim(),
         riskClass: newRiskClass || "",
         quantity,
-        deviceCategory: iuDeviceCategory || "",
-        clinicalPurpose: iuClinicalPurpose || "",
+        genericDeviceGroup: iuGenericDeviceGroup || "",
+        intendedIndication: iuIntendedIndication || "",
       });
       if (insight) setAiInsightServer(insight);
 
@@ -1048,13 +1049,13 @@ export default function MedSafePage() {
         productName: newProductName.trim(),
         riskClass: newRiskClass || "",
         inferredDeviceType: inferDeviceType(newProductName),
-        deviceCategory: iuDeviceCategory || "",
-        clinicalPurpose: iuClinicalPurpose || "",
-        targetPopulation: iuTargetPopulation || "",
-        intendedUser: iuIntendedUser || "",
-        useEnvironment: iuUseEnvironment || "",
+        genericDeviceGroup: iuGenericDeviceGroup || "",
+        intendedIndication: iuIntendedIndication || "",
+        intendedPatientPopulation: iuTargetPopulation || "",
+        intendedUsers: iuIntendedUser || "",
+        intendedUseEnvironment: iuUseEnvironment || "",
         contraindications: iuContraindications || "",
-        limitations: iuLimitations || "",
+        warningsAndLimitations: iuLimitations || "",
       });
       if (intended?.intendedUse) {
         setAiIntendedUseServer(intended.intendedUse);
@@ -1084,8 +1085,8 @@ export default function MedSafePage() {
     newProductName,
     newRiskClass,
     quantity,
-    iuDeviceCategory,
-    iuClinicalPurpose,
+    iuGenericDeviceGroup,
+    iuIntendedIndication,
     iuTargetPopulation,
     iuIntendedUser,
     iuUseEnvironment,
@@ -1152,13 +1153,13 @@ export default function MedSafePage() {
       productName: newProductName.trim(),
       riskClass: newRiskClass || "",
       inferredDeviceType: inferDeviceType(newProductName),
-      deviceCategory: iuDeviceCategory || "",
-      clinicalPurpose: iuClinicalPurpose || "",
-      targetPopulation: iuTargetPopulation || "",
-      intendedUser: iuIntendedUser || "",
-      useEnvironment: iuUseEnvironment || "",
+      genericDeviceGroup: iuGenericDeviceGroup || "",
+      intendedIndication: iuIntendedIndication || "",
+      intendedPatientPopulation: iuTargetPopulation || "",
+      intendedUsers: iuIntendedUser || "",
+      intendedUseEnvironment: iuUseEnvironment || "",
       contraindications: iuContraindications || "",
-      limitations: iuLimitations || "",
+      warningsAndLimitations: iuLimitations || "",
     });
 
     if (intended?.intendedUse?.trim()) {
@@ -1244,18 +1245,16 @@ export default function MedSafePage() {
       setMessage("Bitte einen Produktnamen eingeben.");
       return;
     }
-    if (!iuDeviceCategory.trim()) {
-      setMessage("Bitte eine Gerätekategorie für den Intended-Use-Draft angeben.");
+    if (!iuGenericDeviceGroup.trim()) {
+      setMessage("Bitte die generische Gerätegruppe angeben (MDR).");
       return;
     }
-    if (!iuClinicalPurpose.trim()) {
-      setMessage("Bitte den klinischen Zweck angeben (MDR-relevant).");
+    if (!iuIntendedIndication.trim()) {
+      setMessage("Bitte die Zweckbestimmung (Intended Purpose) angeben.");
       return;
     }
     if (!activeIntendedUseDraft.trim()) {
-      setMessage(
-        "Bitte zuerst einen konkreten Intended-Use-Draft generieren oder manuell ausfüllen."
-      );
+      setMessage("Bitte zuerst eine konkrete Zweckbestimmung generieren oder manuell ausfüllen.");
       return;
     }
 
@@ -1322,7 +1321,7 @@ export default function MedSafePage() {
         archivedAt: "",
         archiveReason: "",
         nonconformityId: "",
-        deviceCategory: iuDeviceCategory || inferDeviceType(newProductName),
+        genericDeviceGroup: iuGenericDeviceGroup || inferDeviceType(newProductName),
       });
     }
 
@@ -1334,7 +1333,7 @@ export default function MedSafePage() {
         }))
       );
 
-      if (error && /device_category/i.test(error.message || "")) {
+      if (error && /(device_category|generic_device_group)/i.test(error.message || "")) {
         const legacyPayload = newDevices.map((d) => ({
           id: d.id,
           name: d.name,
@@ -1368,6 +1367,8 @@ export default function MedSafePage() {
           next_service_date: toNullableDateOrTimestamp(d.nextServiceDate),
           service_notes: d.serviceNotes ?? null,
           pms_notes: d.pmsNotes ?? null,
+          generic_device_group: d.genericDeviceGroup ?? null,
+          device_category: d.genericDeviceGroup ?? null,
         }));
         const retry = await supabase.from("devices").insert(legacyPayload);
         error = retry.error ?? null;
@@ -1384,8 +1385,8 @@ export default function MedSafePage() {
       setNewProductName("");
       setQuantity(1);
       setNewRiskClass("");
-      setIuDeviceCategory("");
-      setIuClinicalPurpose("");
+      setIuGenericDeviceGroup("");
+      setIuIntendedIndication("");
       setIuTargetPopulation("");
       setIuIntendedUser("Fachpersonal");
       setIuUseEnvironment("Klinik");
@@ -2190,7 +2191,7 @@ export default function MedSafePage() {
     const groupDocs = getDocsForGroup(groupDevices);
     const approvedCount = groupDocs.filter(isDocApproved).length;
     const inferredCategory =
-      groupDevices[0]?.deviceCategory ||
+      groupDevices[0]?.genericDeviceGroup ||
       (groupDevices[0] ? inferDeviceType(groupDevices[0].name) : "");
     const requiredDocTypes = getRequiredDocTypesForCategory(inferredCategory);
     const presentRequiredTypes = requiredDocTypes.filter((requiredType) =>
@@ -2574,13 +2575,13 @@ if (!user) {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              placeholder="Gerätekategorie (z.B. Refrigerator, Implantat)"
-              value={iuDeviceCategory}
-              onChange={(e) => setIuDeviceCategory(e.target.value)}
+              placeholder="Generische Gerätegruppe (z.B. Implantierbares Herzgerät, Refrigerator)"
+              value={iuGenericDeviceGroup}
+              onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
             />
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              placeholder="Zielpopulation / Material"
+              placeholder="Vorgesehene Patientenpopulation"
               value={iuTargetPopulation}
               onChange={(e) => setIuTargetPopulation(e.target.value)}
             />
@@ -2589,41 +2590,41 @@ if (!user) {
               value={iuIntendedUser}
               onChange={(e) => setIuIntendedUser(e.target.value)}
             >
-              <option value="Fachpersonal">Anwender: Fachpersonal</option>
-              <option value="Geschultes Laborpersonal">Anwender: Laborpersonal</option>
-              <option value="Patient / Laie">Anwender: Patient / Laie</option>
-            </select>
-            <select
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              value={iuUseEnvironment}
-              onChange={(e) => setIuUseEnvironment(e.target.value)}
-            >
-              <option value="Klinik">Umgebung: Klinik</option>
-              <option value="Labor">Umgebung: Labor</option>
-              <option value="Homecare">Umgebung: Homecare</option>
-              <option value="OP / sterile Umgebung">Umgebung: OP / sterile Umgebung</option>
-            </select>
-          </div>
+                  <option value="Fachpersonal">Vorgesehener Anwender: Fachpersonal</option>
+                  <option value="Geschultes Laborpersonal">Vorgesehener Anwender: Laborpersonal</option>
+                  <option value="Patient / Laie">Vorgesehener Anwender: Patient / Laie</option>
+                </select>
+                <select
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                  value={iuUseEnvironment}
+                  onChange={(e) => setIuUseEnvironment(e.target.value)}
+                >
+                  <option value="Klinik">Nutzungsumgebung: Klinik</option>
+                  <option value="Labor">Nutzungsumgebung: Labor</option>
+                  <option value="Homecare">Nutzungsumgebung: Homecare</option>
+                  <option value="OP / sterile Umgebung">Nutzungsumgebung: OP / sterile Umgebung</option>
+                </select>
+              </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <textarea
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-              placeholder="Klinischer Zweck (Pflicht für belastbaren Intended Use)"
-              value={iuClinicalPurpose}
-              onChange={(e) => setIuClinicalPurpose(e.target.value)}
-            />
-            <textarea
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-              placeholder="Kontraindikationen / Ausschlüsse"
-              value={iuContraindications}
-              onChange={(e) => setIuContraindications(e.target.value)}
-            />
-            <textarea
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
-              placeholder="Grenzen / Leistungsgrenzen"
-              value={iuLimitations}
-              onChange={(e) => setIuLimitations(e.target.value)}
-            />
+                  placeholder="Zweckbestimmung / medizinische Indikation (Pflicht)"
+                  value={iuIntendedIndication}
+                  onChange={(e) => setIuIntendedIndication(e.target.value)}
+                />
+                <textarea
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+                  placeholder="Kontraindikationen / Ausschlüsse (MDR Annex I, 23.4c)"
+                  value={iuContraindications}
+                  onChange={(e) => setIuContraindications(e.target.value)}
+                />
+                <textarea
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
+                  placeholder="Warnhinweise, Vorsichtsmaßnahmen, Leistungsgrenzen"
+                  value={iuLimitations}
+                  onChange={(e) => setIuLimitations(e.target.value)}
+                />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
@@ -2635,7 +2636,7 @@ if (!user) {
               >
                 {aiBusyTask === "intended-use"
                   ? "Generating…"
-                  : "Generate Intended Use Draft"}
+                  : "Generate Purpose Draft (MDR)"}
               </button>
               <button
                 onClick={handleSaveDevice}
@@ -3442,7 +3443,7 @@ if (!user) {
                 </div>
                 <div>
                   <div className="text-slate-400 text-xs">Gerätekategorie</div>
-                  <div>{selectedDevice.deviceCategory || inferDeviceType(selectedDevice.name || "")}</div>
+                  <div>{selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}</div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-xs">Seriennummer (DHR)</div>

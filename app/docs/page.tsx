@@ -10,7 +10,7 @@ type Device = {
   name: string;
   batch?: string;
   serial: string;
-  deviceCategory?: string;
+  genericDeviceGroup?: string;
   riskClass?: string;
   intendedPurpose?: string;
   udiDi?: string;
@@ -131,7 +131,7 @@ const mapDevice = (row: any): Device => ({
   name: row.name,
   batch: row.batch ?? "",
   serial: row.serial ?? "",
-  deviceCategory: row.device_category ?? "",
+  genericDeviceGroup: row.generic_device_group ?? row.device_category ?? "",
   riskClass: row.risk_class ?? "",
   intendedPurpose: row.intended_purpose ?? "",
   udiDi: row.udi_di ?? "",
@@ -429,7 +429,7 @@ export default function DocsPage() {
         name: selectedDevice.name,
         serial: selectedDevice.serial,
         batch: selectedDevice.batch,
-        deviceCategory: selectedDevice.deviceCategory,
+        genericDeviceGroup: selectedDevice.genericDeviceGroup,
         riskClass: selectedDevice.riskClass,
         intendedPurpose: selectedDevice.intendedPurpose,
         udiDi: selectedDevice.udiDi,
