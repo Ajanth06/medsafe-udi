@@ -30,6 +30,7 @@ type Device = {
   conformityRoute?: string;
   clinicalEvaluationRef?: string;
   gsprChecklistLink?: string;
+  warningsPrecautions?: string;
 
   batch?: string;
   productionDate?: string;
@@ -384,6 +385,7 @@ function devicesToCSV(devices: Device[]): string {
     "ConformityRoute",
     "ClinicalEvaluationRef",
     "GSPRChecklistLink",
+    "WarningsPrecautions",
     "ValidationStatus",
     "DMR-ID",
     "DHR-ID",
@@ -434,6 +436,7 @@ function devicesToCSV(devices: Device[]): string {
       d.conformityRoute || "",
       d.clinicalEvaluationRef || "",
       d.gsprChecklistLink || "",
+      d.warningsPrecautions || "",
       d.validationStatus || "",
       d.dmrId || "",
       d.dhrId || "",
@@ -772,6 +775,7 @@ function mapDeviceRowToDevice(row: any): Device {
     conformityRoute: row.conformity_route ?? "",
     clinicalEvaluationRef: row.clinical_evaluation_ref ?? "",
     gsprChecklistLink: row.gspr_checklist_link ?? "",
+    warningsPrecautions: row.warnings_precautions ?? "",
     batch: row.batch ?? "",
     productionDate: row.production_date ?? "",
     udiPi: row.udi_pi ?? "",
@@ -824,6 +828,7 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
     conformity_route: device.conformityRoute ?? null,
     clinical_evaluation_ref: device.clinicalEvaluationRef ?? null,
     gspr_checklist_link: device.gsprChecklistLink ?? null,
+    warnings_precautions: device.warningsPrecautions ?? null,
 
     batch: device.batch ?? null,
     production_date: device.productionDate ?? null,
@@ -1524,6 +1529,7 @@ export default function MedSafePage() {
         conformityRoute: newConformityRoute.trim(),
         clinicalEvaluationRef: newClinicalEvaluationRef.trim(),
         gsprChecklistLink: newGsprChecklistLink.trim(),
+        warningsPrecautions: iuLimitations.trim(),
         batch,
         productionDate,
         udiPi,
@@ -1564,7 +1570,7 @@ export default function MedSafePage() {
 
       if (
         error &&
-        /(device_category|generic_device_group|basic_udi_di|manufacturer_name|device_version_variants|device_description|principle_of_operation|key_components|accessories|risk_file_id|fmea_id|hazard_analysis_ref|ce_status|notified_body|conformity_route|clinical_evaluation_ref|gspr_checklist_link)/i.test(
+        /(device_category|generic_device_group|basic_udi_di|manufacturer_name|device_version_variants|device_description|principle_of_operation|key_components|accessories|risk_file_id|fmea_id|hazard_analysis_ref|ce_status|notified_body|conformity_route|clinical_evaluation_ref|gspr_checklist_link|warnings_precautions)/i.test(
           error.message || ""
         )
       ) {
@@ -2345,6 +2351,17 @@ export default function MedSafePage() {
   const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
   const activeAiInsight = aiInsightServer ?? aiInsight;
   const activeIntendedUseDraft = intendedUseDraftText || aiIntendedUseServer || "";
+
+  const recentDevicesForUdiTable = useMemo(
+    () =>
+      [...devices]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+        )
+        .slice(0, 25),
+    [devices]
+  );
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => {
         if (d.deviceId === selectedDevice.id) return true;
@@ -2754,6 +2771,20 @@ if (!user) {
                 <div className="text-slate-400">Seriennummer</div>
                 <div className="break-all text-slate-100">{selectedDevice.serial || "–"}</div>
               </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="text-slate-400">Hersteller</div>
+                <div className="text-slate-100">{selectedDevice.manufacturerName || "–"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="text-slate-400">Gerätegruppe</div>
+                <div className="text-slate-100">
+                  {selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 md:col-span-2">
+                <div className="text-slate-400">Warnhinweise</div>
+                <div className="text-slate-100">{selectedDevice.warningsPrecautions || "–"}</div>
+              </div>
             </div>
           </section>
         )}
@@ -2860,6 +2891,45 @@ if (!user) {
                 setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
               }
             />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Hersteller"
+                value={newManufacturerName}
+                onChange={(e) => setNewManufacturerName(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.manufacturerName}
+                onApply={() => setNewManufacturerName(aiRowSuggestions.manufacturerName)}
+              />
+            </div>
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                placeholder="Gerätegruppe"
+                value={iuGenericDeviceGroup}
+                onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.genericDeviceGroup}
+                onApply={() => setIuGenericDeviceGroup(aiRowSuggestions.genericDeviceGroup)}
+              />
+            </div>
+            <div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                placeholder="Warnhinweise / Vorsichtsmaßnahmen"
+                value={iuLimitations}
+                onChange={(e) => setIuLimitations(e.target.value)}
+              />
+              <AiSuggestionHint
+                suggestion={aiRowSuggestions.warningsAndLimitations}
+                onApply={() => setIuLimitations(aiRowSuggestions.warningsAndLimitations)}
+              />
+            </div>
           </div>
 
           <details className="rounded-xl border border-slate-700 bg-slate-900/50 p-3">
@@ -3239,6 +3309,56 @@ if (!user) {
                 AI FMEA Draft
               </div>
               {aiFmeaDraft}
+            </div>
+          )}
+        </section>
+
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">UDI Tabelle (separat)</h2>
+            <div className="text-[11px] text-slate-400">
+              Neueste 25 Geräte inkl. UDI-DI, UDI-PI und Crypto-Hash
+            </div>
+          </div>
+          {recentDevicesForUdiTable.length === 0 ? (
+            <div className="text-sm text-slate-400">Noch keine Geräte gespeichert.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
+              <table className="w-full border-collapse text-[11px]">
+                <thead>
+                  <tr className="border-b border-slate-700">
+                    <th className="py-2 pr-2 text-left">Produkt</th>
+                    <th className="py-2 pr-2 text-left">Seriennummer</th>
+                    <th className="py-2 pr-2 text-left">UDI-DI</th>
+                    <th className="py-2 pr-2 text-left">UDI-PI</th>
+                    <th className="py-2 pr-2 text-left">Crypto-Hash</th>
+                    <th className="py-2 pr-2 text-left">Charge</th>
+                    <th className="py-2 pr-2 text-left">Angelegt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentDevicesForUdiTable.map((d) => (
+                    <tr
+                      key={d.id}
+                      className={
+                        "border-b border-slate-800 last:border-b-0 cursor-pointer hover:bg-slate-800/40 " +
+                        (selectedDeviceId === d.id ? "bg-emerald-900/30" : "")
+                      }
+                      onClick={() => handleSelectDevice(d.id)}
+                    >
+                      <td className="py-2 pr-2">{d.name || "–"}</td>
+                      <td className="py-2 pr-2 break-all">{d.serial || "–"}</td>
+                      <td className="py-2 pr-2 break-all">{d.udiDi || "–"}</td>
+                      <td className="py-2 pr-2 break-all">{d.udiPi || "–"}</td>
+                      <td className="py-2 pr-2 break-all">{d.udiHash || "–"}</td>
+                      <td className="py-2 pr-2">{d.batch || "–"}</td>
+                      <td className="py-2 pr-2">
+                        {d.createdAt ? new Date(d.createdAt).toLocaleString() : "–"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
