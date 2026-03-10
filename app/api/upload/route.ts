@@ -49,7 +49,12 @@ export async function POST(req: Request) {
     if (uploadError) {
       console.error("Upload-Error:", uploadError);
       return NextResponse.json(
-        { error: "Upload zu Supabase fehlgeschlagen" },
+        {
+          error:
+            uploadError.message ||
+            uploadError.name ||
+            "Upload zu Supabase fehlgeschlagen",
+        },
         { status: 500 }
       );
     }
@@ -62,7 +67,12 @@ export async function POST(req: Request) {
     if (signedError || !signed?.signedUrl) {
       console.error("Signed URL Fehler:", signedError);
       return NextResponse.json(
-        { error: "Signierte URL konnte nicht erzeugt werden" },
+        {
+          error:
+            signedError?.message ||
+            signedError?.name ||
+            "Signierte URL konnte nicht erzeugt werden",
+        },
         { status: 500 }
       );
     }

@@ -1997,6 +1997,17 @@ export default function MedSafePage() {
 
       if (error) {
         console.error("Supabase Docs Insert Error:", error);
+        const errorText = (error.message || "").toLowerCase();
+        if (
+          errorText.includes("foreign key") ||
+          errorText.includes("violates foreign key constraint") ||
+          (errorText.includes("device_id") && errorText.includes("not present"))
+        ) {
+          setMessage(
+            "Dokument konnte nicht gespeichert werden: Das ausgewählte Gerät ist nicht in Supabase vorhanden. Bitte zuerst Gerät in der Cloud speichern und 'Cloud aktualisieren' klicken."
+          );
+          return;
+        }
         setMessage(
           "Fehler beim Speichern des Dokuments in Supabase: " + error.message
         );
