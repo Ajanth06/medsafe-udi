@@ -1582,6 +1582,7 @@ export default function MedSafePage() {
           error.message || ""
         )
       ) {
+        // Fallback für ältere Schemas ohne neue MDR-Spalten.
         const legacyPayload = newDevices.map((d) => ({
           id: d.id,
           name: d.name,
@@ -1615,11 +1616,21 @@ export default function MedSafePage() {
           next_service_date: toNullableDateOrTimestamp(d.nextServiceDate),
           service_notes: d.serviceNotes ?? null,
           pms_notes: d.pmsNotes ?? null,
-          generic_device_group: d.genericDeviceGroup ?? null,
           device_category: d.genericDeviceGroup ?? null,
         }));
         const retry = await supabase.from("devices").insert(legacyPayload);
         error = retry.error ?? null;
+
+        // Zweiter Fallback: sogar ohne device_category (sehr altes Schema).
+        if (error && /device_category/i.test(error.message || "")) {
+          const ultraLegacyPayload = legacyPayload.map((row) => {
+            const copy = { ...row } as Record<string, unknown>;
+            delete copy.device_category;
+            return copy;
+          });
+          const retry2 = await supabase.from("devices").insert(ultraLegacyPayload);
+          error = retry2.error ?? null;
+        }
       }
 
       if (error) {
