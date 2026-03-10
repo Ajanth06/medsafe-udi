@@ -12,9 +12,24 @@ type Device = {
   id: string;
   name: string;
   udiDi: string;
+  basicUdiDi?: string;
   serial: string;
   udiHash: string;
   createdAt: string;
+  manufacturerName?: string;
+  deviceVersionVariants?: string;
+  deviceDescription?: string;
+  principleOfOperation?: string;
+  keyComponents?: string;
+  accessories?: string;
+  riskFileId?: string;
+  fmeaId?: string;
+  hazardAnalysisRef?: string;
+  ceStatus?: string;
+  notifiedBody?: string;
+  conformityRoute?: string;
+  clinicalEvaluationRef?: string;
+  gsprChecklistLink?: string;
 
   batch?: string;
   productionDate?: string;
@@ -304,6 +319,8 @@ function toNullableDateOrTimestamp(value?: string) {
 function devicesToCSV(devices: Device[]): string {
   const header = [
     "Name",
+    "Manufacturer",
+    "BasicUDI-DI",
     "UDI-DI",
     "Serial",
     "Batch",
@@ -327,6 +344,19 @@ function devicesToCSV(devices: Device[]): string {
     "NextServiceDate",
     "ServiceNotes",
     "PMSNotes",
+    "DeviceVersionVariants",
+    "DeviceDescription",
+    "PrincipleOfOperation",
+    "KeyComponents",
+    "Accessories",
+    "RiskFileID",
+    "FMEA-ID",
+    "HazardAnalysisRef",
+    "CEStatus",
+    "NotifiedBody",
+    "ConformityRoute",
+    "ClinicalEvaluationRef",
+    "GSPRChecklistLink",
     "ValidationStatus",
     "DMR-ID",
     "DHR-ID",
@@ -339,6 +369,8 @@ function devicesToCSV(devices: Device[]): string {
   const rows = devices.map((d) => {
     const cols = [
       d.name || "",
+      d.manufacturerName || "",
+      d.basicUdiDi || "",
       d.udiDi || "",
       d.serial || "",
       d.batch || "",
@@ -362,6 +394,19 @@ function devicesToCSV(devices: Device[]): string {
       d.nextServiceDate || "",
       d.serviceNotes || "",
       d.pmsNotes || "",
+      d.deviceVersionVariants || "",
+      d.deviceDescription || "",
+      d.principleOfOperation || "",
+      d.keyComponents || "",
+      d.accessories || "",
+      d.riskFileId || "",
+      d.fmeaId || "",
+      d.hazardAnalysisRef || "",
+      d.ceStatus || "",
+      d.notifiedBody || "",
+      d.conformityRoute || "",
+      d.clinicalEvaluationRef || "",
+      d.gsprChecklistLink || "",
       d.validationStatus || "",
       d.dmrId || "",
       d.dhrId || "",
@@ -682,9 +727,24 @@ function mapDeviceRowToDevice(row: any): Device {
     id: row.id,
     name: row.name,
     udiDi: row.udi_di,
+    basicUdiDi: row.basic_udi_di ?? "",
     serial: row.serial,
     udiHash: row.udi_hash,
     createdAt: row.created_at,
+    manufacturerName: row.manufacturer_name ?? "",
+    deviceVersionVariants: row.device_version_variants ?? "",
+    deviceDescription: row.device_description ?? "",
+    principleOfOperation: row.principle_of_operation ?? "",
+    keyComponents: row.key_components ?? "",
+    accessories: row.accessories ?? "",
+    riskFileId: row.risk_file_id ?? "",
+    fmeaId: row.fmea_id ?? "",
+    hazardAnalysisRef: row.hazard_analysis_ref ?? "",
+    ceStatus: row.ce_status ?? "",
+    notifiedBody: row.notified_body ?? "",
+    conformityRoute: row.conformity_route ?? "",
+    clinicalEvaluationRef: row.clinical_evaluation_ref ?? "",
+    gsprChecklistLink: row.gspr_checklist_link ?? "",
     batch: row.batch ?? "",
     productionDate: row.production_date ?? "",
     udiPi: row.udi_pi ?? "",
@@ -719,9 +779,24 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
   return {
     name: device.name,
     udi_di: device.udiDi,
+    basic_udi_di: device.basicUdiDi ?? null,
     serial: device.serial,
     udi_hash: device.udiHash,
     created_at: device.createdAt,
+    manufacturer_name: device.manufacturerName ?? null,
+    device_version_variants: device.deviceVersionVariants ?? null,
+    device_description: device.deviceDescription ?? null,
+    principle_of_operation: device.principleOfOperation ?? null,
+    key_components: device.keyComponents ?? null,
+    accessories: device.accessories ?? null,
+    risk_file_id: device.riskFileId ?? null,
+    fmea_id: device.fmeaId ?? null,
+    hazard_analysis_ref: device.hazardAnalysisRef ?? null,
+    ce_status: device.ceStatus ?? null,
+    notified_body: device.notifiedBody ?? null,
+    conformity_route: device.conformityRoute ?? null,
+    clinical_evaluation_ref: device.clinicalEvaluationRef ?? null,
+    gspr_checklist_link: device.gsprChecklistLink ?? null,
 
     batch: device.batch ?? null,
     production_date: device.productionDate ?? null,
@@ -847,6 +922,9 @@ export default function MedSafePage() {
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
+  const [newBasicUdiDi, setNewBasicUdiDi] = useState("");
+  const [newManufacturerName, setNewManufacturerName] = useState("");
+  const [newDeviceVersionVariants, setNewDeviceVersionVariants] = useState("");
   const [iuGenericDeviceGroup, setIuGenericDeviceGroup] = useState("");
   const [iuIntendedIndication, setIuIntendedIndication] = useState("");
   const [iuTargetPopulation, setIuTargetPopulation] = useState("");
@@ -854,6 +932,18 @@ export default function MedSafePage() {
   const [iuUseEnvironment, setIuUseEnvironment] = useState("Klinik");
   const [iuContraindications, setIuContraindications] = useState("");
   const [iuLimitations, setIuLimitations] = useState("");
+  const [newDeviceDescription, setNewDeviceDescription] = useState("");
+  const [newPrincipleOfOperation, setNewPrincipleOfOperation] = useState("");
+  const [newKeyComponents, setNewKeyComponents] = useState("");
+  const [newAccessories, setNewAccessories] = useState("");
+  const [newRiskFileId, setNewRiskFileId] = useState("");
+  const [newFmeaId, setNewFmeaId] = useState("");
+  const [newHazardAnalysisRef, setNewHazardAnalysisRef] = useState("");
+  const [newCeStatus, setNewCeStatus] = useState("");
+  const [newNotifiedBody, setNewNotifiedBody] = useState("");
+  const [newConformityRoute, setNewConformityRoute] = useState("");
+  const [newClinicalEvaluationRef, setNewClinicalEvaluationRef] = useState("");
+  const [newGsprChecklistLink, setNewGsprChecklistLink] = useState("");
   const [iuReviewStatus, setIuReviewStatus] =
     useState<IntendedUseReviewStatus>("Draft");
   const [intendedUseDraftText, setIntendedUseDraftText] = useState("");
@@ -1040,6 +1130,8 @@ export default function MedSafePage() {
         productName: newProductName.trim(),
         riskClass: newRiskClass || "",
         quantity,
+        basicUdiDi: newBasicUdiDi || "",
+        manufacturer: newManufacturerName || "",
         genericDeviceGroup: iuGenericDeviceGroup || "",
         intendedIndication: iuIntendedIndication || "",
       });
@@ -1049,6 +1141,9 @@ export default function MedSafePage() {
         productName: newProductName.trim(),
         riskClass: newRiskClass || "",
         inferredDeviceType: inferDeviceType(newProductName),
+        basicUdiDi: newBasicUdiDi || "",
+        manufacturer: newManufacturerName || "",
+        deviceVersionVariants: newDeviceVersionVariants || "",
         genericDeviceGroup: iuGenericDeviceGroup || "",
         intendedIndication: iuIntendedIndication || "",
         intendedPatientPopulation: iuTargetPopulation || "",
@@ -1056,6 +1151,10 @@ export default function MedSafePage() {
         intendedUseEnvironment: iuUseEnvironment || "",
         contraindications: iuContraindications || "",
         warningsAndLimitations: iuLimitations || "",
+        deviceDescription: newDeviceDescription || "",
+        principleOfOperation: newPrincipleOfOperation || "",
+        keyComponents: newKeyComponents || "",
+        accessories: newAccessories || "",
       });
       if (intended?.intendedUse) {
         setAiIntendedUseServer(intended.intendedUse);
@@ -1085,6 +1184,9 @@ export default function MedSafePage() {
     newProductName,
     newRiskClass,
     quantity,
+    newBasicUdiDi,
+    newManufacturerName,
+    newDeviceVersionVariants,
     iuGenericDeviceGroup,
     iuIntendedIndication,
     iuTargetPopulation,
@@ -1092,6 +1194,10 @@ export default function MedSafePage() {
     iuUseEnvironment,
     iuContraindications,
     iuLimitations,
+    newDeviceDescription,
+    newPrincipleOfOperation,
+    newKeyComponents,
+    newAccessories,
     intendedUseTouched,
   ]);
 
@@ -1153,6 +1259,9 @@ export default function MedSafePage() {
       productName: newProductName.trim(),
       riskClass: newRiskClass || "",
       inferredDeviceType: inferDeviceType(newProductName),
+      basicUdiDi: newBasicUdiDi || "",
+      manufacturer: newManufacturerName || "",
+      deviceVersionVariants: newDeviceVersionVariants || "",
       genericDeviceGroup: iuGenericDeviceGroup || "",
       intendedIndication: iuIntendedIndication || "",
       intendedPatientPopulation: iuTargetPopulation || "",
@@ -1160,6 +1269,10 @@ export default function MedSafePage() {
       intendedUseEnvironment: iuUseEnvironment || "",
       contraindications: iuContraindications || "",
       warningsAndLimitations: iuLimitations || "",
+      deviceDescription: newDeviceDescription || "",
+      principleOfOperation: newPrincipleOfOperation || "",
+      keyComponents: newKeyComponents || "",
+      accessories: newAccessories || "",
     });
 
     if (intended?.intendedUse?.trim()) {
@@ -1245,6 +1358,18 @@ export default function MedSafePage() {
       setMessage("Bitte einen Produktnamen eingeben.");
       return;
     }
+    if (!newManufacturerName.trim()) {
+      setMessage("Bitte den Hersteller angeben.");
+      return;
+    }
+    if (!newBasicUdiDi.trim()) {
+      setMessage("Bitte die Basic UDI-DI angeben.");
+      return;
+    }
+    if (!newRiskClass.trim()) {
+      setMessage("Bitte die Risikoklasse angeben.");
+      return;
+    }
     if (!iuGenericDeviceGroup.trim()) {
       setMessage("Bitte die generische Gerätegruppe angeben (MDR).");
       return;
@@ -1255,6 +1380,26 @@ export default function MedSafePage() {
     }
     if (!activeIntendedUseDraft.trim()) {
       setMessage("Bitte zuerst eine konkrete Zweckbestimmung generieren oder manuell ausfüllen.");
+      return;
+    }
+    if (!iuTargetPopulation.trim()) {
+      setMessage("Bitte die vorgesehene Patientenpopulation angeben.");
+      return;
+    }
+    if (!iuIntendedUser.trim()) {
+      setMessage("Bitte den vorgesehenen Anwender angeben.");
+      return;
+    }
+    if (!iuUseEnvironment.trim()) {
+      setMessage("Bitte die Nutzungsumgebung angeben.");
+      return;
+    }
+    if (!iuContraindications.trim()) {
+      setMessage("Bitte die Kontraindikationen angeben.");
+      return;
+    }
+    if (!iuLimitations.trim()) {
+      setMessage("Bitte Warnhinweise / Vorsichtsmaßnahmen angeben.");
       return;
     }
 
@@ -1292,9 +1437,24 @@ export default function MedSafePage() {
         id,
         name: newProductName.trim(),
         udiDi: generatedUdiDi,
+        basicUdiDi: newBasicUdiDi.trim(),
         serial: generatedSerial,
         udiHash,
         createdAt: new Date().toISOString(),
+        manufacturerName: newManufacturerName.trim(),
+        deviceVersionVariants: newDeviceVersionVariants.trim(),
+        deviceDescription: newDeviceDescription.trim(),
+        principleOfOperation: newPrincipleOfOperation.trim(),
+        keyComponents: newKeyComponents.trim(),
+        accessories: newAccessories.trim(),
+        riskFileId: newRiskFileId.trim(),
+        fmeaId: newFmeaId.trim(),
+        hazardAnalysisRef: newHazardAnalysisRef.trim(),
+        ceStatus: newCeStatus.trim(),
+        notifiedBody: newNotifiedBody.trim(),
+        conformityRoute: newConformityRoute.trim(),
+        clinicalEvaluationRef: newClinicalEvaluationRef.trim(),
+        gsprChecklistLink: newGsprChecklistLink.trim(),
         batch,
         productionDate,
         udiPi,
@@ -1333,7 +1493,12 @@ export default function MedSafePage() {
         }))
       );
 
-      if (error && /(device_category|generic_device_group)/i.test(error.message || "")) {
+      if (
+        error &&
+        /(device_category|generic_device_group|basic_udi_di|manufacturer_name|device_version_variants|device_description|principle_of_operation|key_components|accessories|risk_file_id|fmea_id|hazard_analysis_ref|ce_status|notified_body|conformity_route|clinical_evaluation_ref|gspr_checklist_link)/i.test(
+          error.message || ""
+        )
+      ) {
         const legacyPayload = newDevices.map((d) => ({
           id: d.id,
           name: d.name,
@@ -1385,6 +1550,9 @@ export default function MedSafePage() {
       setNewProductName("");
       setQuantity(1);
       setNewRiskClass("");
+      setNewBasicUdiDi("");
+      setNewManufacturerName("");
+      setNewDeviceVersionVariants("");
       setIuGenericDeviceGroup("");
       setIuIntendedIndication("");
       setIuTargetPopulation("");
@@ -1392,6 +1560,18 @@ export default function MedSafePage() {
       setIuUseEnvironment("Klinik");
       setIuContraindications("");
       setIuLimitations("");
+      setNewDeviceDescription("");
+      setNewPrincipleOfOperation("");
+      setNewKeyComponents("");
+      setNewAccessories("");
+      setNewRiskFileId("");
+      setNewFmeaId("");
+      setNewHazardAnalysisRef("");
+      setNewCeStatus("");
+      setNewNotifiedBody("");
+      setNewConformityRoute("");
+      setNewClinicalEvaluationRef("");
+      setNewGsprChecklistLink("");
       setIuReviewStatus("Draft");
       setIntendedUseDraftText("");
       setIntendedUseTouched(false);
@@ -2574,6 +2754,54 @@ if (!user) {
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Hersteller (Pflicht)"
+              value={newManufacturerName}
+              onChange={(e) => setNewManufacturerName(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Basic UDI-DI (Pflicht)"
+              value={newBasicUdiDi}
+              onChange={(e) => setNewBasicUdiDi(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Geräteversion / Varianten"
+              value={newDeviceVersionVariants}
+              onChange={(e) => setNewDeviceVersionVariants(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Device Description"
+              value={newDeviceDescription}
+              onChange={(e) => setNewDeviceDescription(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Principle of Operation"
+              value={newPrincipleOfOperation}
+              onChange={(e) => setNewPrincipleOfOperation(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Key Components"
+              value={newKeyComponents}
+              onChange={(e) => setNewKeyComponents(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+              placeholder="Accessories"
+              value={newAccessories}
+              onChange={(e) => setNewAccessories(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
               placeholder="Generische Gerätegruppe (z.B. Implantierbares Herzgerät, Refrigerator)"
               value={iuGenericDeviceGroup}
@@ -2626,6 +2854,61 @@ if (!user) {
                   onChange={(e) => setIuLimitations(e.target.value)}
                 />
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Risk File ID (ISO 14971)"
+              value={newRiskFileId}
+              onChange={(e) => setNewRiskFileId(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="FMEA ID"
+              value={newFmeaId}
+              onChange={(e) => setNewFmeaId(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Hazard Analysis Referenz"
+              value={newHazardAnalysisRef}
+              onChange={(e) => setNewHazardAnalysisRef(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="CE Status"
+              value={newCeStatus}
+              onChange={(e) => setNewCeStatus(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Notified Body"
+              value={newNotifiedBody}
+              onChange={(e) => setNewNotifiedBody(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Conformity Route"
+              value={newConformityRoute}
+              onChange={(e) => setNewConformityRoute(e.target.value)}
+            />
+            <input
+              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+              placeholder="Clinical Evaluation Referenz"
+              value={newClinicalEvaluationRef}
+              onChange={(e) => setNewClinicalEvaluationRef(e.target.value)}
+            />
+          </div>
+
+          <input
+            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+            placeholder="GSPR Checklist Link"
+            value={newGsprChecklistLink}
+            onChange={(e) => setNewGsprChecklistLink(e.target.value)}
+          />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
             <div className="xl:col-span-2 flex flex-wrap gap-2">
@@ -3442,8 +3725,16 @@ if (!user) {
                   <div className="font-semibold">{selectedDevice.name || "–"}</div>
                 </div>
                 <div>
+                  <div className="text-slate-400 text-xs">Hersteller</div>
+                  <div>{selectedDevice.manufacturerName || "–"}</div>
+                </div>
+                <div>
                   <div className="text-slate-400 text-xs">Gerätekategorie</div>
                   <div>{selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Basic UDI-DI</div>
+                  <div className="break-all">{selectedDevice.basicUdiDi || "–"}</div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-xs">Seriennummer (DHR)</div>
@@ -3462,6 +3753,58 @@ if (!user) {
                 <div>
                   <div className="text-slate-400 text-xs">Charge</div>
                   <div>{selectedDevice.batch || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Geräteversion / Varianten</div>
+                  <div>{selectedDevice.deviceVersionVariants || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Device Description</div>
+                  <div>{selectedDevice.deviceDescription || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Principle of Operation</div>
+                  <div>{selectedDevice.principleOfOperation || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Key Components</div>
+                  <div>{selectedDevice.keyComponents || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Accessories</div>
+                  <div>{selectedDevice.accessories || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Risk File ID</div>
+                  <div>{selectedDevice.riskFileId || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">FMEA ID</div>
+                  <div>{selectedDevice.fmeaId || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Hazard Analysis Referenz</div>
+                  <div>{selectedDevice.hazardAnalysisRef || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">CE Status</div>
+                  <div>{selectedDevice.ceStatus || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Notified Body</div>
+                  <div>{selectedDevice.notifiedBody || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Conformity Route</div>
+                  <div>{selectedDevice.conformityRoute || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Clinical Evaluation Referenz</div>
+                  <div>{selectedDevice.clinicalEvaluationRef || "–"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">GSPR Checklist Link</div>
+                  <div className="break-all">{selectedDevice.gsprChecklistLink || "–"}</div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-xs">UDI-DI</div>
