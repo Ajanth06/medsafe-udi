@@ -129,6 +129,13 @@ type AiInsight = {
   documentStatus: string;
 };
 
+type AiApiResponse<T> = {
+  ok?: boolean;
+  task?: string;
+  result?: T;
+  error?: string;
+};
+
 // ---------- HELFER ----------
 
 async function hashUdi(udiDi: string, serial: string): Promise<string> {
@@ -532,6 +539,10 @@ export default function MedSafePage() {
   const [aiFmeaDraft, setAiFmeaDraft] = useState<string | null>(null);
   const [aiDeviceSummary, setAiDeviceSummary] = useState<string | null>(null);
   const [aiAuditReport, setAiAuditReport] = useState<string | null>(null);
+  const [aiComplianceAlertText, setAiComplianceAlertText] = useState<string | null>(null);
+  const [aiInsightServer, setAiInsightServer] = useState<AiInsight | null>(null);
+  const [aiIntendedUseServer, setAiIntendedUseServer] = useState<string | null>(null);
+  const [aiBusyTask, setAiBusyTask] = useState<string | null>(null);
 
   // ---------- AUTH ----------
 
@@ -654,6 +665,38 @@ export default function MedSafePage() {
     }
   }, [user]);
 
+  useEffect(() => {
+    setAiComplianceAlertText(null);
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
+    if (!newProductName.trim()) {
+      setAiInsightServer(null);
+      setAiIntendedUseServer(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      const insight = await runAiTask<AiInsight>("device-insight", {
+        productName: newProductName.trim(),
+        riskClass: newRiskClass || "",
+        quantity,
+      });
+      if (insight) setAiInsightServer(insight);
+
+      const intended = await runAiTask<{ intendedUse?: string }>("intended-use", {
+        productName: newProductName.trim(),
+        riskClass: newRiskClass || "",
+        inferredDeviceType: inferDeviceType(newProductName),
+      });
+      if (intended?.intendedUse) {
+        setAiIntendedUseServer(intended.intendedUse);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [newProductName, newRiskClass, quantity]);
+
 
   // ---------- AUDIT ----------
 
@@ -675,6 +718,28 @@ export default function MedSafePage() {
       }
     } catch (e) {
       console.error("Supabase Audit Insert Exception:", e);
+    }
+  };
+
+  const runAiTask = async <T,>(task: string, payload: unknown): Promise<T | null> => {
+    try {
+      setAiBusyTask(task);
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task, payload }),
+      });
+
+      const data = (await res.json()) as AiApiResponse<T>;
+      if (!res.ok || !data?.result) {
+        throw new Error(data?.error || "KI-Anfrage fehlgeschlagen.");
+      }
+      return data.result;
+    } catch (err) {
+      console.error(`AI task failed (${task}):`, err);
+      return null;
+    } finally {
+      setAiBusyTask((current) => (current === task ? null : current));
     }
   };
 
@@ -701,10 +766,9 @@ export default function MedSafePage() {
     const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
     const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
-    const intendedUseDraft = buildIntendedUseDraft(
-      newProductName.trim(),
-      inferDeviceType(newProductName)
-    );
+    const intendedUseDraft =
+      aiIntendedUseServer ||
+      buildIntendedUseDraft(newProductName.trim(), inferDeviceType(newProductName));
 
     const newDevices: Device[] = [];
 
@@ -812,16 +876,27 @@ export default function MedSafePage() {
     setFile(f);
   };
 
-  const handleGenerateFmeaDraft = () => {
+  const handleGenerateFmeaDraft = async () => {
     if (!newProductName.trim()) {
       setMessage("Bitte zuerst einen Produktnamen eingeben.");
       return;
     }
 
-    const deviceType = inferDeviceType(newProductName);
-    const risk = newRiskClass || "nicht gesetzt";
-    const draft = [
-      `FMEA Draft für ${newProductName.trim()} (${deviceType}, Klasse ${risk})`,
+    const ai = await runAiTask<{ draft?: string }>("fmea-draft", {
+      productName: newProductName.trim(),
+      riskClass: newRiskClass || "nicht gesetzt",
+      deviceType: inferDeviceType(newProductName),
+    });
+
+    if (ai?.draft?.trim()) {
+      setAiFmeaDraft(ai.draft);
+      return;
+    }
+
+    const fallbackDraft = [
+      `FMEA Draft für ${newProductName.trim()} (${inferDeviceType(newProductName)}, Klasse ${
+        newRiskClass || "nicht gesetzt"
+      })`,
       "",
       "1) Failure Mode: Leistungsverlust / Funktionsausfall",
       "   Ursache: Komponentendrift, Verschleiß, Softwarefehler",
@@ -835,32 +910,45 @@ export default function MedSafePage() {
       "   Ursache: Fehlende Freigabe / fehlende Pflichtdokumente",
       "   Maßnahme: CAPA-Task, Dokumentenlenkung, QA-Review",
     ].join("\n");
-
-    setAiFmeaDraft(draft);
+    setAiFmeaDraft(fallbackDraft);
   };
 
-  const handleGenerateDeviceSummary = () => {
+  const handleGenerateDeviceSummary = async () => {
     if (!selectedDevice) {
       setMessage("Bitte zuerst ein Gerät auswählen.");
       return;
     }
-    const summary = [
-      `Device Summary: ${selectedDevice.name}`,
-      `Zweckbestimmung: ${selectedDevice.intendedPurpose || "Nicht gepflegt"}`,
-      `Risikoübersicht: Klasse ${selectedDevice.riskClass || "–"}, Status ${
-        DEVICE_STATUS_LABELS[selectedDevice.status]
-      }`,
-      `Dokumentstatus: ${
-        selectedMissingDocs.length
-          ? `Unvollständig (${selectedMissingDocs.join(", ")})`
-          : "Vollständig"
-      }`,
-      `Compliance Score: ${selectedComplianceScore ?? 0}%`,
-    ].join("\n");
-    setAiDeviceSummary(summary);
+
+    const ai = await runAiTask<{ summary?: string }>("device-summary", {
+      device: selectedDevice,
+      missingDocs: selectedMissingDocs,
+      complianceScore: selectedComplianceScore ?? 0,
+      docsCount: selectedDeviceDocs.length,
+    });
+
+    if (ai?.summary?.trim()) {
+      setAiDeviceSummary(ai.summary);
+      return;
+    }
+
+    setAiDeviceSummary(
+      [
+        `Device Summary: ${selectedDevice.name}`,
+        `Zweckbestimmung: ${selectedDevice.intendedPurpose || "Nicht gepflegt"}`,
+        `Risikoübersicht: Klasse ${selectedDevice.riskClass || "–"}, Status ${
+          DEVICE_STATUS_LABELS[selectedDevice.status]
+        }`,
+        `Dokumentstatus: ${
+          selectedMissingDocs.length
+            ? `Unvollständig (${selectedMissingDocs.join(", ")})`
+            : "Vollständig"
+        }`,
+        `Compliance Score: ${selectedComplianceScore ?? 0}%`,
+      ].join("\n")
+    );
   };
 
-  const handlePrepareAuditReport = () => {
+  const handlePrepareAuditReport = async () => {
     const scopeDevices = selectedDevice
       ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
       : devices;
@@ -868,18 +956,39 @@ export default function MedSafePage() {
     const scopeDocs = docs.filter((d) => scopeIds.has(d.deviceId));
     const scopeAudit = audit.filter((a) => !a.deviceId || scopeIds.has(a.deviceId));
 
-    const report = [
-      "Audit Preparation Report",
-      `Erstellt am: ${new Date().toLocaleString()}`,
-      `Geräte im Scope: ${scopeDevices.length}`,
-      `Dokumente im Scope: ${scopeDocs.length}`,
-      `Risiko-/Recall-Fälle: ${
-        scopeDevices.filter((d) => d.status === "blocked" || d.status === "recall").length
-      }`,
-      `Änderungen/Aktivitäten: ${scopeAudit.length}`,
-    ].join("\n");
+    const ai = await runAiTask<{ report?: string }>("audit-report", {
+      selectedDevice: selectedDevice
+        ? {
+            id: selectedDevice.id,
+            name: selectedDevice.name,
+            batch: selectedDevice.batch,
+          }
+        : null,
+      totalDevicesInScope: scopeDevices.length,
+      totalDocsInScope: scopeDocs.length,
+      riskOrRecallCount: scopeDevices.filter(
+        (d) => d.status === "blocked" || d.status === "recall"
+      ).length,
+      activitiesCount: scopeAudit.length,
+    });
 
-    setAiAuditReport(report);
+    if (ai?.report?.trim()) {
+      setAiAuditReport(ai.report);
+      return;
+    }
+
+    setAiAuditReport(
+      [
+        "Audit Preparation Report",
+        `Erstellt am: ${new Date().toLocaleString()}`,
+        `Geräte im Scope: ${scopeDevices.length}`,
+        `Dokumente im Scope: ${scopeDocs.length}`,
+        `Risiko-/Recall-Fälle: ${
+          scopeDevices.filter((d) => d.status === "blocked" || d.status === "recall").length
+        }`,
+        `Änderungen/Aktivitäten: ${scopeAudit.length}`,
+      ].join("\n")
+    );
   };
 
   const handleUploadDoc = async () => {
@@ -946,6 +1055,25 @@ export default function MedSafePage() {
       setDocApprovedBy("");
       setFile(null);
       setMessage("Dokument erfolgreich gespeichert.");
+
+      const docsForAi = [
+        newDoc,
+        ...docs.filter((d) => d.deviceId === selectedDeviceId),
+      ];
+      const compliance = await runAiTask<{
+        missingDocs?: string[];
+        alertText?: string;
+      }>("compliance-alert", {
+        device: devices.find((d) => d.id === selectedDeviceId) || null,
+        docs: docsForAi.map((d) => ({
+          name: d.name,
+          category: d.category,
+          docStatus: d.docStatus,
+        })),
+      });
+      if (compliance?.alertText) {
+        setAiComplianceAlertText(compliance.alertText);
+      }
 
       const shortCid = String(newDoc.cid).slice(0, 10);
 
@@ -1335,6 +1463,8 @@ export default function MedSafePage() {
     inferDeviceType(newProductName)
   );
   const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
+  const activeAiInsight = aiInsightServer ?? aiInsight;
+  const activeIntendedUseDraft = aiIntendedUseServer ?? aiIntendedUseDraft;
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => d.deviceId === selectedDevice.id)
     : [];
@@ -1673,34 +1803,38 @@ if (!user) {
               </button>
               <button
                 onClick={handleGenerateFmeaDraft}
+                disabled={aiBusyTask === "fmea-draft"}
                 className="mt-2 inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
               >
-                Generate FMEA Draft
+                {aiBusyTask === "fmea-draft" ? "Generating…" : "Generate FMEA Draft"}
               </button>
             </div>
             <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 px-4 py-3 text-xs space-y-2">
               <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200">
                 AI Device Insight
               </div>
-              <div>Gerätetyp: <span className="text-sky-100">{aiInsight.deviceType}</span></div>
-              <div>Dokumentstatus: <span className="text-sky-100">{aiInsight.documentStatus}</span></div>
-              <div>Compliance Status: <span className="font-semibold text-emerald-300">{aiInsight.complianceScore}%</span></div>
+              {aiBusyTask === "device-insight" && (
+                <div className="text-sky-300">Analyse läuft …</div>
+              )}
+              <div>Gerätetyp: <span className="text-sky-100">{activeAiInsight.deviceType}</span></div>
+              <div>Dokumentstatus: <span className="text-sky-100">{activeAiInsight.documentStatus}</span></div>
+              <div>Compliance Status: <span className="font-semibold text-emerald-300">{activeAiInsight.complianceScore}%</span></div>
               <div>
                 Risiken:{" "}
-                {aiInsight.riskSignals.length
-                  ? aiInsight.riskSignals.join(", ")
+                {activeAiInsight.riskSignals.length
+                  ? activeAiInsight.riskSignals.join(", ")
                   : "Keine auffälligen Signale"}
               </div>
-              <div className="text-amber-200">{aiInsight.recommendation}</div>
+              <div className="text-amber-200">{activeAiInsight.recommendation}</div>
             </div>
           </div>
 
-          {aiIntendedUseDraft && (
+          {activeIntendedUseDraft && (
             <div className="rounded-xl border border-violet-500/30 bg-violet-950/25 px-4 py-3 text-xs">
               <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200 mb-1">
                 Auto Intended Use (Draft)
               </div>
-              <div className="text-slate-200">{aiIntendedUseDraft}</div>
+              <div className="text-slate-200">{activeIntendedUseDraft}</div>
             </div>
           )}
 
@@ -2247,15 +2381,17 @@ if (!user) {
                 </button>
                 <button
                   onClick={handleGenerateDeviceSummary}
+                  disabled={aiBusyTask === "device-summary"}
                   className="text-xs md:text-sm rounded-lg border border-cyan-500/60 px-3 py-2 bg-cyan-900/30 hover:bg-cyan-800/40"
                 >
-                  Generate Device Summary
+                  {aiBusyTask === "device-summary" ? "Generating…" : "Generate Device Summary"}
                 </button>
                 <button
                   onClick={handlePrepareAuditReport}
+                  disabled={aiBusyTask === "audit-report"}
                   className="text-xs md:text-sm rounded-lg border border-indigo-500/60 px-3 py-2 bg-indigo-900/30 hover:bg-indigo-800/40"
                 >
-                  Prepare Audit Report
+                  {aiBusyTask === "audit-report" ? "Preparing…" : "Prepare Audit Report"}
                 </button>
               </div>
             )}
@@ -2519,19 +2655,26 @@ if (!user) {
             </p>
           )}
 
-          {selectedDevice && selectedMissingDocs.length > 0 && (
+          {selectedDevice && (selectedMissingDocs.length > 0 || aiComplianceAlertText) && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
               <div className="text-[11px] uppercase tracking-[0.18em] mb-1">
                 AI Compliance Alert
               </div>
-              <div>
-                Für dieses Gerät fehlen wahrscheinlich folgende Dokumente:
-              </div>
-              <ul className="list-disc pl-4 mt-1">
-                {selectedMissingDocs.map((missing) => (
-                  <li key={missing}>{missing}</li>
-                ))}
-              </ul>
+              {aiBusyTask === "compliance-alert" && (
+                <div className="mb-1">Analyse läuft …</div>
+              )}
+              {aiComplianceAlertText ? (
+                <div>{aiComplianceAlertText}</div>
+              ) : (
+                <>
+                  <div>Für dieses Gerät fehlen wahrscheinlich folgende Dokumente:</div>
+                  <ul className="list-disc pl-4 mt-1">
+                    {selectedMissingDocs.map((missing) => (
+                      <li key={missing}>{missing}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           )}
 
