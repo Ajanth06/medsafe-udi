@@ -139,6 +139,9 @@ type AiApiResponse<T> = {
 type IntendedUseReviewStatus = "Draft" | "Review" | "Approved";
 
 type IntendedUseAiResult = {
+  inferredProductType?: string;
+  inferenceConfidence?: number;
+  assumptions?: string[];
   intendedUse?: string;
   missingContext?: string[];
   regulatoryWarnings?: string[];
@@ -284,11 +287,6 @@ function inferDeviceType(productName: string): string {
   if (n.includes("monitor") || n.includes("sensor")) return "Monitoringgerät";
   if (n.includes("software") || n.includes("app")) return "Software as Medical Device";
   return "Allgemeines Medizinprodukt";
-}
-
-function buildIntendedUseDraft(productName: string, deviceType: string): string {
-  if (!productName.trim()) return "";
-  return `${productName.trim()} ist ein ${deviceType}, vorgesehen zur sicheren Anwendung im klinischen Umfeld gemäß Zweckbestimmung und gültigen MDR-/QMS-Anforderungen.`;
 }
 
 function findMissingRequiredDocs(deviceDocs: Doc[]): string[] {
@@ -542,6 +540,9 @@ export default function MedSafePage() {
   const [iuRegulatoryWarnings, setIuRegulatoryWarnings] = useState<string[]>(
     []
   );
+  const [iuAssumptions, setIuAssumptions] = useState<string[]>([]);
+  const [iuInferredProductType, setIuInferredProductType] = useState<string | null>(null);
+  const [iuInferenceConfidence, setIuInferenceConfidence] = useState<number | null>(null);
   const createdByLabel =
     (user as any)?.user_metadata?.full_name ?? user?.email ?? "—";
 
@@ -699,6 +700,9 @@ export default function MedSafePage() {
       setAiIntendedUseServer(null);
       setIuMissingContext([]);
       setIuRegulatoryWarnings([]);
+      setIuAssumptions([]);
+      setIuInferredProductType(null);
+      setIuInferenceConfidence(null);
       return;
     }
 
@@ -730,6 +734,17 @@ export default function MedSafePage() {
           setIntendedUseDraftText(intended.intendedUse);
         }
       }
+      setIuInferredProductType(
+        typeof intended?.inferredProductType === "string"
+          ? intended.inferredProductType
+          : null
+      );
+      setIuInferenceConfidence(
+        typeof intended?.inferenceConfidence === "number"
+          ? Math.max(0, Math.min(100, Math.round(intended.inferenceConfidence)))
+          : null
+      );
+      setIuAssumptions(Array.isArray(intended?.assumptions) ? intended.assumptions : []);
       setIuMissingContext(Array.isArray(intended?.missingContext) ? intended.missingContext : []);
       setIuRegulatoryWarnings(
         Array.isArray(intended?.regulatoryWarnings) ? intended.regulatoryWarnings : []
@@ -820,6 +835,17 @@ export default function MedSafePage() {
       setAiIntendedUseServer(intended.intendedUse);
       setIntendedUseDraftText(intended.intendedUse);
       setIntendedUseTouched(false);
+      setIuInferredProductType(
+        typeof intended.inferredProductType === "string"
+          ? intended.inferredProductType
+          : null
+      );
+      setIuInferenceConfidence(
+        typeof intended.inferenceConfidence === "number"
+          ? Math.max(0, Math.min(100, Math.round(intended.inferenceConfidence)))
+          : null
+      );
+      setIuAssumptions(Array.isArray(intended.assumptions) ? intended.assumptions : []);
       setIuMissingContext(
         Array.isArray(intended.missingContext) ? intended.missingContext : []
       );
@@ -831,13 +857,9 @@ export default function MedSafePage() {
       }
       return;
     }
-
-    const fallback = buildIntendedUseDraft(
-      newProductName.trim(),
-      inferDeviceType(newProductName)
+    setMessage(
+      "KI konnte keinen belastbaren Intended-Use-Draft erzeugen. Bitte Kontextfelder ergänzen und erneut generieren."
     );
-    setIntendedUseDraftText(fallback);
-    setIntendedUseTouched(false);
   };
 
   // ---------- GERÄTE SPEICHERN ----------
@@ -853,6 +875,12 @@ export default function MedSafePage() {
     }
     if (!iuClinicalPurpose.trim()) {
       setMessage("Bitte den klinischen Zweck angeben (MDR-relevant).");
+      return;
+    }
+    if (!activeIntendedUseDraft.trim()) {
+      setMessage(
+        "Bitte zuerst einen konkreten Intended-Use-Draft generieren oder manuell ausfüllen."
+      );
       return;
     }
 
@@ -871,9 +899,7 @@ export default function MedSafePage() {
     const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
     const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
-    const intendedUseDraft =
-      activeIntendedUseDraft ||
-      buildIntendedUseDraft(newProductName.trim(), inferDeviceType(newProductName));
+    const intendedUseDraft = activeIntendedUseDraft;
 
     const newDevices: Device[] = [];
 
@@ -955,6 +981,9 @@ export default function MedSafePage() {
       setIntendedUseTouched(false);
       setIuMissingContext([]);
       setIuRegulatoryWarnings([]);
+      setIuAssumptions([]);
+      setIuInferredProductType(null);
+      setIuInferenceConfidence(null);
       setAiIntendedUseServer(null);
       setSelectedDeviceId(newDevices[0]?.id ?? null);
 
@@ -1576,14 +1605,9 @@ export default function MedSafePage() {
     ? devices.find((d) => d.id === selectedDeviceId) || null
     : null;
 
-  const aiIntendedUseDraft = buildIntendedUseDraft(
-    newProductName,
-    inferDeviceType(newProductName)
-  );
   const aiInsight = buildAiInsightDraft(newProductName, newRiskClass, quantity, []);
   const activeAiInsight = aiInsightServer ?? aiInsight;
-  const activeIntendedUseDraft =
-    intendedUseDraftText || aiIntendedUseServer || aiIntendedUseDraft;
+  const activeIntendedUseDraft = intendedUseDraftText || aiIntendedUseServer || "";
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => d.deviceId === selectedDevice.id)
     : [];
@@ -2022,25 +2046,59 @@ if (!user) {
             </div>
           </div>
 
-          {activeIntendedUseDraft && (
+          {(activeIntendedUseDraft || iuMissingContext.length > 0 || iuRegulatoryWarnings.length > 0) && (
             <div className="rounded-xl border border-violet-500/30 bg-violet-950/25 px-4 py-3 text-xs">
               <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200 mb-1">
                 Intended Use Draft (MDR Review)
               </div>
-              <textarea
-                className="w-full min-h-[130px] rounded-lg border border-violet-500/30 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400"
-                value={activeIntendedUseDraft}
-                onChange={(e) => {
-                  setIntendedUseDraftText(e.target.value);
-                  setIntendedUseTouched(true);
-                }}
-              />
+              {(iuInferredProductType || iuInferenceConfidence !== null) && (
+                <div className="mb-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-violet-500/30 bg-slate-900/60 px-3 py-2">
+                    <div className="text-[11px] text-violet-200/80 mb-0.5">Inferred Product Type</div>
+                    <div className="text-slate-100 font-medium">
+                      {iuInferredProductType || "Nicht sicher bestimmbar"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-violet-500/30 bg-slate-900/60 px-3 py-2">
+                    <div className="text-[11px] text-violet-200/80 mb-0.5">Inference Confidence</div>
+                    <div className="text-slate-100 font-medium">
+                      {iuInferenceConfidence !== null ? `${iuInferenceConfidence}%` : "–"}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {activeIntendedUseDraft ? (
+                <textarea
+                  className="w-full min-h-[130px] rounded-lg border border-violet-500/30 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400"
+                  value={activeIntendedUseDraft}
+                  onChange={(e) => {
+                    setIntendedUseDraftText(e.target.value);
+                    setIntendedUseTouched(true);
+                  }}
+                />
+              ) : (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-amber-100">
+                  Kein belastbarer Intended-Use-Text erzeugt. Bitte Kontextfelder präzisieren und erneut generieren.
+                </div>
+              )}
               <div className="mt-2 flex items-center gap-2 text-[11px]">
                 <span className="text-slate-400">Workflow:</span>
                 <span className="rounded-full border border-violet-400/40 bg-violet-900/30 px-2 py-0.5 text-violet-200">
                   {iuReviewStatus}
                 </span>
               </div>
+              {iuAssumptions.length > 0 && (
+                <div className="mt-2 rounded-lg border border-sky-500/30 bg-sky-950/20 px-3 py-2 text-sky-100">
+                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em]">
+                    KI-Annahmen
+                  </div>
+                  <ul className="list-disc pl-4">
+                    {iuAssumptions.map((assumption) => (
+                      <li key={assumption}>{assumption}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {iuMissingContext.length > 0 && (
                 <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-amber-100">
                   <div className="mb-1 text-[11px] uppercase tracking-[0.16em]">

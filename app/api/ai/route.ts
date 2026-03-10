@@ -9,7 +9,9 @@ type AiTask =
   | "compliance-alert"
   | "device-summary"
   | "audit-report"
-  | "intended-use";
+  | "intended-use"
+  | "copilot-chat"
+  | "generate-qms-document";
 
 type AiRequest = {
   task?: AiTask;
@@ -76,13 +78,48 @@ function buildPrompt(task: AiTask, payload: unknown): string {
         "Nutze streng den gelieferten Kontext und erfinde keine klinischen Claims.",
         "Antworte als JSON mit Feldern:",
         `{
+  "inferredProductType": string,
+  "inferenceConfidence": number,
+  "assumptions": string[],
   "intendedUse": string,
   "missingContext": string[],
   "regulatoryWarnings": string[],
   "reviewStatusSuggestion": "Draft" | "Review" | "Approved"
 }`,
+        "inferenceConfidence muss 0..100 sein.",
+        "Wenn Produktname/Kontext unklar sind, benenne das klar in assumptions und missingContext.",
+        "intendedUse muss konkret sein (Indikation, Anwender, Umgebung, Grenzen) und darf kein generischer Standardsatz sein.",
         "Wenn relevante Angaben fehlen, liste sie in missingContext.",
         "Wenn der Text für Freigabe noch riskant ist, setze reviewStatusSuggestion auf Review.",
+        `Input:\n${input}`,
+      ].join("\n");
+    case "copilot-chat":
+      return [
+        "Du bist der MedSafe GPT Copilot.",
+        "Arbeite wie ein präziser QA/RA-Experte für MDR/ISO 13485/ISO 14971.",
+        "Antworte kurz, konkret und umsetzungsorientiert.",
+        "Wenn Informationen fehlen, stelle maximal 3 gezielte Rückfragen.",
+        "Antworte als JSON:",
+        `{
+  "assistantReply": string,
+  "actionItems": string[],
+  "riskNotes": string[]
+}`,
+        `Input:\n${input}`,
+      ].join("\n");
+    case "generate-qms-document":
+      return [
+        "Du bist ein MDR-QMS-Dokumentationsassistent.",
+        "Erzeuge einen audit-tauglichen Dokumententwurf auf Deutsch.",
+        "Nutze klare Kapitelstruktur und nummerierte Abschnitte.",
+        "Antworte als JSON:",
+        `{
+  "title": string,
+  "documentType": string,
+  "contentMarkdown": string,
+  "checklist": string[]
+}`,
+        "contentMarkdown soll direkt als Draft nutzbar sein.",
         `Input:\n${input}`,
       ].join("\n");
     default:
