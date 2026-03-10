@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import {
@@ -217,6 +219,7 @@ async function groupKeyToUuid(groupKey: string) {
 }
 
 export default function RiskAnalysisPage() {
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -239,6 +242,7 @@ export default function RiskAnalysisPage() {
   );
   const [branchInputs, setBranchInputs] = useState<Record<string, string>>({});
   const [isGenerating, setIsGenerating] = useState(false);
+  const [queryInitialized, setQueryInitialized] = useState(false);
 
   const decorateRow = (row: FmeaRowDb): FmeaRowUi => {
     const derived = computeDerived(row);
@@ -348,6 +352,31 @@ export default function RiskAnalysisPage() {
 
     loadDevices();
   }, [user]);
+
+  useEffect(() => {
+    if (queryInitialized) return;
+    if (devices.length === 0) return;
+
+    const scopeParam = searchParams.get("scope");
+    const groupParam = searchParams.get("group");
+    const deviceParam = searchParams.get("device");
+
+    if (scopeParam === "device" || deviceParam) {
+      setScope("device");
+      if (deviceParam) setSelectedDeviceId(deviceParam);
+      setQueryInitialized(true);
+      return;
+    }
+
+    if (scopeParam === "product_group" || groupParam) {
+      setScope("product_group");
+      if (groupParam) setSelectedGroupKey(groupParam);
+      setQueryInitialized(true);
+      return;
+    }
+
+    setQueryInitialized(true);
+  }, [devices, searchParams, queryInitialized]);
 
   const addRiskAudit = async (
     riskAnalysisId: string,
@@ -1095,6 +1124,26 @@ export default function RiskAnalysisPage() {
               >
                 Export CSV
               </button>
+              {scope === "product_group" && selectedGroupKey && (
+                <Link
+                  href={`/docs?group=${encodeURIComponent(selectedGroupKey)}`}
+                  className="rounded-lg border border-emerald-500/60 bg-emerald-500/15 px-4 py-2 text-sm text-emerald-100 hover:bg-emerald-500/25"
+                >
+                  Dokumente dieser Gruppe
+                </Link>
+              )}
+              {scope === "device" && selectedDeviceId && (
+                <Link
+                  href={`/docs?device=${encodeURIComponent(
+                    selectedDeviceId
+                  )}&group=${encodeURIComponent(`${selectedDevice?.name || ""}__${
+                    selectedDevice?.batch || ""
+                  }`)}`}
+                  className="rounded-lg border border-emerald-500/60 bg-emerald-500/15 px-4 py-2 text-sm text-emerald-100 hover:bg-emerald-500/25"
+                >
+                  Dokumente dieses Geräts
+                </Link>
+              )}
             </div>
           </div>
         </section>
