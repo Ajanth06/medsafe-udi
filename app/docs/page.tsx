@@ -1024,7 +1024,9 @@ export default function DocsPage() {
                   {doc.purpose && <div className="text-slate-300 mt-1">Ziel: {doc.purpose}</div>}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <a
-                      href={doc.url}
+                      href={`/api/docs/open?cid=${encodeURIComponent(doc.cid)}&url=${encodeURIComponent(
+                        doc.url
+                      )}`}
                       target="_blank"
                       rel="noreferrer"
                       className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] hover:border-sky-500"

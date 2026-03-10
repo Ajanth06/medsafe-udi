@@ -4620,7 +4620,9 @@ if (!user) {
                         CID: {doc.cid}
                       </div>
                       <a
-                        href={doc.url}
+                        href={`/api/docs/open?cid=${encodeURIComponent(doc.cid)}&url=${encodeURIComponent(
+                          doc.url
+                        )}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-emerald-400 underline mt-1 inline-block"
