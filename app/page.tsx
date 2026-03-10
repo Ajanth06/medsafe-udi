@@ -840,6 +840,8 @@ export default function MedSafePage() {
       return data.result;
     } catch (err) {
       console.error(`AI task failed (${task}):`, err);
+      const text = err instanceof Error ? err.message : "Unbekannter KI-Fehler";
+      setMessage(`KI-Fehler (${task}): ${text}`);
       return null;
     } finally {
       setAiBusyTask((current) => (current === task ? null : current));
