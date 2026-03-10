@@ -301,6 +301,12 @@ function slugifyName(name: string): string {
   return name.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
 }
 
+function generateBasicUdiDi(manufacturerName: string, productName: string): string {
+  const manufacturer = slugifyName(manufacturerName || "MFR").replace(/-/g, "").slice(0, 6);
+  const product = slugifyName(productName || "DEVICE").replace(/-/g, "").slice(0, 8);
+  return `TH-BDI-${manufacturer || "MFR"}-${product || "DEVICE"}`;
+}
+
 function generateNonconformityId(): string {
   const year = new Date().getFullYear();
   const random = Math.floor(Math.random() * 1000)
@@ -988,6 +994,35 @@ export default function MedSafePage() {
   const [aiCopilotInput, setAiCopilotInput] = useState("");
   const [aiChatHistory, setAiChatHistory] = useState<ChatEntry[]>([]);
 
+  const applyMdrFieldSuggestions = () => {
+    const inferred = inferDeviceType(newProductName || "Device");
+    if (!newDeviceDescription.trim()) {
+      setNewDeviceDescription(
+        `${newProductName || "Das Produkt"} ist ein ${inferred} für die sichere Anwendung gemäß Zweckbestimmung.`
+      );
+    }
+    if (!newPrincipleOfOperation.trim()) {
+      setNewPrincipleOfOperation("Kontrollierter Gerätebetrieb gemäß IFU und spezifizierter Leistungsgrenzen.");
+    }
+    if (!newKeyComponents.trim()) {
+      setNewKeyComponents("Steuereinheit, sicherheitsrelevante Komponenten, Schnittstellen.");
+    }
+    if (!newCeStatus.trim()) {
+      setNewCeStatus("in Vorbereitung");
+    }
+    if (!newConformityRoute.trim()) {
+      setNewConformityRoute("MDR 2017/745");
+    }
+    if (!newRiskFileId.trim()) {
+      const slug = slugifyName(newProductName || "DEVICE").slice(0, 10);
+      setNewRiskFileId(`RMF-${slug}`);
+    }
+    if (!newFmeaId.trim()) {
+      const slug = slugifyName(newProductName || "DEVICE").slice(0, 10);
+      setNewFmeaId(`FMEA-${slug}`);
+    }
+  };
+
   // ---------- AUTH ----------
 
   useEffect(() => {
@@ -1362,10 +1397,6 @@ export default function MedSafePage() {
       setMessage("Bitte den Hersteller angeben.");
       return;
     }
-    if (!newBasicUdiDi.trim()) {
-      setMessage("Bitte die Basic UDI-DI angeben.");
-      return;
-    }
     if (!newRiskClass.trim()) {
       setMessage("Bitte die Risikoklasse angeben.");
       return;
@@ -1412,6 +1443,8 @@ export default function MedSafePage() {
     const now = new Date();
     const productionDate = formatDateYYMMDD(now);
     const batch = productionDate;
+    const autoBasicUdiDi = generateBasicUdiDi(newManufacturerName, newProductName);
+    const resolvedBasicUdiDi = newBasicUdiDi.trim() || autoBasicUdiDi;
 
     const devicesSameBatch = devices.filter((d) => d.batch === batch);
     const existingInBatch = devicesSameBatch.length;
@@ -1437,7 +1470,7 @@ export default function MedSafePage() {
         id,
         name: newProductName.trim(),
         udiDi: generatedUdiDi,
-        basicUdiDi: newBasicUdiDi.trim(),
+        basicUdiDi: resolvedBasicUdiDi,
         serial: generatedSerial,
         udiHash,
         createdAt: new Date().toISOString(),
@@ -2761,7 +2794,7 @@ if (!user) {
             />
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Basic UDI-DI (Pflicht)"
+              placeholder="Basic UDI-DI (optional, sonst Auto)"
               value={newBasicUdiDi}
               onChange={(e) => setNewBasicUdiDi(e.target.value)}
             />
@@ -2777,6 +2810,21 @@ if (!user) {
               value={newDeviceDescription}
               onChange={(e) => setNewDeviceDescription(e.target.value)}
             />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-xs text-slate-400">
+              Wenn Basic UDI-DI leer bleibt, wird automatisch erzeugt:
+              <span className="ml-1 text-slate-200">
+                {generateBasicUdiDi(newManufacturerName, newProductName)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={applyMdrFieldSuggestions}
+              className="rounded-lg border border-violet-500/50 bg-violet-900/20 px-3 py-1.5 text-xs text-violet-100"
+            >
+              MDR-Vorschläge ausfüllen
+            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -2877,24 +2925,33 @@ if (!user) {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input
+            <select
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              placeholder="CE Status"
               value={newCeStatus}
               onChange={(e) => setNewCeStatus(e.target.value)}
-            />
+            >
+              <option value="">CE Status</option>
+              <option value="in Vorbereitung">in Vorbereitung</option>
+              <option value="CE beantragt">CE beantragt</option>
+              <option value="CE erteilt">CE erteilt</option>
+              <option value="CE eingeschränkt">CE eingeschränkt</option>
+            </select>
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
               placeholder="Notified Body"
               value={newNotifiedBody}
               onChange={(e) => setNewNotifiedBody(e.target.value)}
             />
-            <input
+            <select
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-              placeholder="Conformity Route"
               value={newConformityRoute}
               onChange={(e) => setNewConformityRoute(e.target.value)}
-            />
+            >
+              <option value="">Conformity Route</option>
+              <option value="MDR 2017/745 Annex IX">MDR 2017/745 Annex IX</option>
+              <option value="MDR 2017/745 Annex X/XI">MDR 2017/745 Annex X/XI</option>
+              <option value="MDR 2017/745 Article 52(7)">MDR 2017/745 Article 52(7)</option>
+            </select>
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
               placeholder="Clinical Evaluation Referenz"
