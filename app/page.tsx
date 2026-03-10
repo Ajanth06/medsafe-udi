@@ -1463,46 +1463,6 @@ export default function MedSafePage() {
       setMessage("Bitte einen Produktnamen eingeben.");
       return;
     }
-    if (!newManufacturerName.trim()) {
-      setMessage("Bitte den Hersteller angeben.");
-      return;
-    }
-    if (!newRiskClass.trim()) {
-      setMessage("Bitte die Risikoklasse angeben.");
-      return;
-    }
-    if (!iuGenericDeviceGroup.trim()) {
-      setMessage("Bitte die generische Gerätegruppe angeben (MDR).");
-      return;
-    }
-    if (!iuIntendedIndication.trim()) {
-      setMessage("Bitte die Zweckbestimmung (Intended Purpose) angeben.");
-      return;
-    }
-    if (!activeIntendedUseDraft.trim()) {
-      setMessage("Bitte zuerst eine konkrete Zweckbestimmung generieren oder manuell ausfüllen.");
-      return;
-    }
-    if (!iuTargetPopulation.trim()) {
-      setMessage("Bitte die vorgesehene Patientenpopulation angeben.");
-      return;
-    }
-    if (!iuIntendedUser.trim()) {
-      setMessage("Bitte den vorgesehenen Anwender angeben.");
-      return;
-    }
-    if (!iuUseEnvironment.trim()) {
-      setMessage("Bitte die Nutzungsumgebung angeben.");
-      return;
-    }
-    if (!iuContraindications.trim()) {
-      setMessage("Bitte die Kontraindikationen angeben.");
-      return;
-    }
-    if (!iuLimitations.trim()) {
-      setMessage("Bitte Warnhinweise / Vorsichtsmaßnahmen angeben.");
-      return;
-    }
 
     const qty = Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : 1;
     if (qty < 1) {
@@ -1513,7 +1473,13 @@ export default function MedSafePage() {
     const now = new Date();
     const productionDate = formatDateYYMMDD(now);
     const batch = productionDate;
-    const autoBasicUdiDi = generateBasicUdiDi(newManufacturerName, newProductName);
+    const resolvedManufacturer = newManufacturerName.trim() || aiRowSuggestions.manufacturerName;
+    const resolvedRiskClass = newRiskClass.trim() || aiRowSuggestions.riskClass;
+    const resolvedGenericGroup =
+      iuGenericDeviceGroup.trim() || aiRowSuggestions.genericDeviceGroup;
+    const resolvedIntendedPurpose =
+      activeIntendedUseDraft.trim() || aiRowSuggestions.intendedIndication;
+    const autoBasicUdiDi = generateBasicUdiDi(resolvedManufacturer, newProductName);
     const resolvedBasicUdiDi = newBasicUdiDi.trim() || autoBasicUdiDi;
 
     const devicesSameBatch = devices.filter((d) => d.batch === batch);
@@ -1521,7 +1487,7 @@ export default function MedSafePage() {
     const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
     const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
-    const intendedUseDraft = activeIntendedUseDraft;
+    const intendedUseDraft = resolvedIntendedPurpose;
 
     const newDevices: Device[] = [];
 
@@ -1544,7 +1510,7 @@ export default function MedSafePage() {
         serial: generatedSerial,
         udiHash,
         createdAt: new Date().toISOString(),
-        manufacturerName: newManufacturerName.trim(),
+        manufacturerName: resolvedManufacturer,
         deviceVersionVariants: newDeviceVersionVariants.trim(),
         deviceDescription: newDeviceDescription.trim(),
         principleOfOperation: newPrincipleOfOperation.trim(),
@@ -1562,7 +1528,7 @@ export default function MedSafePage() {
         productionDate,
         udiPi,
         status: "released",
-        riskClass: newRiskClass,
+        riskClass: resolvedRiskClass,
         mdrClass: "",
         mdrRule: "",
         intendedPurpose: intendedUseDraft,
@@ -1584,7 +1550,7 @@ export default function MedSafePage() {
         archivedAt: "",
         archiveReason: "",
         nonconformityId: "",
-        genericDeviceGroup: iuGenericDeviceGroup || inferDeviceType(newProductName),
+        genericDeviceGroup: resolvedGenericGroup || inferDeviceType(newProductName),
       });
     }
 
@@ -2896,76 +2862,79 @@ if (!user) {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
-            <div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Hersteller (Pflicht)"
-                value={newManufacturerName}
-                onChange={(e) => setNewManufacturerName(e.target.value)}
-              />
-              <AiSuggestionHint
-                suggestion={aiRowSuggestions.manufacturerName}
-                onApply={() => setNewManufacturerName(aiRowSuggestions.manufacturerName)}
-              />
-            </div>
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Basic UDI-DI (optional, sonst Auto)"
-              value={newBasicUdiDi}
-              onChange={(e) => setNewBasicUdiDi(e.target.value)}
-            />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Geräteversion / Varianten"
-              value={newDeviceVersionVariants}
-              onChange={(e) => setNewDeviceVersionVariants(e.target.value)}
-            />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Device Description"
-              value={newDeviceDescription}
-              onChange={(e) => setNewDeviceDescription(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-xs text-slate-400">
-              Wenn Basic UDI-DI leer bleibt, wird automatisch erzeugt:
-              <span className="ml-1 text-slate-200">
-                {generateBasicUdiDi(newManufacturerName, newProductName)}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={applyMdrFieldSuggestions}
-              className="rounded-lg border border-violet-500/50 bg-violet-900/20 px-3 py-1.5 text-xs text-violet-100"
-            >
-              MDR-Vorschläge ausfüllen
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Principle of Operation"
-              value={newPrincipleOfOperation}
-              onChange={(e) => setNewPrincipleOfOperation(e.target.value)}
-            />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Key Components"
-              value={newKeyComponents}
-              onChange={(e) => setNewKeyComponents(e.target.value)}
-            />
-            <input
-              className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-              placeholder="Accessories"
-              value={newAccessories}
-              onChange={(e) => setNewAccessories(e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+          <details className="rounded-xl border border-slate-700 bg-slate-900/50 p-3">
+            <summary className="cursor-pointer text-sm text-slate-200">
+              MDR Pflichtfelder / Kontext (kompakt)
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
+                <div>
+                  <input
+                    className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                    placeholder="Hersteller"
+                    value={newManufacturerName}
+                    onChange={(e) => setNewManufacturerName(e.target.value)}
+                  />
+                  <AiSuggestionHint
+                    suggestion={aiRowSuggestions.manufacturerName}
+                    onApply={() => setNewManufacturerName(aiRowSuggestions.manufacturerName)}
+                  />
+                </div>
+                <input
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Basic UDI-DI (optional, sonst Auto)"
+                  value={newBasicUdiDi}
+                  onChange={(e) => setNewBasicUdiDi(e.target.value)}
+                />
+                <input
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Geräteversion / Varianten"
+                  value={newDeviceVersionVariants}
+                  onChange={(e) => setNewDeviceVersionVariants(e.target.value)}
+                />
+                <input
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Device Description"
+                  value={newDeviceDescription}
+                  onChange={(e) => setNewDeviceDescription(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs text-slate-400">
+                  Wenn Basic UDI-DI leer bleibt, wird automatisch erzeugt:
+                  <span className="ml-1 text-slate-200">
+                    {generateBasicUdiDi(newManufacturerName, newProductName)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={applyMdrFieldSuggestions}
+                  className="rounded-lg border border-violet-500/50 bg-violet-900/20 px-3 py-1.5 text-xs text-violet-100"
+                >
+                  MDR-Vorschläge ausfüllen
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Principle of Operation"
+                  value={newPrincipleOfOperation}
+                  onChange={(e) => setNewPrincipleOfOperation(e.target.value)}
+                />
+                <input
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Key Components"
+                  value={newKeyComponents}
+                  onChange={(e) => setNewKeyComponents(e.target.value)}
+                />
+                <input
+                  className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  placeholder="Accessories"
+                  value={newAccessories}
+                  onChange={(e) => setNewAccessories(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
             <div>
               <input
                 className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
@@ -3021,9 +2990,9 @@ if (!user) {
                   onApply={() => setIuUseEnvironment(aiRowSuggestions.useEnvironment)}
                 />
               </div>
-          </div>
+              </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
             <div>
               <textarea
                 className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500 min-h-[78px]"
@@ -3060,9 +3029,9 @@ if (!user) {
                 onApply={() => setIuLimitations(aiRowSuggestions.warningsAndLimitations)}
               />
             </div>
-          </div>
+              </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <input
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
               placeholder="Risk File ID (ISO 14971)"
@@ -3081,9 +3050,9 @@ if (!user) {
               value={newHazardAnalysisRef}
               onChange={(e) => setNewHazardAnalysisRef(e.target.value)}
             />
-          </div>
+              </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <select
               className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
               value={newCeStatus}
@@ -3117,14 +3086,16 @@ if (!user) {
               value={newClinicalEvaluationRef}
               onChange={(e) => setNewClinicalEvaluationRef(e.target.value)}
             />
-          </div>
+              </div>
 
-          <input
-            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-            placeholder="GSPR Checklist Link"
-            value={newGsprChecklistLink}
-            onChange={(e) => setNewGsprChecklistLink(e.target.value)}
-          />
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                placeholder="GSPR Checklist Link"
+                value={newGsprChecklistLink}
+                onChange={(e) => setNewGsprChecklistLink(e.target.value)}
+              />
+            </div>
+          </details>
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
             <div className="xl:col-span-2 flex flex-wrap gap-2">
