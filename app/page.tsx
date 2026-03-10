@@ -244,13 +244,6 @@ type AiChatResult = {
   riskNotes?: string[];
 };
 
-type AiDocDraftResult = {
-  title?: string;
-  documentType?: string;
-  contentMarkdown?: string;
-  checklist?: string[];
-};
-
 type ChatEntry = {
   id: string;
   role: "user" | "assistant";
@@ -400,16 +393,6 @@ function copyToClipboard(value: string) {
   textarea.select();
   document.execCommand("copy");
   document.body.removeChild(textarea);
-}
-
-function downloadTextFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function inferDeviceType(productName: string): string {
@@ -913,8 +896,6 @@ export default function MedSafePage() {
   const [aiBusyTask, setAiBusyTask] = useState<string | null>(null);
   const [aiCopilotInput, setAiCopilotInput] = useState("");
   const [aiChatHistory, setAiChatHistory] = useState<ChatEntry[]>([]);
-  const [aiDocDraft, setAiDocDraft] = useState<AiDocDraftResult | null>(null);
-  const [aiDocType, setAiDocType] = useState("SOP");
 
   // ---------- AUTH ----------
 
@@ -1254,48 +1235,6 @@ export default function MedSafePage() {
       timestamp: new Date().toISOString(),
     };
     setAiChatHistory((prev) => [...prev, assistantEntry]);
-  };
-
-  const handleGenerateQmsDocumentDraft = async () => {
-    const ai = await runAiTask<AiDocDraftResult>("generate-qms-document", {
-      documentType: aiDocType,
-      productName: newProductName || selectedDevice?.name || "",
-      riskClass: newRiskClass || selectedDevice?.riskClass || "",
-      intendedUse: activeIntendedUseDraft || selectedDevice?.intendedPurpose || "",
-      deviceCategory: iuDeviceCategory,
-      clinicalPurpose: iuClinicalPurpose,
-      targetPopulation: iuTargetPopulation,
-      intendedUser: iuIntendedUser,
-      useEnvironment: iuUseEnvironment,
-      contraindications: iuContraindications,
-      limitations: iuLimitations,
-    });
-
-    if (ai?.contentMarkdown?.trim()) {
-      setAiDocDraft(ai);
-      if (ai.title) setDocName(ai.title);
-      if (ai.documentType) {
-        const normalizedType = ai.documentType.toLowerCase();
-        const mappedDocType =
-          DOC_TYPE_OPTIONS.find(
-            (opt) =>
-              opt.value !== "other" &&
-              (opt.label.toLowerCase().includes(normalizedType) ||
-                normalizedType.includes(opt.label.toLowerCase()) ||
-                opt.patterns.some((pattern) => normalizedType.includes(pattern)))
-          )?.value || "other";
-        setDocType(mappedDocType);
-        const bestCategory = DOC_CATEGORIES.find((cat) =>
-          cat.toLowerCase().includes(ai.documentType!.toLowerCase())
-        );
-        if (bestCategory) setDocCategory(bestCategory);
-      }
-      return;
-    }
-
-    setMessage(
-      "KI konnte keinen Dokumententwurf erstellen. Bitte mehr Kontext eingeben und erneut versuchen."
-    );
   };
 
   // ---------- GERÄTE SPEICHERN ----------
@@ -2590,73 +2529,6 @@ if (!user) {
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 space-y-3">
-              <div className="text-xs text-slate-300 font-medium">QMS Dokument Draft</div>
-              <div className="flex gap-2">
-                <select
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
-                  value={aiDocType}
-                  onChange={(e) => setAiDocType(e.target.value)}
-                >
-                  <option value="SOP">SOP</option>
-                  <option value="Risk Analysis">Risk Analysis</option>
-                  <option value="IFU">IFU</option>
-                  <option value="CAPA">CAPA</option>
-                  <option value="Change Control">Change Control</option>
-                  <option value="Audit Report">Audit Report</option>
-                </select>
-                <button
-                  onClick={handleGenerateQmsDocumentDraft}
-                  disabled={aiBusyTask === "generate-qms-document"}
-                  className="rounded-lg border border-emerald-500/60 bg-emerald-900/30 px-4 py-2 text-sm font-medium hover:bg-emerald-800/40 disabled:opacity-60"
-                >
-                  {aiBusyTask === "generate-qms-document"
-                    ? "Generating…"
-                    : "Generate Document"}
-                </button>
-              </div>
-
-              {aiDocDraft?.contentMarkdown && (
-                <div className="space-y-2">
-                  <div className="text-xs text-slate-300">
-                    {aiDocDraft.title || "Dokumententwurf"}
-                  </div>
-                  <textarea
-                    className="w-full min-h-[220px] rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-100 outline-none"
-                    value={aiDocDraft.contentMarkdown}
-                    onChange={(e) =>
-                      setAiDocDraft((prev) =>
-                        prev ? { ...prev, contentMarkdown: e.target.value } : prev
-                      )
-                    }
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
-                      onClick={() =>
-                        copyToClipboard(aiDocDraft.contentMarkdown || "")
-                      }
-                    >
-                      Text kopieren
-                    </button>
-                    <button
-                      className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs"
-                      onClick={() =>
-                        downloadTextFile(
-                          `${(aiDocDraft.title || aiDocType || "qms-draft")
-                            .replace(/\s+/g, "-")
-                            .toLowerCase()}.md`,
-                          aiDocDraft.contentMarkdown || "",
-                          "text/markdown;charset=utf-8"
-                        )
-                      }
-                    >
-                      Als .md herunterladen
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </section>
 
