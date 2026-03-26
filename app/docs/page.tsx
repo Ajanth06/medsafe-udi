@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
+import LandingLoginPanel from "../components/LandingLoginPanel";
 
 type Device = {
   id: string;
@@ -775,8 +776,27 @@ export default function DocsPage() {
 
   if (!user) {
     return (
-      <main className="min-h-[40vh] flex items-center justify-center text-slate-300">
-        Bitte einloggen, um Dokumente zu sehen.
+      <main className="min-h-[60vh] flex items-center justify-center">
+        <div className="w-full max-w-xl rounded-3xl border border-slate-800 bg-slate-950/80 p-6 text-center shadow-[0_0_30px_rgba(15,23,42,0.35)]">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            Dokumente
+          </div>
+          <h1 className="mt-3 text-2xl font-semibold text-slate-100">
+            Bitte einloggen, um Dokumente zu sehen
+          </h1>
+          <p className="mt-3 text-sm text-slate-300">
+            Melde dich an, um DHR-, DMR- und UDI-Dokumente zu verwalten.
+          </p>
+          <div className="mt-5 flex justify-center">
+            <LandingLoginPanel />
+          </div>
+          <Link
+            href="/"
+            className="mt-4 inline-flex rounded-full border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-900"
+          >
+            Zur Startseite
+          </Link>
+        </div>
       </main>
     );
   }
