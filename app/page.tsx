@@ -1436,7 +1436,7 @@ export default function MedSafePage() {
         storageKey,
         JSON.stringify({
           conversations: aiConversations,
-          activeConversationId,
+          activeConversationId: activeAiConversationId,
           historyVisible: isAiHistoryVisible,
         })
       );
