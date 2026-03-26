@@ -3640,6 +3640,24 @@ if (!user) {
     <main className="relative min-h-[70vh] flex items-center justify-center">
       <div className="w-full max-w-5xl space-y-8">
         <div className="flex flex-col items-center text-center">
+          <div className="relative mb-6 flex h-28 w-28 items-center justify-center">
+            <div className="absolute inset-0 rounded-full bg-sky-500/25 blur-2xl animate-pulse" />
+            <div className="absolute inset-2 rounded-full bg-sky-400/20 blur-xl animate-ping" />
+            <div className="absolute inset-5 rounded-full bg-emerald-400/14 blur-lg" />
+            <div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-sky-400/80 bg-slate-950 shadow-[0_0_52px_rgba(56,189,248,0.3)]">
+              <img
+                src="/icons/red-bird.svg"
+                alt="MedSafe Bird"
+                className="h-16 w-16 object-contain"
+              />
+            </div>
+          </div>
+
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-emerald-400/35 bg-emerald-500/14 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-emerald-100 shadow-[0_0_22px_rgba(16,185,129,0.18)]">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(134,239,172,0.95)] animate-pulse" />
+            Ready Online
+          </div>
+
           <span className="text-xs uppercase tracking-[0.18em] text-slate-400 mb-4">
             Designed for Medical Device Manufacturers
           </span>

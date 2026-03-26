@@ -43,7 +43,7 @@ export default function LandingLoginPanel() {
           id="auth-email"
           type="email"
           placeholder="E-Mail"
-          className="h-11 flex-1 rounded-full border border-slate-700 bg-slate-900 px-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
+          className="h-11 flex-1 rounded-full border border-slate-700 bg-slate-900 px-4 text-sm text-slate-100 placeholder:text-slate-500 caret-emerald-300 [color-scheme:dark] autofill:bg-slate-900 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 [-webkit-text-fill-color:#f8fafc] [-webkit-box-shadow:0_0_0px_1000px_rgb(15,23,42)_inset] [transition:background-color_9999s_ease-in-out_0s]"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
