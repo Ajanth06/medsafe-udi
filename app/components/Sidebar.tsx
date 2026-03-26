@@ -1,11 +1,20 @@
 "use client";
 
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 
 export default function Sidebar() {
   const [user, setUser] = useState<User | null>(null);
+  const [deviceCount, setDeviceCount] = useState<number | null>(null);
+  const [documentCount, setDocumentCount] = useState<number | null>(null);
+  const [isUdiPulseActive, setIsUdiPulseActive] = useState(false);
+  const [isDocsPulseActive, setIsDocsPulseActive] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
+  const isUdiControlActive = pathname === "/";
+  const isDocumentsActive = pathname?.startsWith("/docs");
 
   useEffect(() => {
     const loadUser = async () => {
@@ -24,55 +33,49 @@ export default function Sidebar() {
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+
+    const loadOverviewCounts = async () => {
+      const [{ count: devices }, { count: docs }] = await Promise.all([
+        supabase.from("devices").select("*", { count: "exact", head: true }),
+        supabase.from("docs").select("*", { count: "exact", head: true }),
+      ]);
+
+      setDeviceCount(devices ?? 0);
+      setDocumentCount(docs ?? 0);
+    };
+
+    loadOverviewCounts();
+  }, [user]);
+
+  const closeActiveDetailView = () => {
+    window.dispatchEvent(new CustomEvent("medsafe:close-detail"));
+  };
+
+  const openUdiControl = () => {
+    setIsUdiPulseActive(true);
+    window.setTimeout(() => setIsUdiPulseActive(false), 900);
+    closeActiveDetailView();
+    if (pathname !== "/") {
+      router.push("/");
+      return;
+    }
+    window.history.pushState(null, "", "/");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  };
+
   if (!user) {
     return (
-      <div className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
-        <div className="text-[11px] font-medium uppercase tracking-[0.25em] text-slate-300/80">
-          Navigation
-        </div>
-
-        <div className="space-y-2 text-sm">
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
-            UDI Control <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
+        <div className="grid gap-2 md:grid-cols-2">
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200/80">
+            <div className="font-medium text-slate-100">UDI Control</div>
+            <div className="mt-1 text-[11px] text-slate-400">Login erforderlich</div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
-            Risikoanalyse (ISO 14971){" "}
-            <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200/80">
-            Dokumente <span className="text-[11px] text-slate-400">(Login erforderlich)</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-          <div className="mb-2 flex items-center justify-between text-[11px] font-semibold tracking-[0.2em] text-slate-300">
-            <span>PLATFORM STATUS</span>
-            <span className="flex items-center gap-2 text-emerald-300 drop-shadow-[0_0_6px_rgba(16,185,129,0.6)]">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
-              <span>Online</span>
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
-            <span className="text-slate-400">System:</span>
-            <span className="text-slate-200">Aktiv</span>
-            <span className="text-slate-400">Security:</span>
-            <span className="text-slate-200">UDI-Hash aktiv</span>
-            <span className="text-slate-400">Storage:</span>
-            <span className="text-slate-200">Cloud bereit</span>
-            <span className="text-slate-400">Region:</span>
-            <span className="text-slate-200">EU (Frankfurt)</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 shadow-[0_0_18px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-          <div className="mb-2 text-[11px] font-semibold tracking-[0.2em] text-slate-300">
-            TRUST &amp; COMPLIANCE
-          </div>
-          <div className="space-y-1 text-[12px] text-slate-300">
-            <div>MDR-konzipierte Architektur</div>
-            <div>ISO 13485-orientiert</div>
-            <div>Audit-Trail vorbereitet</div>
-            <div>EU-Datenhaltung</div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200/80">
+            <div className="font-medium text-slate-100">Dokumente</div>
+            <div className="mt-1 text-[11px] text-slate-400">Login erforderlich</div>
           </div>
         </div>
       </div>
@@ -80,51 +83,70 @@ export default function Sidebar() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
-      <div className="text-[11px] font-medium uppercase tracking-[0.25em] text-slate-300/80">
-        Navigation
-      </div>
-
-      <nav className="space-y-1 text-sm">
-        <a
-          href="/"
-          className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
+    <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
+      <nav className="grid gap-2 md:grid-cols-2 text-sm">
+        <button
+          type="button"
+          onClick={() => {
+            openUdiControl();
+          }}
+          className={
+            "flex min-h-[96px] flex-col justify-between rounded-2xl px-5 py-4 text-slate-50 transition border border-emerald-400/50 bg-emerald-500/15 shadow-[0_0_24px_rgba(16,185,129,0.16)] " +
+            (isUdiControlActive || isUdiPulseActive ? "animate-pulse" : "hover:bg-emerald-500/18")
+          }
         >
-          <span>UDI Control</span>
-          <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
-            Aktiv
-          </span>
-        </a>
+          <div className="text-center">
+            <div className="text-xl font-black tracking-[0.08em] uppercase text-slate-50">
+              UDI Control
+            </div>
+            <div className="mt-2 text-xs font-medium leading-5 text-slate-300">
+              Manage devices, generate UDI and ensure full traceability
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-300">
+              <span>Geräte: {deviceCount ?? "–"}</span>
+              <span className="text-slate-500">|</span>
+              <span>UDI erstellt: {deviceCount ?? "–"}</span>
+              <span className="text-slate-500">|</span>
+              <span>Dokumente: {documentCount ?? "–"}</span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[10px] text-slate-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                System aktiv
+              </span>
+              <span className="rounded-full border border-slate-500/30 bg-white/5 px-2 py-1">
+                UDI-Hash aktiv
+              </span>
+              <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1">
+                Cloud synchronisiert
+              </span>
+            </div>
+          </div>
+        </button>
 
-        <a
-          href="/risk-analysis"
-          className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
+        <button
+          type="button"
+          onClick={() => {
+            setIsDocsPulseActive(true);
+            window.setTimeout(() => setIsDocsPulseActive(false), 900);
+            closeActiveDetailView();
+            router.push("/docs");
+          }}
+          className={
+            "flex min-h-[96px] flex-col justify-between rounded-2xl px-5 py-4 text-slate-50 transition border border-sky-400/50 bg-sky-500/15 shadow-[0_0_24px_rgba(14,165,233,0.16)] " +
+            (isDocumentsActive || isDocsPulseActive ? "animate-pulse" : "hover:bg-sky-500/18")
+          }
         >
-          <span>Risikoanalyse (ISO 14971)</span>
-          <span className="rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
-            Aktiv
-          </span>
-        </a>
-
-        <a
-          href="/docs"
-          className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2 text-slate-50 shadow-inner shadow-white/10"
-        >
-          <span>Dokumente</span>
-          <span className="rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-medium text-white">
-            Aktiv
-          </span>
-        </a>
-
+          <div className="text-center">
+            <div className="text-xl font-black tracking-[0.08em] uppercase text-slate-50">
+              Dokumente
+            </div>
+            <div className="mt-2 text-xs font-medium leading-5 text-slate-300">
+              DHR, DMR und UDI-Unterlagen
+            </div>
+          </div>
+        </button>
       </nav>
-
-      <div className="mt-2 rounded-2xl bg-black/40 px-3 py-3 text-[11px] text-slate-300/85">
-        <div className="mb-1 font-medium">Pro-Funktionen vorbereitet</div>
-        <div className="text-[11px] text-slate-400">
-          UDI-Hash, Recall-Status, DMR/DHR-Links und IPFS-Archiv kannst du später
-          direkt hier im Layout erweitern.
-        </div>
-      </div>
     </div>
   );
 }

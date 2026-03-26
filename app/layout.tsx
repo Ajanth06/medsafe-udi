@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import AuthBar from "./components/AuthBar";
+import HeaderAiLauncher from "./components/HeaderAiLauncher";
 import Sidebar from "./components/Sidebar";
 
 export const metadata: Metadata = {
@@ -26,24 +27,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
            <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-3xl border border-white/10 bg-white/5 px-4 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl gap-3">
 
   {/* Links: MEDSAFE-Card + Vogel */}
-  <div className="flex items-center gap-4">
-    {/* Glow-Card MEDSAFE-UDI */}
-    <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 shadow-[0_0_20px_rgba(0,150,255,0.3)] backdrop-blur-xl">
-      <div className="text-lg font-bold tracking-wide text-sky-100">
-        MEDSAFE-UDI
-      </div>
-      <div className="text-[11px] text-slate-300/80 mt-0.5">
-        UDI · MDR · DOCUMENT CLOUD
-      </div>
-    </div>
-
+  <div className="flex flex-wrap items-center gap-4">
     {/* Vogel mit Glow + Bounce */}
    <div className="relative w-20 h-20 flex items-center justify-center">
   {/* Glow-Kreis */}
-  <div className="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" />
+  <div className="absolute inset-1 rounded-full bg-sky-500/10 blur-md" />
 
   {/* Innerer Kreis + Vogel */}
-  <div className="relative w-10 h-10 rounded-full bg-slate-900 border border-sky-400 flex items-center justify-center float-soft">
+  <div className="relative w-10 h-10 rounded-full bg-slate-900 border border-sky-400/60 shadow-[0_0_16px_rgba(56,189,248,0.12)] flex items-center justify-center float-soft">
     <img
       src="/icons/red-bird.svg"
       alt="MedSafe Bird"
@@ -51,6 +42,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     />
   </div>
 </div>
+
+    <HeaderAiLauncher />
 
 
   </div>
@@ -67,53 +60,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 </header>
 
 
-            {/* Layout mit Sidebar + Inhalt */}
-            <div className="flex flex-1 flex-col gap-4 md:flex-row">
-              {/* Sidebar */}
-              <aside className="md:w-64">
-                <Sidebar />
-              </aside>
+            <Sidebar />
 
-              {/* Inhalt */}
-              <section className="flex-1">
-                <div className="flex h-full flex-col gap-4">
-                  {/* Top-Karten */}
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm shadow-lg shadow-slate-950/60 backdrop-blur-2xl">
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-slate-300/80">
-                        Überblick
-                      </div>
-                      <div className="mt-1 text-sm font-semibold text-slate-50">
-                        Geräte &amp; UDI-Verwaltung
-                      </div>
-                    </div>
-
-                    <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm shadow-lg shadow-emerald-900/50 backdrop-blur-2xl">
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-200/90">
-                        Integrität
-                      </div>
-                      <div className="mt-1 text-sm font-semibold text-emerald-50">
-                        UDI-Hash aktiv
-                      </div>
-                    </div>
-
-                    <div className="rounded-3xl border border-sky-500/25 bg-sky-500/10 p-4 text-sm shadow-lg shadow-sky-900/50 backdrop-blur-2xl">
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-sky-100/90">
-                        Status
-                      </div>
-                      <div className="mt-1 text-sm font-semibold text-sky-50">
-                        Cloud-Register
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Seiteninhalt */}
-                  <main className="flex-1 overflow-visible rounded-3xl border border-white/10 bg-black/40 p-4 shadow-inner shadow-slate-950/70 backdrop-blur-2xl sm:p-6">
-                    {children}
-                  </main>
-                </div>
-              </section>
-            </div>
+            <main className="flex-1 overflow-visible rounded-3xl border border-white/10 bg-black/40 p-4 shadow-inner shadow-slate-950/70 backdrop-blur-2xl sm:p-6">
+              {children}
+            </main>
           </div>
         </div>
       </body>

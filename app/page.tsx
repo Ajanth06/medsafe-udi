@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 import Lottie from "lottie-react";
@@ -278,6 +279,13 @@ type ChatEntry = {
   timestamp: string;
 };
 
+type AiConversation = {
+  id: string;
+  title: string;
+  messages: ChatEntry[];
+  updatedAt: string;
+};
+
 type IntendedUseReviewStatus = "Draft" | "Review" | "Approved";
 
 type IntendedUseAiResult = {
@@ -314,6 +322,23 @@ async function hashUdi(udiDi: string, serial: string): Promise<string> {
     h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
   }
   return Math.abs(h >>> 0).toString(16).padStart(8, "0");
+}
+
+function createAiConversation(title = "Neue Unterhaltung"): AiConversation {
+  return {
+    id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `ai-${Date.now()}`,
+    title,
+    messages: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function getAiConversationStorageKey(userId?: string, email?: string) {
+  if (userId) return `medsafe-ai-conversations:${userId}`;
+  if (email) return `medsafe-ai-conversations:${email}`;
+  return "medsafe-ai-conversations:guest";
 }
 
 function formatDateYYMMDD(date: Date): string {
@@ -1057,7 +1082,15 @@ export default function MedSafePage() {
   const [aiIntendedUseServer, setAiIntendedUseServer] = useState<string | null>(null);
   const [aiBusyTask, setAiBusyTask] = useState<string | null>(null);
   const [aiCopilotInput, setAiCopilotInput] = useState("");
-  const [aiChatHistory, setAiChatHistory] = useState<ChatEntry[]>([]);
+  const [aiConversations, setAiConversations] = useState<AiConversation[]>([
+    createAiConversation(),
+  ]);
+  const [activeAiConversationId, setActiveAiConversationId] = useState<string>(
+    () => "pending"
+  );
+  const [isAiHistoryVisible, setIsAiHistoryVisible] = useState(true);
+  const [isAiAssistantModalOpen, setIsAiAssistantModalOpen] = useState(false);
+  const [aiConversationsHydrated, setAiConversationsHydrated] = useState(false);
 
   const aiRowSuggestions = useMemo(() => {
     const inferredType = inferDeviceType(newProductName || "Device");
@@ -1234,6 +1267,31 @@ export default function MedSafePage() {
   }, [selectedDeviceId]);
 
   useEffect(() => {
+    const syncHash = () => {
+      setIsAiAssistantModalOpen((window.location.hash || "") === "#medsafe-ai");
+    };
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, []);
+
+  useEffect(() => {
+    const closeDetail = () => {
+      setSelectedDeviceId(null);
+      setLastCreatedDeviceId(null);
+      setEditRowId(null);
+      setEditDraft(null);
+      setIsGroupPinned(false);
+      setUdiPiSearch("");
+    };
+
+    window.addEventListener("medsafe:close-detail", closeDetail as EventListener);
+    return () => {
+      window.removeEventListener("medsafe:close-detail", closeDetail as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!newProductName.trim()) {
       setAiInsightServer(null);
       setAiIntendedUseServer(null);
@@ -1320,6 +1378,72 @@ export default function MedSafePage() {
     newAccessories,
     intendedUseTouched,
   ]);
+
+  useEffect(() => {
+    if (!aiConversations.length) {
+      const fallbackConversation = createAiConversation();
+      setAiConversations([fallbackConversation]);
+      setActiveAiConversationId(fallbackConversation.id);
+      return;
+    }
+
+    if (
+      activeAiConversationId === "pending" ||
+      !aiConversations.some((conversation) => conversation.id === activeAiConversationId)
+    ) {
+      setActiveAiConversationId(aiConversations[0].id);
+    }
+  }, [activeAiConversationId, aiConversations]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const storageKey = getAiConversationStorageKey(user.id, user.email);
+
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          conversations?: AiConversation[];
+          activeConversationId?: string;
+          historyVisible?: boolean;
+        };
+
+        if (Array.isArray(parsed.conversations) && parsed.conversations.length > 0) {
+          setAiConversations(parsed.conversations);
+          setActiveAiConversationId(
+            parsed.activeConversationId && parsed.conversations.some((entry) => entry.id === parsed.activeConversationId)
+              ? parsed.activeConversationId
+              : parsed.conversations[0].id
+          );
+          setIsAiHistoryVisible(parsed.historyVisible ?? true);
+        }
+      }
+    } catch (error) {
+      console.error("AI conversation hydration failed:", error);
+    } finally {
+      setAiConversationsHydrated(true);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !aiConversationsHydrated) return;
+
+    const storageKey = getAiConversationStorageKey(user.id, user.email);
+
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          conversations: aiConversations,
+          activeConversationId,
+          historyVisible: isAiHistoryVisible,
+        })
+      );
+    } catch (error) {
+      console.error("AI conversation persistence failed:", error);
+    }
+  }, [user, aiConversationsHydrated, aiConversations, activeAiConversationId, isAiHistoryVisible]);
 
 
   // ---------- AUDIT ----------
@@ -1430,6 +1554,11 @@ export default function MedSafePage() {
     const userMessage = aiCopilotInput.trim();
     if (!userMessage) return;
 
+    const activeConversation =
+      aiConversations.find((conversation) => conversation.id === activeAiConversationId) ??
+      aiConversations[0];
+    if (!activeConversation) return;
+
     const userEntry: ChatEntry = {
       id: crypto.randomUUID(),
       role: "user",
@@ -1437,12 +1566,28 @@ export default function MedSafePage() {
       timestamp: new Date().toISOString(),
     };
 
-    setAiChatHistory((prev) => [...prev, userEntry]);
+    const nextTitle =
+      activeConversation.title === "Neue Unterhaltung"
+        ? userMessage.slice(0, 48)
+        : activeConversation.title;
+
+    setAiConversations((prev) =>
+      prev.map((conversation) =>
+        conversation.id === activeConversation.id
+          ? {
+              ...conversation,
+              title: nextTitle,
+              messages: [...conversation.messages, userEntry],
+              updatedAt: userEntry.timestamp,
+            }
+          : conversation
+      )
+    );
     setAiCopilotInput("");
 
     const ai = await runAiTask<AiChatResult>("copilot-chat", {
       message: userMessage,
-      history: aiChatHistory.slice(-8).map((entry) => ({
+      history: [...activeConversation.messages, userEntry].slice(-8).map((entry) => ({
         role: entry.role,
         content: entry.content,
       })),
@@ -1468,7 +1613,19 @@ export default function MedSafePage() {
         "Ich konnte gerade keine belastbare Antwort erzeugen. Bitte konkretisiere die Frage.",
       timestamp: new Date().toISOString(),
     };
-    setAiChatHistory((prev) => [...prev, assistantEntry]);
+    setAiConversations((prev) =>
+      prev.map((conversation) =>
+        conversation.id === activeConversation.id
+          ? {
+              ...conversation,
+              messages: conversation.messages.some((entry) => entry.id === userEntry.id)
+                ? [...conversation.messages, assistantEntry]
+                : [...conversation.messages, userEntry, assistantEntry],
+              updatedAt: assistantEntry.timestamp,
+            }
+          : conversation
+      )
+    );
   };
 
   // ---------- GERÄTE SPEICHERN ----------
@@ -1757,11 +1914,33 @@ export default function MedSafePage() {
   };
 
   const handleSelectDevice = (id: string) => {
+    if (window.location.hash === "#medsafe-ai") {
+      window.history.pushState(null, "", window.location.pathname);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
+    setIsAiAssistantModalOpen(false);
     setSelectedDeviceId(id);
     if (id !== lastCreatedDeviceId) {
       setLastCreatedDeviceId(null);
     }
     setMessage(null);
+  };
+
+  const handleCloseSelectedDeviceModal = () => {
+    setSelectedDeviceId(null);
+    setLastCreatedDeviceId(null);
+    setEditRowId(null);
+    setEditDraft(null);
+    setIsGroupPinned(false);
+    setUdiPiSearch("");
+  };
+
+  const handleCloseAiAssistantModal = () => {
+    setIsAiAssistantModalOpen(false);
+    if (window.location.hash === "#medsafe-ai") {
+      window.history.pushState(null, "", window.location.pathname);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2420,6 +2599,56 @@ export default function MedSafePage() {
         .slice(0, 25),
     [devices]
   );
+  const groupedDevicesForOverview = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        name: string;
+        batch: string;
+        quantity: number;
+        udiDi: string;
+        status: DeviceStatus | "mixed";
+        representativeId: string;
+        createdAt: string;
+      }
+    >();
+
+    for (const device of recentDevicesForUdiTable) {
+      const key = `${device.name || "–"}::${device.batch || "–"}`;
+      const existing = groups.get(key);
+
+      if (!existing) {
+        groups.set(key, {
+          key,
+          name: device.name || "–",
+          batch: device.batch || "–",
+          quantity: 1,
+          udiDi: device.udiDi || "–",
+          status: device.status,
+          representativeId: device.id,
+          createdAt: device.createdAt,
+        });
+        continue;
+      }
+
+      existing.quantity += 1;
+      if (existing.status !== device.status) {
+        existing.status = "mixed";
+      }
+      if (
+        new Date(device.createdAt || 0).getTime() > new Date(existing.createdAt || 0).getTime()
+      ) {
+        existing.createdAt = device.createdAt;
+        existing.representativeId = device.id;
+      }
+    }
+
+    return [...groups.values()].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+  }, [recentDevicesForUdiTable]);
 
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => {
@@ -2463,6 +2692,23 @@ export default function MedSafePage() {
     : null;
   const isShowingLastCreatedDevice =
     !!selectedDevice && !!lastCreatedDeviceId && selectedDevice.id === lastCreatedDeviceId;
+  const riskAnalysisEnabled = false;
+  const selectedGroupDeviceCount = selectedDevice
+    ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch).length
+    : 0;
+  const devicesInSameGroup: Device[] = selectedDevice
+    ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
+    : [];
+  const normalizedUdiPiSearch = udiPiSearch.trim().toLowerCase();
+  const filteredDevicesInSameGroup = devicesInSameGroup.filter((d) => {
+    if (!normalizedUdiPiSearch) return true;
+    return (d.udiPi || "").toLowerCase().includes(normalizedUdiPiSearch);
+  });
+  const archivedDevicesInSameGroup: Device[] = selectedDevice
+    ? devices.filter(
+        (d) => d.isArchived && d.name === selectedDevice.name && d.batch === selectedDevice.batch
+      )
+    : [];
 
 
   const totalDevices = devices.length;
@@ -2475,13 +2721,13 @@ export default function MedSafePage() {
           <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
             {isShowingLastCreatedDevice ? "Gerät erstellt" : "Gerätedetails"}
           </div>
-          <div className="mt-1 text-lg font-semibold text-slate-50">
+          <div className="mt-1 text-xl font-semibold text-slate-50">
             {isShowingLastCreatedDevice
               ? "UDI wurde automatisch generiert"
               : "Ausgewähltes Gerät"}
           </div>
         </div>
-        <div className="text-xs text-slate-400">
+        <div className="text-sm text-slate-300">
           {isShowingLastCreatedDevice
             ? "Ergebnis der letzten Erstellung"
             : "Detailansicht des gewählten Geräts"}
@@ -2496,9 +2742,13 @@ export default function MedSafePage() {
             <div className="mt-2 text-xl font-semibold text-slate-50">
               {selectedDevice.name || "Kein Gerät ausgewählt"}
             </div>
-            <div className="mt-1 text-sm text-slate-400">
-              {selectedDevice.manufacturerName || "Hersteller nicht gesetzt"} ·{" "}
-              {selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-300">
+              <span>{selectedDevice.manufacturerName || "Hersteller nicht gesetzt"}</span>
+              <span className="text-slate-500">•</span>
+              <span>{selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}</span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-slate-100">
+                Charge: {selectedGroupDeviceCount} Geräte
+              </span>
             </div>
           </div>
           {selectedDeviceStatusLabel && (
@@ -2566,996 +2816,44 @@ export default function MedSafePage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/75 p-4">
+      <div className="rounded-2xl border border-white/10 bg-slate-900/75 p-4 md:p-5">
         <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
           Produktions- und Systemdaten
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="text-[11px] text-slate-500">Seriennummer</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Seriennummer</div>
             <div className="mt-1 break-all text-sm text-slate-100">{selectedDevice.serial || "–"}</div>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="text-[11px] text-slate-500">Charge</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Charge</div>
             <div className="mt-1 text-sm text-slate-100">{selectedDevice.batch || "–"}</div>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="text-[11px] text-slate-500">Produktionsdatum</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Produktionsdatum</div>
             <div className="mt-1 text-sm text-slate-100">{selectedDevice.productionDate || "–"}</div>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="text-[11px] text-slate-500">Angelegt am</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Angelegt am</div>
             <div className="mt-1 text-sm text-slate-100">
               {selectedDevice.createdAt ? new Date(selectedDevice.createdAt).toLocaleString() : "–"}
             </div>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="text-[11px] text-slate-500">DHR-ID</div>
-            <div className="mt-1 break-all text-sm text-slate-300">{selectedDevice.dhrId || "–"}</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">DHR-ID</div>
+            <div className="mt-1 break-all text-sm text-slate-100">{selectedDevice.dhrId || "–"}</div>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
-            <div className="text-[11px] text-slate-500">DMR-ID</div>
-            <div className="mt-1 break-all text-sm text-slate-300">{selectedDevice.dmrId || "–"}</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">DMR-ID</div>
+            <div className="mt-1 break-all text-sm text-slate-100">{selectedDevice.dmrId || "–"}</div>
           </div>
         </div>
-        <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-100">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          <span>Hash verified</span>
-        </div>
-      </div>
-    </div>
-  ) : null;
-  const getDocsForGroup = (groupDevices: Device[]): Doc[] => {
-    if (!groupDevices.length) return [];
-    const deviceIds = new Set(groupDevices.map((d) => d.id));
-    const groupName = groupDevices[0]?.name ?? "";
-    const groupBatch = groupDevices[0]?.batch ?? "";
 
-    const relevant = docs.filter((doc) => {
-      if (!hasStoredDocumentFile(doc)) return false;
-      if (deviceIds.has(doc.deviceId)) return true;
-      if (doc.assignmentScope === "batch" && groupBatch && doc.assignedBatch === groupBatch) {
-        return true;
-      }
-      if (
-        doc.assignmentScope === "product_group" &&
-        groupName &&
-        doc.assignedProductGroup === groupName
-      ) {
-        return true;
-      }
-      return false;
-    });
-
-    const seen = new Set<string>();
-    return relevant.filter((doc) => {
-      if (seen.has(doc.id)) return false;
-      seen.add(doc.id);
-      return true;
-    });
-  };
-
-  const devicesInSameGroup: Device[] = selectedDevice
-    ? devices.filter((d) => d.name === selectedDevice.name && d.batch === selectedDevice.batch)
-    : [];
-  const normalizedUdiPiSearch = udiPiSearch.trim().toLowerCase();
-  const filteredDevicesInSameGroup = devicesInSameGroup.filter((d) => {
-    if (!normalizedUdiPiSearch) return true;
-    return (d.udiPi || "").toLowerCase().includes(normalizedUdiPiSearch);
-  });
-  const archivedDevicesInSameGroup: Device[] = selectedDevice
-    ? devices.filter(
-        (d) => d.isArchived && d.name === selectedDevice.name && d.batch === selectedDevice.batch
-      )
-    : [];
-  const udiRelevantDocsForSelectedDevice = selectedDeviceDocs.filter((doc) =>
-    UDI_RELEVANT_DOC_TYPE_OPTIONS.some((option) => option.value === detectDocType(doc))
-  );
-  const udiRelevantMissingDocs = UDI_REQUIRED_DOC_TYPES.filter(
-    (requiredType) =>
-      !udiRelevantDocsForSelectedDevice.some((doc) => detectDocType(doc) === requiredType)
-  ).map((requiredType) => getDocTypeLabel(requiredType));
-  const deviceDocumentsSection = (
-    <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-semibold">Device Documents (UDI Relevant)</h2>
-
-      {selectedDeviceId ? (
-        <p className="text-sm text-slate-400">
-          Current Device:{" "}
-          {devices.find((d) => d.id === selectedDeviceId)?.name} – SN:{" "}
-          {devices.find((d) => d.id === selectedDeviceId)?.serial}
-        </p>
-      ) : (
-        <p className="text-sm text-amber-400">
-          Please select a device above to view linked UDI documents.
-        </p>
-      )}
-
-      {selectedDevice && (
-        <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-4 text-sm">
-          <div className="text-slate-100">
-            Documents: {UDI_REQUIRED_DOC_TYPES.length - udiRelevantMissingDocs.length} / {UDI_REQUIRED_DOC_TYPES.length}
-          </div>
-          <div className="mt-2 text-slate-400">
-            Missing: {udiRelevantMissingDocs.length > 0 ? udiRelevantMissingDocs.join(", ") : "None"}
-          </div>
-        </div>
-      )}
-
-      {selectedDevice && (selectedMissingDocs.length > 0 || aiComplianceAlertText) && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
-          <div className="text-[11px] uppercase tracking-[0.18em] mb-1">
-            Compliance Note
-          </div>
-          <div>
-            {udiRelevantMissingDocs.length > 0
-              ? "Some required documents are missing for this device."
-              : aiComplianceAlertText || "Required UDI documents are complete for this device."}
-          </div>
-        </div>
-      )}
-
-      <div className="text-sm font-medium text-slate-100">Upload Document</div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input
-          className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-          placeholder="Dokumentenname"
-          value={docName}
-          onChange={(e) => setDocName(e.target.value)}
-        />
-
-        <select
-          className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-          value={docCategory}
-          onChange={(e) => setDocCategory(e.target.value)}
-        >
-          {["Konformität / Declaration of Conformity", "Gebrauchsanweisung / IFU", "Labeling", "Servicebericht"].map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
-            </option>
-          ))}
-        </select>
-
-        <input
-          type="file"
-          onChange={handleFileChange}
-          className="text-sm text-slate-200"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">Dokumenttyp</div>
-          <select
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            value={docType}
-            onChange={(e) => setDocType(e.target.value as DocType)}
-          >
-            {UDI_RELEVANT_DOC_TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">Version</div>
-          <input
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            placeholder="z.B. V1.0"
-            value={docVersion}
-            onChange={(e) => setDocVersion(e.target.value)}
-          />
-        </div>
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">Revision</div>
-          <input
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            placeholder="z.B. Rev. 0"
-            value={docRevision}
-            onChange={(e) => setDocRevision(e.target.value)}
-          />
-        </div>
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">Status</div>
-          <select
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            value={docStatus}
-            onChange={(e) => setDocStatus(e.target.value as DocStatus)}
-          >
-            <option value="Draft">Draft</option>
-            <option value="Final">Approved</option>
-          </select>
-        </div>
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">
-            Freigegeben von
-          </div>
-          <input
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            placeholder="Name QMB / Verantwortlicher"
-            value={docApprovedBy}
-            onChange={(e) => setDocApprovedBy(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">Zuordnung</div>
-          <select
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            value={docAssignmentScope}
-            onChange={(e) =>
-              setDocAssignmentScope(e.target.value as DocAssignmentScope)
-            }
-          >
-            {DOC_ASSIGNMENT_SCOPE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          {selectedDevice && docAssignmentScope !== "device" && (
-            <div className="mt-1 text-[10px] text-slate-400">
-              {docAssignmentScope === "batch"
-                ? `Charge: ${selectedDevice.batch || "–"}`
-                : `Produktgruppe: ${selectedDevice.name || "–"}`}
-            </div>
-          )}
-        </div>
-        <div>
-          <div className="text-slate-400 text-[11px] mb-1">Pflichtdokument</div>
-          <select
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            value={docIsMandatory ? "yes" : "no"}
-            onChange={(e) => setDocIsMandatory(e.target.value === "yes")}
-          >
-            <option value="no">Optional</option>
-            <option value="yes">Pflicht</option>
-          </select>
-        </div>
-        <div className="md:col-span-2">
-          <div className="text-slate-400 text-[11px] mb-1">Ziel / Zweck des Dokuments</div>
-          <input
-            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
-            placeholder="z.B. Nachweis der MDR-Konformität für Charge"
-            value={docPurpose}
-            onChange={(e) => setDocPurpose(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <button
-        onClick={handleUploadDoc}
-        disabled={isUploading}
-        className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
-      >
-        {isUploading ? "Upload läuft …" : "Dokument speichern"}
-      </button>
-
-      <div className="text-sm font-medium text-slate-100">Documents</div>
-
-      {selectedDeviceId && (
-        <div className="space-y-2">
-          {udiRelevantDocsForSelectedDevice.length === 0 ? (
-            <p className="text-sm text-slate-400">
-              No documents uploaded yet.
-            </p>
-          ) : (
-            <ul className="space-y-2 text-sm">
-              {udiRelevantDocsForSelectedDevice.map((doc) => (
-                <li
-                  key={doc.id}
-                  className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
-                >
-                  <div className="font-medium flex flex-wrap items-center gap-2">
-                    <span>{doc.name}</span>
-                    <span className="text-xs text-slate-400">
-                      ({doc.category ? doc.category : "ohne Kategorie"})
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-1">
-                    Typ: {getDocTypeLabel(detectDocType(doc))} |{" "}
-                    Version: {doc.version || "–"} | Revision: {doc.revision || "–"} |
-                    Status: {doc.docStatus || "Controlled"} | Freigegeben von:{" "}
-                    {doc.approvedBy || "–"}
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-1">
-                    Zuordnung: {doc.assignmentScope || "device"}{" "}
-                    {doc.assignmentScope === "batch" && doc.assignedBatch
-                      ? `(Charge ${doc.assignedBatch})`
-                      : ""}
-                    {doc.assignmentScope === "product_group" &&
-                    doc.assignedProductGroup
-                      ? `(Gruppe ${doc.assignedProductGroup})`
-                      : ""}
-                    {" | "}
-                    Typ: {doc.isMandatory ? "Pflicht" : "Optional"}
-                  </div>
-                  {doc.purpose && (
-                    <div className="text-[11px] text-slate-300 mt-1">
-                      Ziel: {doc.purpose}
-                    </div>
-                  )}
-                  <div className="text-xs text-slate-400 break-all">
-                    CID: {doc.cid}
-                  </div>
-                  <a
-                    href={`/api/docs/open?cid=${encodeURIComponent(doc.cid)}&url=${encodeURIComponent(
-                      doc.url
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-emerald-400 underline mt-1 inline-block"
-                  >
-                    Öffnen
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </section>
-  );
-  const recallSignals = selectedDevice
-    ? (() => {
-        const sameBatch = devices.filter((d) => d.batch === selectedDevice.batch);
-        const recallCount = sameBatch.filter((d) => d.status === "recall").length;
-        const blockedCount = sameBatch.filter((d) => d.status === "blocked").length;
-        const serviceIssues = sameBatch.filter((d) =>
-          (d.serviceNotes || "").toLowerCase().includes("fehler")
-        ).length;
-        const signals: string[] = [];
-        if (recallCount >= 2) signals.push("Mehrere Recall-Fälle in derselben Charge");
-        if (blockedCount >= 2) signals.push("Gehäufte Quarantänefälle erkannt");
-        if (serviceIssues >= 2) signals.push("Mehrere Service-Fehlermeldungen in der Charge");
-        return signals;
-      })()
-    : [];
-
-  const handleTogglePinnedGroup = () => {
-    if (!selectedDevice) return;
-    setIsGroupPinned((prev) => !prev);
-  };
-
-  const handleExportJSON = () => {
-    if (!devices.length) {
-      setMessage("Keine Geräte zum Exportieren vorhanden.");
-      return;
-    }
-
-    const json = JSON.stringify(devices, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "medsafe-devices.json";
-    a.click();
-
-    URL.revokeObjectURL(url);
-    setMessage("Geräte als JSON exportiert.");
-  };
-
-  const handleExportCSV = () => {
-    if (!devices.length) {
-      setMessage("Keine Geräte zum Exportieren vorhanden.");
-      return;
-    }
-
-    const csv = devicesToCSV(devices);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "medsafe-devices.csv";
-    a.click();
-
-    URL.revokeObjectURL(url);
-    setMessage("Geräte als CSV exportiert.");
-  };
-
-  const handleExportDhrJson = () => {
-    if (!selectedDevice) {
-      setMessage("Kein Gerät für DHR-Export ausgewählt.");
-      return;
-    }
-
-    const dhrDocs = docs.filter(
-      (d) => d.deviceId === selectedDevice.id && hasStoredDocumentFile(d)
-    );
-    const dhrAudit = audit.filter((a) => a.deviceId === selectedDevice.id);
-
-    const payload = {
-      device: selectedDevice,
-      docs: dhrDocs,
-      audit: dhrAudit,
-      exportedAt: new Date().toISOString(),
-    };
-
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    const safeSerial = selectedDevice.serial || selectedDevice.id;
-    a.href = url;
-    a.download = `DHR-${safeSerial}.json`;
-    a.click();
-
-    URL.revokeObjectURL(url);
-    setMessage("DHR für dieses Gerät als JSON exportiert.");
-  };
-
-  // ---------- CONDITIONAL UI (LOGIN / DASHBOARD) ----------
-
-if (!user) {
-  return (
-    <main className="relative min-h-[60vh] flex items-center justify-center">
-      {/* Partner-Logos mittig, keine eigene blaue Fläche */}
-      <div className="flex flex-col items-center">
-        <span className="text-xs text-slate-400 mb-2">
-          Partner • Healthcare &amp; Pharma
-        </span>
-
-        <div className="logo-glide flex flex-wrap items-center justify-center gap-6 opacity-80">
-          <img
-            src="/partners/novartis.png"
-            className="h-10 w-auto object-contain"
-            alt="Novartis"
-          />
-          <img src="/partners/roche.png" className="h-6" alt="Roche" />
-          <img src="/partners/pfizer.png" className="h-10" alt="Pfizer" />
-          <img src="/partners/johnson.png" className="h-5" alt="Merck" />
-          <img src="/partners/bayer.png" className="h-7" alt="Thalheimer" />
-        </div>
-      </div>
-    </main>
-  );
-}
-
-
-
-
-
-
-
-      
-
-
-
-
-  // ---------- EINGELOGGT: DASHBOARD ----------
-
- return (
-  <main className="min-h-screen bg-slate-950 text-slate-100">
-    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
-      {/* HEADER */}
-<header
-  className="
-    relative
-    space-y-4
-    rounded-3xl
-    bg-slate-900/40
-    backdrop-blur-xl
-    border border-white/10
-    shadow-[0_0_25px_rgba(0,200,255,0.15)]
-    before:absolute before:inset-0 before:-z-10
-    before:rounded-3xl
-    before:bg-gradient-to-r before:from-cyan-500/10 before:to-blue-500/10
-    before:blur-2xl
-  "
->
-  <div className="flex items-start justify-between gap-4 p-6">
-    <div>
-      <h1 className="text-3xl font-bold text-sky-100 drop-shadow-[0_0_4px_rgba(0,200,255,0.3)]">
-        MedSafe-UDI – Geräteübersicht
-      </h1>
-
-      <p className="text-slate-400 text-sm mt-1">
-        Produktname &amp; Anzahl eingeben – UDI-DI, Seriennummern, Charge &amp;
-        UDI-PI (ohne Verfallsdatum) werden automatisch generiert und in Supabase
-        gespeichert. Jedes Gerät startet als freigegeben und kann später einzeln
-        in Quarantäne oder Recall gesetzt, kommentiert, archiviert und mit
-        Service-/PMS-/Dokumenten-Historie verwaltet werden.
-      </p>
-    </div>
-  </div>
-
-  {/* Stats + Aktionen */}
-  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-6 pb-6">
-    <div className="flex gap-3 text-xs md:text-sm">
-      <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
-        <div className="text-slate-400">Geräte gesamt</div>
-        <div className="text-lg font-semibold">{totalDevices}</div>
-      </div>
-
-      <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
-        <div className="text-slate-400">Dokumente</div>
-        <div className="text-lg font-semibold">{totalDocs}</div>
-      </div>
-
-      <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
-        <div className="text-slate-400">Archiviert</div>
-        <div className="text-lg font-semibold">{totalArchived}</div>
-      </div>
-    </div>
-
-    <div className="flex gap-2">
-      <button
-        onClick={loadAllFromSupabase}
-        className="
-          text-xs md:text-sm rounded-lg border border-slate-700
-          px-3 py-2 bg-slate-900
-          hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
-          transition
-        "
-      >
-        Cloud aktualisieren
-      </button>
-
-      <button
-        onClick={handleExportJSON}
-        className="
-          text-xs md:text-sm rounded-lg border border-slate-700
-          px-3 py-2 bg-slate-900
-          hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
-          transition
-        "
-      >
-        Export JSON
-      </button>
-
-      <button
-        onClick={handleExportCSV}
-        className="
-          text-xs md:text-sm rounded-lg border border-slate-700
-          px-3 py-2 bg-slate-900
-          hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
-          transition
-        "
-      >
-        Export CSV
-      </button>
-    </div>
-  </div>
-</header>
-
-
-
-        {isLoading && (
-          <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
-            Daten werden aus Supabase geladen …
-          </div>
-        )}
-
-        {message && !isLoading && (
-          <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
-            {message}
-          </div>
-        )}
-
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(420px,0.9fr)]">
-          <div className="space-y-4">
-            {selectedDeviceIdentityCard ? (
-              selectedDeviceIdentityCard
-            ) : (
-              <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 text-sm text-slate-400">
-                Noch kein Gerät ausgewählt. Erstelle oben ein neues Gerät oder wähle rechts ein vorhandenes Gerät aus.
-              </section>
-            )}
-          </div>
-
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h2 className="text-base font-semibold">Vorhandene Geräte</h2>
-                <div className="text-[11px] text-slate-400">
-                  Vorhandene Geräte auswählen und verwalten
-                </div>
-              </div>
-            </div>
-            {recentDevicesForUdiTable.length === 0 ? (
-              <div className="text-sm text-slate-400">Noch keine Geräte gespeichert.</div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
-                <table className="w-full border-collapse text-[11px]">
-                  <thead>
-                    <tr className="border-b border-slate-700">
-                      <th className="py-2 pr-2 text-left">Produkt</th>
-                      <th className="py-2 pr-2 text-left">Seriennummer</th>
-                      <th className="py-2 pr-2 text-left">UDI-DI</th>
-                      <th className="py-2 pr-2 text-left">Charge</th>
-                      <th className="py-2 pr-2 text-left">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentDevicesForUdiTable.map((d) => (
-                      <tr
-                        key={d.id}
-                        className={
-                          "border-b border-slate-800 last:border-b-0 cursor-pointer hover:bg-slate-800/40 " +
-                          (selectedDeviceId === d.id ? "bg-emerald-900/30" : "")
-                        }
-                        onClick={() => handleSelectDevice(d.id)}
-                      >
-                        <td className="py-2 pr-2">{d.name || "–"}</td>
-                        <td className="py-2 pr-2 break-all">{d.serial || "–"}</td>
-                        <td className="py-2 pr-2 break-all">{d.udiDi || "–"}</td>
-                        <td className="py-2 pr-2">{d.batch || "–"}</td>
-                        <td className="py-2 pr-2">{DEVICE_STATUS_LABELS[d.status]}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        </section>
-
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-5">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">Neues Gerät anlegen</h2>
-              <div className="mt-1 text-sm text-slate-400">
-                Produktdaten eingeben, Gerät erstellen und UDI automatisch generieren.
-              </div>
-            </div>
-            <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-100">
-              Flow: Create → Generate → Review → Manage
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Produktname</div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Produktname"
-                value={newProductName}
-                onChange={(e) => setNewProductName(e.target.value)}
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Anzahl</div>
-              <input
-                type="number"
-                min={1}
-                max={999}
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Anzahl"
-                value={quantity}
-                onChange={(e) =>
-                  setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
-                }
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Hersteller</div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Hersteller"
-                value={newManufacturerName}
-                onChange={(e) => setNewManufacturerName(e.target.value)}
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Gerätekategorie</div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-                placeholder="Gerätekategorie"
-                value={iuGenericDeviceGroup}
-                onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Risikoklasse (optional)</div>
-              <select
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                value={newRiskClass}
-                onChange={(e) => setNewRiskClass(e.target.value)}
-              >
-                <option value="">Nicht gesetzt</option>
-                <option value="I">I</option>
-                <option value="IIa">IIa</option>
-                <option value="IIb">IIb</option>
-                <option value="III">III</option>
-              </select>
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Angelegt von</div>
-              <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
-                {createdByLabel}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={handleSaveDevice}
-              className="inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
-            >
-              Gerät erstellen &amp; UDI generieren
-            </button>
-            <button
-              onClick={handleGenerateIntendedUseDraft}
-              disabled={aiBusyTask === "intended-use"}
-              className="inline-flex items-center rounded-lg border border-violet-500/60 bg-violet-900/30 hover:bg-violet-800/40 px-4 py-2 text-sm font-medium"
-            >
-              {aiBusyTask === "intended-use" ? "Generating…" : "Generate Purpose Draft (MDR)"}
-            </button>
-            <button
-              onClick={handleGenerateFmeaDraft}
-              disabled={aiBusyTask === "fmea-draft"}
-              className="inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
-            >
-              {aiBusyTask === "fmea-draft" ? "Generating…" : "Generate FMEA Draft"}
-            </button>
-            <select
-              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
-              value={iuReviewStatus}
-              onChange={(e) =>
-                setIuReviewStatus(e.target.value as IntendedUseReviewStatus)
-              }
-            >
-              <option value="Draft">Intended Use Status: Draft</option>
-              <option value="Review">Intended Use Status: Review</option>
-              <option value="Approved">Intended Use Status: Approved</option>
-            </select>
-          </div>
-        </section>
-
-        {deviceDocumentsSection}
-
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Erweiterte Erstellungs-Module</h2>
-              <div className="text-xs text-slate-400">
-                Nicht Teil des Hauptflows, aber weiterhin verfügbar für Review, AI und Drafting.
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
-            <div className="xl:col-span-2 rounded-xl border border-violet-500/20 bg-violet-950/20 px-4 py-3 text-xs space-y-3">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200">
-                Intended Use Draft
-              </div>
-              {(iuInferredProductType || iuInferenceConfidence !== null) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="rounded-lg border border-violet-500/30 bg-slate-900/60 px-3 py-2">
-                    <div className="text-[11px] text-violet-200/80 mb-0.5">Inferred Product Type</div>
-                    <div className="text-slate-100 font-medium">
-                      {iuInferredProductType || "Nicht sicher bestimmbar"}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-violet-500/30 bg-slate-900/60 px-3 py-2">
-                    <div className="text-[11px] text-violet-200/80 mb-0.5">Inference Confidence</div>
-                    <div className="text-slate-100 font-medium">
-                      {iuInferenceConfidence !== null ? `${iuInferenceConfidence}%` : "–"}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {activeIntendedUseDraft ? (
-                <textarea
-                  className="w-full min-h-[130px] rounded-lg border border-violet-500/30 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400"
-                  value={activeIntendedUseDraft}
-                  onChange={(e) => {
-                    setIntendedUseDraftText(e.target.value);
-                    setIntendedUseTouched(true);
-                  }}
-                />
-              ) : (
-                <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-400">
-                  Noch kein Intended-Use-Draft vorhanden.
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-[11px]">
-                <span className="text-slate-400">Workflow:</span>
-                <span className="rounded-full border border-violet-400/40 bg-violet-900/30 px-2 py-0.5 text-violet-200">
-                  {iuReviewStatus}
-                </span>
-              </div>
-              {iuAssumptions.length > 0 && (
-                <ul className="list-disc pl-4 text-sky-100">
-                  {iuAssumptions.map((assumption) => (
-                    <li key={assumption}>{assumption}</li>
-                  ))}
-                </ul>
-              )}
-              {iuMissingContext.length > 0 && (
-                <ul className="list-disc pl-4 text-amber-100">
-                  {iuMissingContext.map((ctx) => (
-                    <li key={ctx}>{ctx}</li>
-                  ))}
-                </ul>
-              )}
-              {iuRegulatoryWarnings.length > 0 && (
-                <ul className="list-disc pl-4 text-rose-100">
-                  {iuRegulatoryWarnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 px-4 py-3 text-xs space-y-2">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200">
-                  AI Device Insight
-                </div>
-                {aiBusyTask === "device-insight" && (
-                  <div className="text-sky-300">Analyse läuft …</div>
-                )}
-                <div>Gerätetyp: <span className="text-sky-100">{activeAiInsight.deviceType}</span></div>
-                <div>Dokumentstatus: <span className="text-sky-100">{activeAiInsight.documentStatus}</span></div>
-                <div>Compliance Status: <span className="font-semibold text-emerald-300">{activeAiInsight.complianceScore}%</span></div>
-                <div>
-                  Risiken:{" "}
-                  {activeAiInsight.riskSignals.length
-                    ? activeAiInsight.riskSignals.join(", ")
-                    : "Keine auffälligen Signale"}
-                </div>
-                <div className="text-amber-200">{activeAiInsight.recommendation}</div>
-              </div>
-
-              {aiFmeaDraft && (
-                <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/25 px-4 py-3 text-xs whitespace-pre-wrap">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200 mb-1">
-                    AI FMEA Draft
-                  </div>
-                  {aiFmeaDraft}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* MedSafe AI */}
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <h2 className="text-lg font-semibold">MedSafe AI</h2>
-            <div className="text-xs text-slate-400">
-              Chat, MDR-Hinweise und automatische QMS-Dokumententwürfe
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4">
-            <div className="rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-950/50 via-orange-950/40 to-slate-900 p-3 space-y-3">
-              <div className="text-xs text-amber-100 font-medium">Copilot Chat</div>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-orange-500/30 bg-orange-950/25 p-3 space-y-2 text-xs">
-                {aiChatHistory.length === 0 ? (
-                  <div className="text-amber-200/80">
-                    Stelle eine Frage wie: &quot;Welche MDR-Lücken hat dieses Gerät?&quot;
-                  </div>
-                ) : (
-                  aiChatHistory.map((entry) => (
-                    <div key={entry.id} className="space-y-1">
-                      <div
-                        className={
-                          "font-medium " +
-                          (entry.role === "user" ? "text-amber-300" : "text-orange-300")
-                        }
-                      >
-                        {entry.role === "user" ? "Du" : "MedSafe AI"}
-                      </div>
-                      <div className="whitespace-pre-wrap text-slate-100">{entry.content}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="rounded-lg border border-slate-600 bg-black p-2">
-                <div className="mb-2 text-[11px] text-slate-300">Frage an Copilot</div>
-                <div className="flex gap-2">
-                <textarea
-                  className="w-full min-h-[72px] bg-transparent px-3 py-2 text-sm outline-none border-0 focus:outline-none focus:ring-0"
-                  placeholder="Frag MedSafe AI nach Risiken, Dokumenten, Audit-Vorbereitung ..."
-                  value={aiCopilotInput}
-                  onChange={(e) => setAiCopilotInput(e.target.value)}
-                />
-                <button
-                  onClick={handleSendCopilotMessage}
-                  disabled={aiBusyTask === "copilot-chat"}
-                  className="self-end rounded-lg border border-orange-400/60 bg-orange-900/40 px-4 py-2 text-sm font-medium hover:bg-orange-800/50 disabled:opacity-60"
-                >
-                  {aiBusyTask === "copilot-chat" ? "Sende…" : "Senden"}
-                </button>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-        {/* Ausgewählte Gruppe (Sticky) */}
-        {selectedDevice && isGroupPinned && (
-          <section className="sticky top-16 z-20">
-            <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-3 md:p-4 space-y-2 shadow-lg shadow-black/30 backdrop-blur-2xl">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
-                    AUSGEWÄHLTE GRUPPE
-                  </div>
-                  <div className="text-sm text-slate-200">
-                    Produkt / Charge – aktive Geräte
-                  </div>
-                </div>
-                <button
-                  className="text-[11px] rounded-md border border-sky-400/70 bg-sky-500/20 px-3 py-1 text-sky-100 shadow-[0_0_16px_rgba(56,189,248,0.55)]"
-                  onClick={handleTogglePinnedGroup}
-                >
-                  Pinned
-                </button>
-              </div>
-              {(() => {
-                const devicesOfGroup = devicesInSameGroup;
-                const statusSet = new Set(devicesOfGroup.map((d) => d.status));
-                let statusLabel: string;
-                if (statusSet.size === 1) {
-                  statusLabel = DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
-                } else {
-                  statusLabel = "Gemischter Status";
-                }
-                const hasRiskStatus = devicesOfGroup.some(
-                  (d) => d.status === "blocked" || d.status === "recall"
-                );
-                const statusClass =
-                  statusLabel === "Gemischter Status"
-                    ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
-                    : hasRiskStatus
-                    ? "bg-red-600/20 text-red-300 border-red-500/40"
-                    : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
-                return (
-                  <div className="mt-2 rounded-xl border border-emerald-500/30 bg-slate-900/60 px-4 py-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-medium">
-                        {selectedDevice.name} – Charge: {selectedDevice.batch ?? "–"}{" "}
-                        <span className="text-slate-400">
-                          ({devicesOfGroup.length} aktive Gerät
-                          {devicesOfGroup.length !== 1 ? "e" : ""})
-                        </span>
-                      </div>
-                      <span
-                        className={
-                          "text-[10px] px-2 py-0.5 rounded-full border " + statusClass
-                        }
-                      >
-                        {statusLabel}
-                      </span>
-                    </div>
-                    {selectedDevice.dmrId && (
-                      <div className="text-[11px] text-slate-400 mt-1 break-all">
-                        DMR-ID: {selectedDevice.dmrId}
-                      </div>
-                    )}
-                    <div className="text-xs text-slate-400 mt-1 break-all">
-                      Beispiel-SN: {selectedDevice.serial}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 break-all">
-                      UDI-DI: {selectedDevice.udiDi}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </section>
-        )}
-
-        {/* Tabelle Gruppe */}
-        {selectedDevice && devicesInSameGroup.length > 0 && (
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-2">
+        {devicesInSameGroup.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-3">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
               <div>
-                <div className="font-semibold">
+                <div className="font-semibold text-slate-100">
                   Geräte in dieser Produkt/Charge-Gruppe (inkl. Archiv)
                 </div>
                 <div className="text-[11px] text-slate-400">
@@ -3589,32 +2887,32 @@ if (!user) {
                 />
               </div>
             </div>
-            <div className="relative max-h-80 overflow-y-auto overflow-x-hidden rounded-xl border border-slate-800/80 bg-slate-900/40">
+            <div className="relative max-h-80 overflow-y-auto overflow-x-hidden rounded-xl border border-slate-800 bg-slate-950">
               <table className="w-full border-collapse text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-700">
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Seriennummer
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       UDI-PI
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Status
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Kommentar kurz
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Verantwortlich
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Dokumente
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Angelegt am
                     </th>
-                    <th className="sticky top-0 z-10 bg-slate-950/95 py-1 pr-2 text-left backdrop-blur">
+                    <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Aktion
                     </th>
                   </tr>
@@ -3738,23 +3036,25 @@ if (!user) {
                                       </option>
                                     </select>
                                   </div>
-                                  <div>
-                                    <div className="text-slate-400 text-[11px] mb-1">
-                                      Risikoklasse
+                                  {riskAnalysisEnabled && (
+                                    <div>
+                                      <div className="text-slate-400 text-[11px] mb-1">
+                                        Risikoklasse
+                                      </div>
+                                      <input
+                                        className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
+                                        placeholder="I, IIa, IIb, III"
+                                        value={editDraft.riskClass}
+                                        onChange={(e) =>
+                                          setEditDraft({
+                                            ...editDraft,
+                                            riskClass: e.target.value,
+                                          })
+                                        }
+                                        onClick={(e) => e.stopPropagation()}
+                                      />
                                     </div>
-                                    <input
-                                      className="w-full bg-slate-900/70 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500"
-                                      placeholder="I, IIa, IIb, III"
-                                      value={editDraft.riskClass}
-                                      onChange={(e) =>
-                                        setEditDraft({
-                                          ...editDraft,
-                                          riskClass: e.target.value,
-                                        })
-                                      }
-                                      onClick={(e) => e.stopPropagation()}
-                                    />
-                                  </div>
+                                  )}
                                   <div>
                                     <div className="text-slate-400 text-[11px] mb-1">
                                       Kommentar / Sperrgrund
@@ -3797,7 +3097,7 @@ if (!user) {
                                       e.stopPropagation();
                                       handleUpdateDeviceMeta(d.id, {
                                         status: editDraft.status,
-                                        riskClass: editDraft.riskClass,
+                                        riskClass: riskAnalysisEnabled ? editDraft.riskClass : d.riskClass,
                                         blockComment: editDraft.blockComment,
                                         responsible: editDraft.responsible,
                                       });
@@ -3833,6 +3133,1021 @@ if (!user) {
                 Keine Geräte passend zur UDI-PI-Suche gefunden.
               </div>
             )}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
+  const udiRelevantDocsForSelectedDevice = selectedDeviceDocs.filter((doc) =>
+    UDI_RELEVANT_DOC_TYPE_OPTIONS.some((option) => option.value === detectDocType(doc))
+  );
+  const udiRelevantMissingDocs = UDI_REQUIRED_DOC_TYPES.filter(
+    (requiredType) =>
+      !udiRelevantDocsForSelectedDevice.some((doc) => detectDocType(doc) === requiredType)
+  ).map((requiredType) => getDocTypeLabel(requiredType));
+  const deviceDocumentsSection = (
+    <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+      <h2 className="text-lg font-semibold text-slate-100">UDI-Dokumente</h2>
+
+      {selectedDevice && (
+        <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-4 text-sm">
+          <div className="text-slate-100">
+            Documents: {UDI_REQUIRED_DOC_TYPES.length - udiRelevantMissingDocs.length} / {UDI_REQUIRED_DOC_TYPES.length}
+          </div>
+          <div className="mt-2 text-slate-300">
+            Missing: {udiRelevantMissingDocs.length > 0 ? udiRelevantMissingDocs.join(", ") : "None"}
+          </div>
+        </div>
+      )}
+
+      {riskAnalysisEnabled && selectedDevice && (selectedMissingDocs.length > 0 || aiComplianceAlertText) && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-100">
+          <div className="text-[11px] uppercase tracking-[0.18em] mb-1">
+            Compliance Note
+          </div>
+          <div>
+            {udiRelevantMissingDocs.length > 0
+              ? "Some required documents are missing for this device."
+              : aiComplianceAlertText || "Required UDI documents are complete for this device."}
+          </div>
+        </div>
+      )}
+
+      <div className="text-sm font-medium text-slate-100">Dokument hochladen</div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <input
+          className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+          placeholder="Dokumentenname"
+          value={docName}
+          onChange={(e) => setDocName(e.target.value)}
+        />
+
+        <select
+          className="bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+          value={docCategory}
+          onChange={(e) => setDocCategory(e.target.value)}
+        >
+          {["Konformität / Declaration of Conformity", "Gebrauchsanweisung / IFU", "Labeling", "Servicebericht"].map((cat) => (
+            <option key={cat} value={cat}>
+              {cat}
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="file"
+          onChange={handleFileChange}
+          className="text-sm text-slate-200"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
+        <div>
+          <div className="text-slate-400 text-[11px] mb-1">Version</div>
+          <input
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            placeholder="z.B. V1.0"
+            value={docVersion}
+            onChange={(e) => setDocVersion(e.target.value)}
+          />
+        </div>
+        <div>
+          <div className="text-slate-400 text-[11px] mb-1">Revision</div>
+          <input
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            placeholder="z.B. Rev. 0"
+            value={docRevision}
+            onChange={(e) => setDocRevision(e.target.value)}
+          />
+        </div>
+        <div>
+          <div className="text-slate-400 text-[11px] mb-1">Status</div>
+          <select
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            value={docStatus}
+            onChange={(e) => setDocStatus(e.target.value as DocStatus)}
+          >
+            <option value="Draft">Draft</option>
+            <option value="Final">Approved</option>
+          </select>
+        </div>
+        <div>
+          <div className="text-slate-400 text-[11px] mb-1">
+            Freigegeben von
+          </div>
+          <input
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            placeholder="Name QMB / Verantwortlicher"
+            value={docApprovedBy}
+            onChange={(e) => setDocApprovedBy(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mt-2">
+        <div>
+          <div className="text-slate-400 text-[11px] mb-1">Zuordnung</div>
+          <select
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            value={docAssignmentScope}
+            onChange={(e) =>
+              setDocAssignmentScope(e.target.value as DocAssignmentScope)
+            }
+          >
+            {DOC_ASSIGNMENT_SCOPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {selectedDevice && docAssignmentScope !== "device" && (
+            <div className="mt-1 text-[10px] text-slate-400">
+              {docAssignmentScope === "batch"
+                ? `Charge: ${selectedDevice.batch || "–"}`
+                : `Produktgruppe: ${selectedDevice.name || "–"}`}
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="text-slate-400 text-[11px] mb-1">Pflichtdokument</div>
+          <select
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            value={docIsMandatory ? "yes" : "no"}
+            onChange={(e) => setDocIsMandatory(e.target.value === "yes")}
+          >
+            <option value="no">Optional</option>
+            <option value="yes">Pflicht</option>
+          </select>
+        </div>
+        <div className="md:col-span-2">
+          <div className="text-slate-400 text-[11px] mb-1">Ziel / Zweck des Dokuments</div>
+          <input
+            className="bg-slate-800 rounded-lg px-2 py-1 text-[11px] outline-none border border-slate-700 focus:border-emerald-500 w-full"
+            placeholder="z.B. Nachweis der MDR-Konformität für Charge"
+            value={docPurpose}
+            onChange={(e) => setDocPurpose(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleUploadDoc}
+        disabled={isUploading}
+        className="mt-2 inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
+      >
+        {isUploading ? "Upload läuft …" : "Dokument speichern"}
+      </button>
+
+      {selectedDeviceId && (
+        <div className="space-y-2">
+          {udiRelevantDocsForSelectedDevice.length === 0 ? (
+            <p className="text-sm text-slate-300">
+              No documents uploaded yet.
+            </p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {udiRelevantDocsForSelectedDevice.map((doc) => (
+                <li
+                  key={doc.id}
+                  className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
+                >
+                  <div className="font-medium flex flex-wrap items-center gap-2">
+                    <span>{doc.name}</span>
+                    <span className="text-xs text-slate-400">
+                      ({doc.category ? doc.category : "ohne Kategorie"})
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 mt-1">
+                    Typ: {getDocTypeLabel(detectDocType(doc))} |{" "}
+                    Version: {doc.version || "–"} | Revision: {doc.revision || "–"} |
+                    Status: {doc.docStatus || "Controlled"} | Freigegeben von:{" "}
+                    {doc.approvedBy || "–"}
+                  </div>
+                  <div className="text-[11px] text-slate-300 mt-1">
+                    Zuordnung: {doc.assignmentScope || "device"}{" "}
+                    {doc.assignmentScope === "batch" && doc.assignedBatch
+                      ? `(Charge ${doc.assignedBatch})`
+                      : ""}
+                    {doc.assignmentScope === "product_group" &&
+                    doc.assignedProductGroup
+                      ? `(Gruppe ${doc.assignedProductGroup})`
+                      : ""}
+                    {" | "}
+                    Typ: {doc.isMandatory ? "Pflicht" : "Optional"}
+                  </div>
+                  {doc.purpose && (
+                    <div className="text-[11px] text-slate-300 mt-1">
+                      Ziel: {doc.purpose}
+                    </div>
+                  )}
+                  <div className="text-xs text-slate-300 break-all">
+                    CID: {doc.cid}
+                  </div>
+                  <a
+                    href={`/api/docs/open?cid=${encodeURIComponent(doc.cid)}&url=${encodeURIComponent(
+                      doc.url
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-emerald-400 underline mt-1 inline-block"
+                  >
+                    Öffnen
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
+  );
+  const activeAiConversation =
+    aiConversations.find((conversation) => conversation.id === activeAiConversationId) ??
+    aiConversations[0] ??
+    null;
+  const aiChatHistory = activeAiConversation?.messages ?? [];
+  const handleCreateAiConversation = () => {
+    const nextConversation = createAiConversation();
+    setAiConversations((prev) => [nextConversation, ...prev]);
+    setActiveAiConversationId(nextConversation.id);
+    setAiCopilotInput("");
+  };
+  const handleDeleteAiConversation = (conversationId: string) => {
+    setAiConversations((prev) => {
+      const remaining = prev.filter((conversation) => conversation.id !== conversationId);
+      if (remaining.length) {
+        if (activeAiConversationId === conversationId) {
+          setActiveAiConversationId(remaining[0].id);
+        }
+        return remaining;
+      }
+
+      const fallbackConversation = createAiConversation();
+      setActiveAiConversationId(fallbackConversation.id);
+      return [fallbackConversation];
+    });
+  };
+  const aiSection = (
+    <section
+      id="medsafe-ai"
+      className="rounded-2xl p-4 md:p-6 space-y-4 scroll-mt-24"
+    >
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <h2 className="text-lg font-semibold text-amber-200">MedSafe AI</h2>
+        <div className="text-xs text-slate-300 md:max-w-[540px] md:text-right">
+          Regulatorischer Assistent für MDR, ISO 13485, ISO 14971, UDI und technische Dokumentation
+        </div>
+      </div>
+
+      <div
+        className={
+          "grid gap-4 " +
+          (isAiHistoryVisible ? "lg:grid-cols-[240px_minmax(0,1fr)]" : "grid-cols-1")
+        }
+      >
+        {isAiHistoryVisible && (
+          <aside className="rounded-xl border border-amber-500/25 bg-slate-950 p-3 shadow-[0_0_24px_rgba(245,158,11,0.08)]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                Chat-Verläufe
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAiHistoryVisible(false)}
+                className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-900"
+              >
+                Ausblenden
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCreateAiConversation}
+              className="mt-3 w-full rounded-md border border-amber-400/45 bg-amber-500/16 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-500/22"
+            >
+              Neue Unterhaltung
+            </button>
+
+            <div className="mt-3 space-y-2">
+              {aiConversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  className={
+                    "rounded-lg border px-3 py-2 transition " +
+                    (conversation.id === activeAiConversationId
+                      ? "border-amber-400/40 bg-amber-500/12"
+                      : "border-slate-800 bg-slate-950 hover:bg-slate-900")
+                  }
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveAiConversationId(conversation.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="truncate text-sm font-medium text-slate-100">
+                        {conversation.title}
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-400">
+                        {conversation.messages.find((entry) => entry.role === "user")?.content ||
+                          "Noch keine Nachrichten"}
+                      </div>
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                        {conversation.messages.length
+                          ? new Date(conversation.updatedAt).toLocaleString("de-DE")
+                          : "Leer"}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteAiConversation(conversation.id)}
+                      className="shrink-0 rounded-md border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400 hover:border-amber-400/30 hover:text-amber-200"
+                    >
+                      Löschen
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
+
+        <div className="rounded-xl border border-amber-500/25 bg-slate-950 px-2.5 py-2.5 shadow-[0_0_24px_rgba(245,158,11,0.08)]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+              Aktive Unterhaltung
+            </div>
+            {!isAiHistoryVisible && (
+              <button
+                type="button"
+                onClick={() => setIsAiHistoryVisible(true)}
+                className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-900"
+              >
+                Verlauf anzeigen
+              </button>
+            )}
+          </div>
+
+          <div className="mt-3 max-h-[420px] overflow-y-auto rounded-md border border-slate-900 bg-slate-950 px-2.5 py-2 space-y-2.5 text-xs">
+            {aiChatHistory.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-amber-500/20 bg-slate-950 px-3 py-4 text-slate-300">
+                Stelle eine Frage wie: &quot;Welche UDI- oder Dokumentlücken hat dieses Gerät?&quot;
+              </div>
+            ) : (
+              aiChatHistory.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={
+                    "space-y-1 rounded-lg border px-3 py-2 " +
+                    (entry.role === "user"
+                      ? "border-amber-500/25 bg-amber-500/10"
+                      : "max-w-full border-slate-800 bg-slate-950")
+                  }
+                >
+                  <div
+                    className={
+                      "font-medium " +
+                      (entry.role === "user" ? "text-amber-300" : "text-slate-200")
+                    }
+                  >
+                    {entry.role === "user" ? "Frage" : "Antwort"}
+                  </div>
+                  <div className="whitespace-pre-wrap text-slate-100">{entry.content}</div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 rounded-md border border-slate-900 bg-slate-950 p-1.5">
+            <div className="mb-1.5 text-[11px] text-white">Frage an MedSafe AI</div>
+            <div className="flex gap-2">
+              <textarea
+                className="w-full min-h-[68px] bg-transparent px-2.5 py-1.5 text-sm text-white outline-none border-0 focus:outline-none focus:ring-0"
+                placeholder="Frage zu MDR, ISO 13485, ISO 14971, UDI oder Dokumentation eingeben ..."
+                value={aiCopilotInput}
+                onChange={(e) => setAiCopilotInput(e.target.value)}
+              />
+              <button
+                onClick={handleSendCopilotMessage}
+                disabled={aiBusyTask === "copilot-chat"}
+                className="self-end rounded-md border border-amber-400/45 bg-amber-500/16 px-3.5 py-1.5 text-sm font-medium text-amber-100 shadow-[0_0_16px_rgba(245,158,11,0.14)] hover:bg-amber-500/22 disabled:opacity-60"
+              >
+                {aiBusyTask === "copilot-chat" ? "Sende…" : "Senden"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+  const recallSignals = selectedDevice
+    ? (() => {
+        const sameBatch = devices.filter((d) => d.batch === selectedDevice.batch);
+        const recallCount = sameBatch.filter((d) => d.status === "recall").length;
+        const blockedCount = sameBatch.filter((d) => d.status === "blocked").length;
+        const serviceIssues = sameBatch.filter((d) =>
+          (d.serviceNotes || "").toLowerCase().includes("fehler")
+        ).length;
+        const signals: string[] = [];
+        if (recallCount >= 2) signals.push("Mehrere Recall-Fälle in derselben Charge");
+        if (blockedCount >= 2) signals.push("Gehäufte Quarantänefälle erkannt");
+        if (serviceIssues >= 2) signals.push("Mehrere Service-Fehlermeldungen in der Charge");
+        return signals;
+      })()
+    : [];
+
+  const handleTogglePinnedGroup = () => {
+    if (!selectedDevice) return;
+    setIsGroupPinned((prev) => !prev);
+  };
+
+  const handleExportJSON = () => {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+
+    const json = JSON.stringify(devices, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als JSON exportiert.");
+  };
+
+  const handleExportCSV = () => {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+
+    const csv = devicesToCSV(devices);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.csv";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als CSV exportiert.");
+  };
+
+  const handleExportDhrJson = () => {
+    if (!selectedDevice) {
+      setMessage("Kein Gerät für DHR-Export ausgewählt.");
+      return;
+    }
+
+    const dhrDocs = docs.filter(
+      (d) => d.deviceId === selectedDevice.id && hasStoredDocumentFile(d)
+    );
+    const dhrAudit = audit.filter((a) => a.deviceId === selectedDevice.id);
+
+    const payload = {
+      device: selectedDevice,
+      docs: dhrDocs,
+      audit: dhrAudit,
+      exportedAt: new Date().toISOString(),
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    const safeSerial = selectedDevice.serial || selectedDevice.id;
+    a.href = url;
+    a.download = `DHR-${safeSerial}.json`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("DHR für dieses Gerät als JSON exportiert.");
+  };
+
+  // ---------- CONDITIONAL UI (LOGIN / DASHBOARD) ----------
+
+if (!user) {
+  return (
+    <main className="relative min-h-[60vh] flex items-center justify-center">
+      {/* Partner-Logos mittig, keine eigene blaue Fläche */}
+      <div className="flex flex-col items-center">
+        <span className="text-xs text-slate-400 mb-2">
+          Partner • Healthcare &amp; Pharma
+        </span>
+
+        <div className="logo-glide flex flex-wrap items-center justify-center gap-6 opacity-80">
+          <img
+            src="/partners/novartis.png"
+            className="h-10 w-auto object-contain"
+            alt="Novartis"
+          />
+          <img src="/partners/roche.png" className="h-6" alt="Roche" />
+          <img src="/partners/pfizer.png" className="h-10" alt="Pfizer" />
+          <img src="/partners/johnson.png" className="h-5" alt="Merck" />
+          <img src="/partners/bayer.png?v=20260326-1" className="h-28" alt="Thalheimer" />
+        </div>
+      </div>
+    </main>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+  // ---------- EINGELOGGT: DASHBOARD ----------
+
+ return (
+  <main className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
+        {isLoading && (
+          <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
+            Daten werden aus Supabase geladen …
+          </div>
+        )}
+
+        {message && !isLoading && (
+          <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
+            {message}
+          </div>
+        )}
+
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+            <div className="flex flex-col gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-sky-100 drop-shadow-[0_0_4px_rgba(0,200,255,0.3)]">
+                  MedSafe-UDI – Geräteübersicht
+                </h1>
+              </div>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap gap-3 text-xs md:text-sm">
+                  <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+                    <div className="text-slate-400">Geräte gesamt</div>
+                    <div className="text-lg font-semibold">{totalDevices}</div>
+                  </div>
+                  <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+                    <div className="text-slate-400">Dokumente</div>
+                    <div className="text-lg font-semibold">{totalDocs}</div>
+                  </div>
+                  <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+                    <div className="text-slate-400">Archiviert</div>
+                    <div className="text-lg font-semibold">{totalArchived}</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={loadAllFromSupabase}
+                    className="
+                      text-xs md:text-sm rounded-lg border border-slate-700
+                      px-3 py-2 bg-slate-900
+                      hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+                      transition
+                    "
+                  >
+                    Cloud aktualisieren
+                  </button>
+                  <button
+                    onClick={handleExportCSV}
+                    className="
+                      text-xs md:text-sm rounded-lg border border-slate-700
+                      px-3 py-2 bg-slate-900
+                      hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+                      transition
+                    "
+                  >
+                    Export CSV
+                  </button>
+                </div>
+              </div>
+            </div>
+            {groupedDevicesForOverview.length === 0 ? (
+              <div className="text-sm text-slate-400">Noch keine Geräte gespeichert.</div>
+            ) : (
+              <div className="max-h-[248px] overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
+                <table className="w-full border-collapse text-[11px]">
+                  <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+                    <tr className="border-b border-slate-700">
+                      <th className="py-2 pr-2 text-left">#</th>
+                      <th className="py-2 pr-2 text-left">Produkt</th>
+                      <th className="py-2 pr-2 text-left">Anzahl</th>
+                      <th className="py-2 pr-2 text-left">UDI-DI</th>
+                      <th className="py-2 pr-2 text-left">Charge</th>
+                      <th className="py-2 pr-2 text-left">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupedDevicesForOverview.map((group, index) => {
+                      const isSelectedGroup =
+                        !!selectedDevice &&
+                        selectedDevice.name === group.name &&
+                        (selectedDevice.batch || "–") === group.batch;
+                      const statusLabel =
+                        group.status === "mixed"
+                          ? "Gemischter Status"
+                          : DEVICE_STATUS_LABELS[group.status];
+
+                      return (
+                      <tr
+                        key={group.key}
+                        className={
+                          "border-b border-slate-800 last:border-b-0 cursor-pointer hover:bg-slate-800/40 " +
+                          (isSelectedGroup ? "bg-emerald-900/30" : "")
+                        }
+                        onClick={() => handleSelectDevice(group.representativeId)}
+                      >
+                        <td className="py-2 pr-2 text-slate-400">{index + 1}</td>
+                        <td className="py-2 pr-2">{group.name}</td>
+                        <td className="py-2 pr-2">{group.quantity}</td>
+                        <td className="py-2 pr-2 break-all">{group.udiDi}</td>
+                        <td className="py-2 pr-2">{group.batch}</td>
+                        <td className="py-2 pr-2">{statusLabel}</td>
+                      </tr>
+                    )})}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </section>
+
+        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-5">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Neues Gerät anlegen</h2>
+              <div className="mt-1 text-sm text-slate-400">
+                Produktdaten eingeben, Gerät erstellen und UDI automatisch generieren.
+              </div>
+            </div>
+            <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-100">
+              Flow: Create → Generate → Review → Manage
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Produktname</div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Produktname"
+                value={newProductName}
+                onChange={(e) => setNewProductName(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Anzahl</div>
+              <input
+                type="number"
+                min={1}
+                max={999}
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Anzahl"
+                value={quantity}
+                onChange={(e) =>
+                  setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Hersteller</div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                placeholder="Hersteller"
+                value={newManufacturerName}
+                onChange={(e) => setNewManufacturerName(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Gerätekategorie</div>
+              <input
+                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                placeholder="Gerätekategorie"
+                value={iuGenericDeviceGroup}
+                onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
+              />
+            </div>
+            {riskAnalysisEnabled && (
+              <div>
+                <div className="mb-1 text-[11px] text-slate-400">Risikoklasse (optional)</div>
+                <select
+                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                  value={newRiskClass}
+                  onChange={(e) => setNewRiskClass(e.target.value)}
+                >
+                  <option value="">Nicht gesetzt</option>
+                  <option value="I">I</option>
+                  <option value="IIa">IIa</option>
+                  <option value="IIb">IIb</option>
+                  <option value="III">III</option>
+                </select>
+              </div>
+            )}
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Angelegt von</div>
+              <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
+                {createdByLabel}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleSaveDevice}
+              className="inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+            >
+              Gerät erstellen &amp; UDI generieren
+            </button>
+            {riskAnalysisEnabled && (
+              <>
+                <button
+                  onClick={handleGenerateIntendedUseDraft}
+                  disabled={aiBusyTask === "intended-use"}
+                  className="inline-flex items-center rounded-lg border border-violet-500/60 bg-violet-900/30 hover:bg-violet-800/40 px-4 py-2 text-sm font-medium"
+                >
+                  {aiBusyTask === "intended-use" ? "Generating…" : "Generate Purpose Draft (MDR)"}
+                </button>
+                <button
+                  onClick={handleGenerateFmeaDraft}
+                  disabled={aiBusyTask === "fmea-draft"}
+                  className="inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
+                >
+                  {aiBusyTask === "fmea-draft" ? "Generating…" : "Generate FMEA Draft"}
+                </button>
+                <select
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                  value={iuReviewStatus}
+                  onChange={(e) =>
+                    setIuReviewStatus(e.target.value as IntendedUseReviewStatus)
+                  }
+                >
+                  <option value="Draft">Intended Use Status: Draft</option>
+                  <option value="Review">Intended Use Status: Review</option>
+                  <option value="Approved">Intended Use Status: Approved</option>
+                </select>
+              </>
+            )}
+          </div>
+        </section>
+
+        {deviceDocumentsSection}
+
+        {riskAnalysisEnabled && (
+        <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Erweiterte Erstellungs-Module</h2>
+              <div className="text-xs text-slate-400">
+                Nicht Teil des Hauptflows, aber weiterhin verfügbar für Review, AI und Drafting.
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+            <div className="xl:col-span-2 rounded-xl border border-violet-500/20 bg-violet-950/20 px-4 py-3 text-xs space-y-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-violet-200">
+                Intended Use Draft
+              </div>
+              {(iuInferredProductType || iuInferenceConfidence !== null) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-violet-500/30 bg-slate-900/60 px-3 py-2">
+                    <div className="text-[11px] text-violet-200/80 mb-0.5">Inferred Product Type</div>
+                    <div className="text-slate-100 font-medium">
+                      {iuInferredProductType || "Nicht sicher bestimmbar"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-violet-500/30 bg-slate-900/60 px-3 py-2">
+                    <div className="text-[11px] text-violet-200/80 mb-0.5">Inference Confidence</div>
+                    <div className="text-slate-100 font-medium">
+                      {iuInferenceConfidence !== null ? `${iuInferenceConfidence}%` : "–"}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {activeIntendedUseDraft ? (
+                <textarea
+                  className="w-full min-h-[130px] rounded-lg border border-violet-500/30 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400"
+                  value={activeIntendedUseDraft}
+                  onChange={(e) => {
+                    setIntendedUseDraftText(e.target.value);
+                    setIntendedUseTouched(true);
+                  }}
+                />
+              ) : (
+                <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-400">
+                  Noch kein Intended-Use-Draft vorhanden.
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-slate-400">Workflow:</span>
+                <span className="rounded-full border border-violet-400/40 bg-violet-900/30 px-2 py-0.5 text-violet-200">
+                  {iuReviewStatus}
+                </span>
+              </div>
+              {iuAssumptions.length > 0 && (
+                <ul className="list-disc pl-4 text-sky-100">
+                  {iuAssumptions.map((assumption) => (
+                    <li key={assumption}>{assumption}</li>
+                  ))}
+                </ul>
+              )}
+              {iuMissingContext.length > 0 && (
+                <ul className="list-disc pl-4 text-amber-100">
+                  {iuMissingContext.map((ctx) => (
+                    <li key={ctx}>{ctx}</li>
+                  ))}
+                </ul>
+              )}
+              {iuRegulatoryWarnings.length > 0 && (
+                <ul className="list-disc pl-4 text-rose-100">
+                  {iuRegulatoryWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="rounded-xl border border-sky-500/30 bg-sky-950/30 px-4 py-3 text-xs space-y-2">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200">
+                  AI Device Insight
+                </div>
+                {aiBusyTask === "device-insight" && (
+                  <div className="text-sky-300">Analyse läuft …</div>
+                )}
+                <div>Gerätetyp: <span className="text-sky-100">{activeAiInsight.deviceType}</span></div>
+                <div>Dokumentstatus: <span className="text-sky-100">{activeAiInsight.documentStatus}</span></div>
+                <div>Compliance Status: <span className="font-semibold text-emerald-300">{activeAiInsight.complianceScore}%</span></div>
+                <div>
+                  Risiken:{" "}
+                  {activeAiInsight.riskSignals.length
+                    ? activeAiInsight.riskSignals.join(", ")
+                    : "Keine auffälligen Signale"}
+                </div>
+                <div className="text-amber-200">{activeAiInsight.recommendation}</div>
+              </div>
+
+              {aiFmeaDraft && (
+                <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/25 px-4 py-3 text-xs whitespace-pre-wrap">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200 mb-1">
+                    AI FMEA Draft
+                  </div>
+                  {aiFmeaDraft}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+        )}
+
+        {isAiAssistantModalOpen &&
+          createPortal(
+            <div className="pointer-events-none fixed inset-0 z-[125] bg-slate-950/82 p-4 backdrop-blur-sm md:p-6">
+              <div
+                className="pointer-events-auto mx-auto flex h-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-amber-400/20 bg-slate-950/96 shadow-[0_0_50px_rgba(120,53,15,0.28)]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-amber-400/15 px-4 py-3 md:px-6">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-amber-300/80">
+                      MedSafe AI
+                    </div>
+                    <div className="mt-1 text-base font-semibold text-slate-100">
+                      Fragen und schnelle MDR Hinweise
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleCloseAiAssistantModal}
+                    className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-100 hover:bg-amber-500/15"
+                  >
+                    X
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                  {aiSection}
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {/* Ausgewählte Gruppe (Sticky) */}
+        {selectedDevice && createPortal(
+          <div
+            className="pointer-events-none fixed inset-0 z-[120] bg-slate-950/82 p-4 backdrop-blur-sm md:p-6"
+          >
+            <div
+              className="pointer-events-auto mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/96 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
+                    Gerätedetail
+                  </div>
+                  <div className="mt-1 text-base font-semibold text-slate-100">
+                    {selectedDevice.name || "Gerät"} · {selectedDevice.serial || "–"}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    UDI, Produktionsdaten, Dokumente und Historie
+                  </div>
+                </div>
+                <button
+                  onClick={handleCloseSelectedDeviceModal}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+                >
+                  X
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                <div className="mx-auto max-w-7xl space-y-4 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+                  {selectedDeviceIdentityCard}
+                  {deviceDocumentsSection}
+
+        {selectedDevice && isGroupPinned && (
+          <section className="sticky top-16 z-20">
+            <div className="bg-slate-900/90 border border-emerald-600/40 rounded-2xl p-3 md:p-4 space-y-2 shadow-lg shadow-black/30 backdrop-blur-2xl">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-emerald-300/80">
+                    AUSGEWÄHLTE GRUPPE
+                  </div>
+                  <div className="text-sm text-slate-200">
+                    Produkt / Charge – aktive Geräte
+                  </div>
+                </div>
+                <button
+                  className="text-[11px] rounded-md border border-sky-400/70 bg-sky-500/20 px-3 py-1 text-sky-100 shadow-[0_0_16px_rgba(56,189,248,0.55)]"
+                  onClick={handleTogglePinnedGroup}
+                >
+                  Pinned
+                </button>
+              </div>
+              {(() => {
+                const devicesOfGroup = devicesInSameGroup;
+                const statusSet = new Set(devicesOfGroup.map((d) => d.status));
+                let statusLabel: string;
+                if (statusSet.size === 1) {
+                  statusLabel = DEVICE_STATUS_LABELS[devicesOfGroup[0].status];
+                } else {
+                  statusLabel = "Gemischter Status";
+                }
+                const hasRiskStatus = devicesOfGroup.some(
+                  (d) => d.status === "blocked" || d.status === "recall"
+                );
+                const statusClass =
+                  statusLabel === "Gemischter Status"
+                    ? "bg-amber-600/20 text-amber-300 border-amber-500/40"
+                    : hasRiskStatus
+                    ? "bg-red-600/20 text-red-300 border-red-500/40"
+                    : "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
+                return (
+                  <div className="mt-2 rounded-xl border border-emerald-500/30 bg-slate-900/60 px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-medium">
+                        {selectedDevice.name} – Charge: {selectedDevice.batch ?? "–"}{" "}
+                        <span className="text-slate-400">
+                          ({devicesOfGroup.length} aktive Gerät
+                          {devicesOfGroup.length !== 1 ? "e" : ""})
+                        </span>
+                      </div>
+                      <span
+                        className={
+                          "text-[10px] px-2 py-0.5 rounded-full border " + statusClass
+                        }
+                      >
+                        {statusLabel}
+                      </span>
+                    </div>
+                    {selectedDevice.dmrId && (
+                      <div className="text-[11px] text-slate-400 mt-1 break-all">
+                        DMR-ID: {selectedDevice.dmrId}
+                      </div>
+                    )}
+                    <div className="text-xs text-slate-400 mt-1 break-all">
+                      Beispiel-SN: {selectedDevice.serial}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 break-all">
+                      UDI-DI: {selectedDevice.udiDi}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
           </section>
         )}
 
@@ -3866,14 +4181,14 @@ if (!user) {
                   disabled={aiBusyTask === "device-summary"}
                   className="text-xs md:text-sm rounded-lg border border-cyan-500/60 px-3 py-2 bg-cyan-900/30 hover:bg-cyan-800/40"
                 >
-                  {aiBusyTask === "device-summary" ? "Generating…" : "Generate Device Summary"}
+                  {aiBusyTask === "device-summary" ? "Erstelle…" : "Gerätezusammenfassung erstellen"}
                 </button>
                 <button
                   onClick={handlePrepareAuditReport}
                   disabled={aiBusyTask === "audit-report"}
                   className="text-xs md:text-sm rounded-lg border border-indigo-500/60 px-3 py-2 bg-indigo-900/30 hover:bg-indigo-800/40"
                 >
-                  {aiBusyTask === "audit-report" ? "Preparing…" : "Prepare Audit Report"}
+                  {aiBusyTask === "audit-report" ? "Erstelle…" : "Auditbericht vorbereiten"}
                 </button>
               </div>
             )}
@@ -3886,65 +4201,69 @@ if (!user) {
             </p>
           ) : (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-4 py-3 text-xs">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200 mb-1">
-                    Device Health Score
+              {riskAnalysisEnabled && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-4 py-3 text-xs">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200 mb-1">
+                        Device Health Score
+                      </div>
+                      <div className="text-2xl font-semibold text-emerald-300">
+                        {selectedComplianceScore ?? 0}%
+                      </div>
+                      {selectedMissingDocs.length > 0 && (
+                        <div className="mt-1 text-amber-200">
+                          Fehlt: {selectedMissingDocs.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                    {recallSignals.length > 0 ? (
+                      <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-xs">
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-rose-200 mb-1">
+                          AI Risk Warning
+                        </div>
+                        <div className="text-rose-100">
+                          Diese Charge könnte ein erhöhtes Ausfallrisiko haben.
+                        </div>
+                        <ul className="mt-1 list-disc pl-4 text-rose-200/90">
+                          {recallSignals.map((signal) => (
+                            <li key={signal}>{signal}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs text-slate-300">
+                        AI Risk Warning: Keine auffällige Recall-Häufung in der Charge erkannt.
+                      </div>
+                    )}
                   </div>
-                  <div className="text-2xl font-semibold text-emerald-300">
-                    {selectedComplianceScore ?? 0}%
-                  </div>
-                  {selectedMissingDocs.length > 0 && (
-                    <div className="mt-1 text-amber-200">
-                      Fehlt: {selectedMissingDocs.join(", ")}
+
+                  {selectedComplianceBreakdown && (
+                    <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs">
+                      <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                        Compliance Score Aufschlüsselung
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                        {selectedComplianceBreakdown.areas.map((area) => (
+                          <div
+                            key={area.key}
+                            className="rounded-lg border border-slate-700 bg-slate-800/70 px-2 py-2"
+                          >
+                            <div className="text-slate-300 text-[10px]">{area.label}</div>
+                            <div className="text-base font-semibold text-slate-100">
+                              {area.score}%
+                            </div>
+                            {area.reasons.length > 0 && (
+                              <div className="mt-1 text-[10px] text-amber-200">
+                                {area.reasons[0]}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
-                </div>
-                {recallSignals.length > 0 ? (
-                  <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-xs">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-rose-200 mb-1">
-                      AI Risk Warning
-                    </div>
-                    <div className="text-rose-100">
-                      Diese Charge könnte ein erhöhtes Ausfallrisiko haben.
-                    </div>
-                    <ul className="mt-1 list-disc pl-4 text-rose-200/90">
-                      {recallSignals.map((signal) => (
-                        <li key={signal}>{signal}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs text-slate-300">
-                    AI Risk Warning: Keine auffällige Recall-Häufung in der Charge erkannt.
-                  </div>
-                )}
-              </div>
-
-              {selectedComplianceBreakdown && (
-                <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-xs">
-                  <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-slate-300">
-                    Compliance Score Aufschlüsselung
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                    {selectedComplianceBreakdown.areas.map((area) => (
-                      <div
-                        key={area.key}
-                        className="rounded-lg border border-slate-700 bg-slate-800/70 px-2 py-2"
-                      >
-                        <div className="text-slate-300 text-[10px]">{area.label}</div>
-                        <div className="text-base font-semibold text-slate-100">
-                          {area.score}%
-                        </div>
-                        {area.reasons.length > 0 && (
-                          <div className="mt-1 text-[10px] text-amber-200">
-                            {area.reasons[0]}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                </>
               )}
 
               {selectedValidationWarnings.length > 0 && (
@@ -3962,7 +4281,7 @@ if (!user) {
 
               {/* Service / PMS */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3">
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
                   <div className="font-semibold mb-1">Service / Wartung (DHR)</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -4012,7 +4331,7 @@ if (!user) {
                     />
                   </div>
                 </div>
-                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3">
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
                   <div className="font-semibold mb-1">
                     PMS / Feedback (Post-Market Surveillance)
                   </div>
@@ -4061,7 +4380,7 @@ if (!user) {
                   {aiDeviceSummary && (
                     <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 px-4 py-3 whitespace-pre-wrap">
                       <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200 mb-1">
-                        AI Device Summary
+                        Gerätezusammenfassung
                       </div>
                       {aiDeviceSummary}
                     </div>
@@ -4069,7 +4388,7 @@ if (!user) {
                   {aiAuditReport && (
                     <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 px-4 py-3 whitespace-pre-wrap">
                       <div className="text-[11px] uppercase tracking-[0.18em] text-indigo-200 mb-1">
-                        Audit Preparation
+                        Auditbericht
                       </div>
                       {aiAuditReport}
                     </div>
@@ -4082,7 +4401,7 @@ if (!user) {
 
         {/* Abweichung / Quarantäne */}
         {selectedDevice && (
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+          <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
             <h2 className="text-lg font-semibold">
               Abweichung / Quarantäne (Nonconformity)
             </h2>
@@ -4155,7 +4474,7 @@ if (!user) {
         )}
 
         {/* Audit-Log */}
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
+        <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
           <h2 className="text-lg font-semibold">Aktivitäten (Audit-Log)</h2>
           <p className="text-xs text-slate-400">
             {selectedDeviceId
@@ -4164,7 +4483,7 @@ if (!user) {
           </p>
 
           {auditForView.length === 0 ? (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-slate-300">
               Noch keine Aktivitäten aufgezeichnet.
             </p>
           ) : (
@@ -4172,13 +4491,13 @@ if (!user) {
               {auditForView.map((entry) => (
                 <li
                   key={entry.id}
-                  className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2"
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2"
                 >
-                  <div className="text-xs text-slate-400">
+                  <div className="text-xs text-slate-300">
                     {new Date(entry.timestamp).toLocaleString()}
                   </div>
                   <div className="font-medium mt-1">{entry.message}</div>
-                  <div className="text-xs text-slate-500">Aktion: {entry.action}</div>
+                  <div className="text-xs text-slate-400">Aktion: {entry.action}</div>
                 </li>
               ))}
             </ul>
@@ -4187,10 +4506,10 @@ if (!user) {
 
         {/* Archivierte Geräte der Gruppe */}
         {selectedDevice && (
-          <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
             <h2 className="text-lg font-semibold">Archivierte Geräte (Stilllegung)</h2>
             {archivedDevicesInSameGroup.length === 0 ? (
-              <p className="text-sm text-slate-400">Noch keine Geräte archiviert.</p>
+              <p className="text-sm text-slate-300">Noch keine Geräte archiviert.</p>
             ) : (
               <ul className="space-y-2 text-sm">
                 {archivedDevicesInSameGroup.map((device) => {
@@ -4237,6 +4556,12 @@ if (!user) {
               </ul>
             )}
           </section>
+        )}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
         )}
       </div>
     </main>
