@@ -3636,23 +3636,89 @@ export default function MedSafePage() {
 
 if (!user) {
   return (
-    <main className="relative min-h-[60vh] flex items-center justify-center">
-      {/* Partner-Logos mittig, keine eigene blaue Fläche */}
-      <div className="flex flex-col items-center">
-        <span className="text-xs text-slate-400 mb-2">
-          Partner • Healthcare &amp; Pharma
-        </span>
+    <main className="relative min-h-[70vh] flex items-center justify-center">
+      <div className="w-full max-w-5xl space-y-8">
+        <div className="flex flex-col items-center text-center">
+          <span className="text-xs uppercase tracking-[0.18em] text-slate-400 mb-4">
+            Designed for Medical Device Manufacturers
+          </span>
 
-        <div className="logo-glide flex flex-wrap items-center justify-center gap-6 opacity-80">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {[
+              "Automated UDI Generation",
+              "Full Device Traceability",
+              "Secure Hash Integrity",
+            ].map((feature) => (
+              <span
+                key={feature}
+                className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-[11px] text-slate-200"
+              >
+                {feature}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="mx-auto max-w-2xl rounded-3xl border border-emerald-500/25 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-5 shadow-[0_0_40px_rgba(16,185,129,0.12)]">
+          <div className="text-center">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-emerald-200/80">
+              UDI Preview
+            </div>
+            <div className="mt-2 text-sm text-slate-300">
+              Preview of generated identifier data for a connected device record
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">UDI-DI</div>
+              <div className="mt-2 break-all text-sm font-medium text-slate-100">TH-DI-000124</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">UDI-PI</div>
+              <div className="mt-2 break-all text-sm font-medium text-slate-100">
+                (11)260326(21)TH-SN-260326-001(10)260326
+              </div>
+            </div>
+            <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/8 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-emerald-200/80">UDI-Hash</div>
+              <div className="mt-2 break-all text-xs font-medium text-slate-100">
+                4fd49193ad4e7459f5b689c3fc29efa843cb493b45d112ef385601bde18a2164
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col items-center gap-3">
+            <div className="text-sm font-medium text-slate-100">Access UDI Control</div>
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById("auth-email")?.focus();
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className="rounded-full border border-emerald-400/35 bg-emerald-500/14 px-5 py-2 text-sm font-medium text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.12)] hover:bg-emerald-500/20"
+            >
+              Login
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 mb-3">
+            Healthcare &amp; Pharma
+          </div>
+
+          <div className="logo-glide flex flex-wrap items-center justify-center gap-5 opacity-75">
           <img
             src="/partners/novartis.png"
-            className="h-10 w-auto object-contain"
+            className="h-8 w-auto object-contain"
             alt="Novartis"
           />
-          <img src="/partners/roche.png" className="h-6" alt="Roche" />
-          <img src="/partners/pfizer.png" className="h-10" alt="Pfizer" />
-          <img src="/partners/johnson.png" className="h-5" alt="Merck" />
-          <img src="/partners/bayer.png?v=20260326-1" className="h-28" alt="Thalheimer" />
+          <img src="/partners/roche.png" className="h-5" alt="Roche" />
+          <img src="/partners/pfizer.png" className="h-8" alt="Pfizer" />
+          <img src="/partners/johnson.png" className="h-4" alt="Merck" />
+          <img src="/partners/bayer.png?v=20260326-1" className="h-20" alt="Thalheimer" />
+          </div>
         </div>
       </div>
     </main>

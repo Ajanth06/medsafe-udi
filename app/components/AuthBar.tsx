@@ -87,6 +87,7 @@ export default function AuthBar() {
     return (
       <div className="flex items-center gap-2 text-xs">
         <input
+          id="auth-email"
           type="email"
           placeholder="E-Mail"
           className="h-7 rounded-full bg-slate-900/80 px-3 text-[11px] text-slate-100 placeholder:text-slate-400 focus:outline-none"
