@@ -6,6 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 import Lottie from "lottie-react";
 import birdAnimation from "./animations/bird.json"; // Lege bird.json unter app/animations/ ab
+import LandingLoginPanel from "./components/LandingLoginPanel";
 
 type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
 
@@ -3690,16 +3691,7 @@ if (!user) {
 
           <div className="mt-6 flex flex-col items-center gap-3">
             <div className="text-sm font-medium text-slate-100">Access UDI Control</div>
-            <button
-              type="button"
-              onClick={() => {
-                document.getElementById("auth-email")?.focus();
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              className="rounded-full border border-emerald-400/35 bg-emerald-500/14 px-5 py-2 text-sm font-medium text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.12)] hover:bg-emerald-500/20"
-            >
-              Login
-            </button>
+            <LandingLoginPanel />
           </div>
         </div>
 
