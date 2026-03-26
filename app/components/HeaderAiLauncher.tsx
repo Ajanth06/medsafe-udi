@@ -2,11 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "../../lib/supabaseClient";
 
 export default function HeaderAiLauncher() {
   const pathname = usePathname();
   const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
   const [isActive, setIsActive] = useState(false);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (!error) setUser(data.user ?? null);
+    };
+
+    loadUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     const syncHash = () => {
@@ -28,6 +48,10 @@ export default function HeaderAiLauncher() {
 
     window.location.hash = "medsafe-ai";
   };
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <button

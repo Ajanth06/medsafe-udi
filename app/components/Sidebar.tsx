@@ -66,20 +66,7 @@ export default function Sidebar() {
   };
 
   if (!user) {
-    return (
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
-        <div className="grid gap-2 md:grid-cols-2">
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200/80">
-            <div className="font-medium text-slate-100">UDI Control</div>
-            <div className="mt-1 text-[11px] text-slate-400">Login erforderlich</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200/80">
-            <div className="font-medium text-slate-100">Dokumente</div>
-            <div className="mt-1 text-[11px] text-slate-400">Login erforderlich</div>
-          </div>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   return (
