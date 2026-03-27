@@ -346,12 +346,6 @@ function createAiConversation(title = "Neue Unterhaltung"): AiConversation {
   };
 }
 
-function getAiConversationStorageKey(userId?: string, email?: string) {
-  if (userId) return `medsafe-ai-conversations:${userId}`;
-  if (email) return `medsafe-ai-conversations:${email}`;
-  return "medsafe-ai-conversations:guest";
-}
-
 function formatDateYYMMDD(date: Date): string {
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -1009,6 +1003,35 @@ function mapProductRegistryRow(row: any): ProductUdiRegistryEntry {
   };
 }
 
+function mapAiConversationRows(
+  conversationRows: any[],
+  messageRows: any[]
+): AiConversation[] {
+  const messagesByConversation = new Map<string, ChatEntry[]>();
+
+  for (const row of messageRows || []) {
+    const conversationId = row.conversation_id;
+    if (!conversationId) continue;
+    const current = messagesByConversation.get(conversationId) || [];
+    current.push({
+      id: row.id,
+      role: row.role,
+      content: row.content,
+      timestamp: row.created_at,
+    });
+    messagesByConversation.set(conversationId, current);
+  }
+
+  return (conversationRows || []).map((row) => ({
+    id: row.id,
+    title: row.title || "Neue Unterhaltung",
+    messages: (messagesByConversation.get(row.id) || []).sort((a, b) =>
+      a.timestamp.localeCompare(b.timestamp)
+    ),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  }));
+}
+
 function mapAuditToDb(entry: AuditEntry | Partial<AuditEntry>): any {
   return {
     device_id: entry.deviceId ?? null,
@@ -1025,9 +1048,6 @@ export default function MedSafePage() {
   // Auth-Zustand
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginInfo, setLoginInfo] = useState<string | null>(null);
 
   // Daten
   const [devices, setDevices] = useState<Device[]>([]);
@@ -1037,6 +1057,9 @@ export default function MedSafePage() {
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [lastCreatedDeviceId, setLastCreatedDeviceId] = useState<string | null>(null);
+  const [isCreateDevicePanelOpen, setIsCreateDevicePanelOpen] = useState(false);
+  const [isOverviewPanelOpen, setIsOverviewPanelOpen] = useState(false);
+  const [isRegistryPanelOpen, setIsRegistryPanelOpen] = useState(false);
   const [editRowId, setEditRowId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
     status: DeviceStatus;
@@ -1113,15 +1136,12 @@ export default function MedSafePage() {
   const [aiIntendedUseServer, setAiIntendedUseServer] = useState<string | null>(null);
   const [aiBusyTask, setAiBusyTask] = useState<string | null>(null);
   const [aiCopilotInput, setAiCopilotInput] = useState("");
-  const [aiConversations, setAiConversations] = useState<AiConversation[]>([
-    createAiConversation(),
-  ]);
+  const [aiConversations, setAiConversations] = useState<AiConversation[]>([]);
   const [activeAiConversationId, setActiveAiConversationId] = useState<string>(
     () => "pending"
   );
   const [isAiHistoryVisible, setIsAiHistoryVisible] = useState(true);
   const [isAiAssistantModalOpen, setIsAiAssistantModalOpen] = useState(false);
-  const [aiConversationsHydrated, setAiConversationsHydrated] = useState(false);
 
   const aiRowSuggestions = useMemo(() => {
     const inferredType = inferDeviceType(newProductName || "Device");
@@ -1218,34 +1238,6 @@ export default function MedSafePage() {
     }
   }, [user]);
 
-
-  const handleSendLoginLink = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginEmail.trim()) {
-      setLoginInfo("Bitte eine gültige E-Mail eingeben.");
-      return;
-    }
-    try {
-      setLoginInfo("Login-Link wird gesendet …");
-      const { error } = await supabase.auth.signInWithOtp({
-        email: loginEmail,
-        options: {
-          emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
-        },
-      });
-      if (error) {
-        console.error("Magic Link Fehler:", error);
-        setLoginInfo("Fehler: " + error.message);
-        return;
-      }
-      setLoginInfo("Login-Link wurde an deine E-Mail geschickt.");
-      setLoginEmail("");
-    } catch (err: any) {
-      console.error(err);
-      setLoginInfo("Unerwarteter Fehler beim Login.");
-    }
-  };
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setDevices([]);
@@ -1304,6 +1296,8 @@ export default function MedSafePage() {
     const normalizedProductName = normalizeLookupKey(newProductName);
     if (!normalizedProductName) {
       setMatchedRegistryEntryId(null);
+      setProductPrefix("");
+      setRegisteredUdiDi("");
       return;
     }
 
@@ -1313,15 +1307,15 @@ export default function MedSafePage() {
 
     if (!matchedEntry) {
       setMatchedRegistryEntryId(null);
+      setProductPrefix("");
+      setRegisteredUdiDi("");
       return;
     }
 
     setMatchedRegistryEntryId(matchedEntry.id);
-    setProductPrefix((current) => current || matchedEntry.customerPrefix || "");
-    setRegisteredUdiDi((current) => current || matchedEntry.udiDi || "");
-    setNewManufacturerName(
-      (current) => current || matchedEntry.manufacturerName || ""
-    );
+    setProductPrefix(matchedEntry.customerPrefix || "");
+    setRegisteredUdiDi(matchedEntry.udiDi || "");
+    setNewManufacturerName((current) => current || matchedEntry.manufacturerName || "");
   }, [newProductName, productUdiRegistry]);
 
   useEffect(() => {
@@ -1352,6 +1346,30 @@ export default function MedSafePage() {
       window.removeEventListener("medsafe:close-detail", closeDetail as EventListener);
     };
   }, []);
+
+  useEffect(() => {
+    const shouldLockBodyScroll =
+      isAiAssistantModalOpen ||
+      !!selectedDeviceId ||
+      isCreateDevicePanelOpen ||
+      isOverviewPanelOpen ||
+      isRegistryPanelOpen;
+
+    if (!shouldLockBodyScroll) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [
+    isAiAssistantModalOpen,
+    selectedDeviceId,
+    isCreateDevicePanelOpen,
+    isOverviewPanelOpen,
+    isRegistryPanelOpen,
+  ]);
 
   useEffect(() => {
     if (!newProductName.trim()) {
@@ -1442,70 +1460,69 @@ export default function MedSafePage() {
   ]);
 
   useEffect(() => {
-    if (!aiConversations.length) {
-      const fallbackConversation = createAiConversation();
-      setAiConversations([fallbackConversation]);
-      setActiveAiConversationId(fallbackConversation.id);
+    if (
+      activeAiConversationId !== "pending" &&
+      aiConversations.some((conversation) => conversation.id === activeAiConversationId)
+    ) {
       return;
     }
-
-    if (
-      activeAiConversationId === "pending" ||
-      !aiConversations.some((conversation) => conversation.id === activeAiConversationId)
-    ) {
+    if (aiConversations.length > 0) {
       setActiveAiConversationId(aiConversations[0].id);
     }
   }, [activeAiConversationId, aiConversations]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setAiConversations([]);
+      setActiveAiConversationId("pending");
+      return;
+    }
 
-    const storageKey = getAiConversationStorageKey(user.id, user.email);
+    const loadAiConversations = async () => {
+      try {
+        const { data: conversationRows, error: conversationError } = await supabase
+          .from("ai_conversations")
+          .select("*")
+          .order("updated_at", { ascending: false });
 
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw) as {
-          conversations?: AiConversation[];
-          activeConversationId?: string;
-          historyVisible?: boolean;
-        };
+        if (conversationError) throw conversationError;
 
-        if (Array.isArray(parsed.conversations) && parsed.conversations.length > 0) {
-          setAiConversations(parsed.conversations);
-          setActiveAiConversationId(
-            parsed.activeConversationId && parsed.conversations.some((entry) => entry.id === parsed.activeConversationId)
-              ? parsed.activeConversationId
-              : parsed.conversations[0].id
-          );
-          setIsAiHistoryVisible(parsed.historyVisible ?? true);
+        const conversationIds = (conversationRows || []).map((row) => row.id);
+        let messageRows: any[] = [];
+
+        if (conversationIds.length > 0) {
+          const { data, error } = await supabase
+            .from("ai_messages")
+            .select("*")
+            .in("conversation_id", conversationIds)
+            .order("created_at", { ascending: true });
+          if (error) throw error;
+          messageRows = data || [];
         }
+
+        const mapped = mapAiConversationRows(conversationRows || [], messageRows);
+        setAiConversations(mapped);
+        setIsAiHistoryVisible(true);
+
+        if (mapped.length > 0) {
+          setActiveAiConversationId((current) =>
+            current !== "pending" && mapped.some((entry) => entry.id === current)
+              ? current
+              : mapped[0].id
+          );
+        } else {
+          setActiveAiConversationId("pending");
+        }
+      } catch (error) {
+        console.error("AI conversation hydration failed:", error);
+        setMessage("AI-Unterhaltungen konnten nicht aus Supabase geladen werden.");
+      } finally {
+        // no-op
       }
-    } catch (error) {
-      console.error("AI conversation hydration failed:", error);
-    } finally {
-      setAiConversationsHydrated(true);
-    }
+    };
+
+    loadAiConversations();
   }, [user]);
-
-  useEffect(() => {
-    if (!user || !aiConversationsHydrated) return;
-
-    const storageKey = getAiConversationStorageKey(user.id, user.email);
-
-    try {
-      window.localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          conversations: aiConversations,
-          activeConversationId: activeAiConversationId,
-          historyVisible: isAiHistoryVisible,
-        })
-      );
-    } catch (error) {
-      console.error("AI conversation persistence failed:", error);
-    }
-  }, [user, aiConversationsHydrated, aiConversations, activeAiConversationId, isAiHistoryVisible]);
 
 
   // ---------- AUDIT ----------
@@ -1614,12 +1631,18 @@ export default function MedSafePage() {
 
   const handleSendCopilotMessage = async () => {
     const userMessage = aiCopilotInput.trim();
-    if (!userMessage) return;
+    if (!userMessage || !user) return;
 
-    const activeConversation =
+    let activeConversation =
       aiConversations.find((conversation) => conversation.id === activeAiConversationId) ??
-      aiConversations[0];
-    if (!activeConversation) return;
+      aiConversations[0] ??
+      null;
+
+    if (!activeConversation) {
+      const created = await handleCreateAiConversation();
+      if (!created) return;
+      activeConversation = created;
+    }
 
     const userEntry: ChatEntry = {
       id: crypto.randomUUID(),
@@ -1646,6 +1669,30 @@ export default function MedSafePage() {
       )
     );
     setAiCopilotInput("");
+
+    const { error: userMessageError } = await supabase.from("ai_messages").insert({
+      id: userEntry.id,
+      conversation_id: activeConversation.id,
+      role: userEntry.role,
+      content: userEntry.content,
+      created_at: userEntry.timestamp,
+    });
+    if (userMessageError) {
+      console.error("AI message insert failed:", userMessageError);
+      setMessage("User-Nachricht konnte nicht in Supabase gespeichert werden.");
+      return;
+    }
+
+    const { error: updateConversationError } = await supabase
+      .from("ai_conversations")
+      .update({
+        title: nextTitle,
+        updated_at: userEntry.timestamp,
+      })
+      .eq("id", activeConversation.id);
+    if (updateConversationError) {
+      console.error("AI conversation update failed:", updateConversationError);
+    }
 
     const ai = await runAiTask<AiChatResult>("copilot-chat", {
       message: userMessage,
@@ -1688,6 +1735,30 @@ export default function MedSafePage() {
           : conversation
       )
     );
+
+    const { error: assistantMessageError } = await supabase.from("ai_messages").insert({
+      id: assistantEntry.id,
+      conversation_id: activeConversation.id,
+      role: assistantEntry.role,
+      content: assistantEntry.content,
+      created_at: assistantEntry.timestamp,
+    });
+    if (assistantMessageError) {
+      console.error("AI assistant message insert failed:", assistantMessageError);
+      setMessage("AI-Antwort konnte nicht in Supabase gespeichert werden.");
+      return;
+    }
+
+    const { error: finalUpdateConversationError } = await supabase
+      .from("ai_conversations")
+      .update({
+        title: nextTitle,
+        updated_at: assistantEntry.timestamp,
+      })
+      .eq("id", activeConversation.id);
+    if (finalUpdateConversationError) {
+      console.error("AI conversation final update failed:", finalUpdateConversationError);
+    }
   };
 
   // ---------- GERÄTE SPEICHERN ----------
@@ -1738,25 +1809,31 @@ export default function MedSafePage() {
       (entry) => normalizeLookupKey(entry.productName) === normalizedProductName
     );
 
+    if (!matchedRegistryEntry) {
+      setMessage(
+        "Für dieses Produkt ist noch keine gespeicherte GTIN / UDI-DI vorhanden. Bitte zuerst Produktname, Präfix und GTIN / UDI-DI speichern."
+      );
+      return;
+    }
+
+    const customerPrefix = slugifyName(matchedRegistryEntry.customerPrefix || "CUST");
+    const productUdiDi = matchedRegistryEntry.udiDi;
+
     const devicesSameBatch = devices.filter((d) => d.batch === batch);
     const existingInBatch = devicesSameBatch.length;
-    const startDeviceIndex = devices.length;
     const nameSlug = slugifyName(newProductName);
-    const dmrIdForBatch = `DMR-${batch}-${nameSlug}`;
+    const dmrIdForBatch = `${customerPrefix}-DMR-${batch}-${nameSlug}`;
     const intendedUseDraft = resolvedIntendedPurpose;
 
     const newDevices: Device[] = [];
 
     for (let i = 0; i < qty; i++) {
       const serialRunningNumber = String(existingInBatch + i + 1).padStart(3, "0");
-      const deviceIndex = startDeviceIndex + i + 1;
-      const fallbackUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
-      const generatedUdiDi =
-        registeredUdiDi.trim() || matchedRegistryEntry?.udiDi || fallbackUdiDi;
-      const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
+      const generatedUdiDi = productUdiDi;
+      const generatedSerial = `${customerPrefix}-SN-${productionDate}-${serialRunningNumber}`;
       const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
       const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
-      const dhrId = `DHR-${productionDate}-${serialRunningNumber}`;
+      const dhrId = `${customerPrefix}-DHR-${productionDate}-${serialRunningNumber}`;
 
       const id = crypto.randomUUID();
 
@@ -1956,11 +2033,11 @@ export default function MedSafePage() {
 
       if (qty === 1) {
         setMessage(
-          `1 Gerät wurde gespeichert (UDI-DI & Seriennummer automatisch erzeugt, ohne Verfallsdatum).`
+          `1 Gerät wurde gespeichert. GTIN / UDI-DI stammt aus dem gespeicherten Produkt, UDI-PI wurde automatisch erzeugt.`
         );
       } else {
         setMessage(
-          `${qty} Geräte wurden gespeichert (Charge ${batch}, UDI-DI & Seriennummern automatisch erzeugt).`
+          `${qty} Geräte wurden gespeichert. GTIN / UDI-DI stammt aus dem gespeicherten Produkt, UDI-PI und Seriennummern wurden automatisch erzeugt.`
         );
       }
 
@@ -2050,6 +2127,50 @@ export default function MedSafePage() {
     } catch (err: any) {
       console.error("Fehler beim Speichern der Produkt-UDI-Zuordnung:", err);
       setMessage("Produkt-Zuordnung konnte nicht in Supabase gespeichert werden.");
+    }
+  };
+
+  const handleDeleteProductRegistry = async (entryId: string) => {
+    const entry = productUdiRegistry.find((item) => item.id === entryId);
+    if (!entry) {
+      setMessage("Produkt-Zuordnung wurde nicht gefunden.");
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("product_udi_registry")
+        .delete()
+        .eq("id", entryId);
+
+      if (error) {
+        if (/row-level security|permission denied|new row violates row-level security/i.test(error.message || "")) {
+          setMessage(
+            "Löschen der Produkt-UDI-Zuordnung ist durch Supabase-RLS blockiert. Bitte die Policies für `product_udi_registry` prüfen."
+          );
+          return;
+        }
+        throw error;
+      }
+
+      setProductUdiRegistry((prev) => prev.filter((item) => item.id !== entryId));
+      if (matchedRegistryEntryId === entryId) {
+        setMatchedRegistryEntryId(null);
+      }
+      if (normalizeLookupKey(newProductName) === normalizeLookupKey(entry.productName)) {
+        setProductPrefix("");
+        setRegisteredUdiDi("");
+      }
+
+      setMessage(`Produkt-Zuordnung gelöscht: ${entry.productName}`);
+      await addAuditEntry(
+        null,
+        "product_udi_registry_deleted",
+        `Produkt-Zuordnung gelöscht: ${entry.productName} mit GTIN / UDI-DI ${entry.udiDi}.`
+      );
+    } catch (err: any) {
+      console.error("Fehler beim Löschen der Produkt-UDI-Zuordnung:", err);
+      setMessage("Produkt-Zuordnung konnte nicht gelöscht werden.");
     }
   };
 
@@ -3285,6 +3406,200 @@ export default function MedSafePage() {
     (requiredType) =>
       !udiRelevantDocsForSelectedDevice.some((doc) => detectDocType(doc) === requiredType)
   ).map((requiredType) => getDocTypeLabel(requiredType));
+  function handleExportCSV() {
+    if (!devices.length) {
+      setMessage("Keine Geräte zum Exportieren vorhanden.");
+      return;
+    }
+
+    const csv = devicesToCSV(devices);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "medsafe-devices.csv";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    setMessage("Geräte als CSV exportiert.");
+  }
+
+  const productRegistrySection = (
+    <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-100">
+            Registrierte Produkte
+          </h2>
+          <div className="text-sm text-slate-400">
+            Gespeicherte Produktnamen mit Präfix und GTIN / UDI-DI.
+          </div>
+        </div>
+        <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-300">
+          {productUdiRegistry.length} gespeichert
+        </div>
+      </div>
+
+      {productUdiRegistry.length === 0 ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-3 text-sm text-slate-400">
+          Noch keine Produkt-Zuordnung gespeichert.
+        </div>
+      ) : (
+              <div className="max-h-[260px] overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
+          <table className="w-full border-collapse text-[11px]">
+            <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+              <tr className="border-b border-slate-700">
+                <th className="py-2 pr-2 pl-3 text-left">Produkt</th>
+                <th className="py-2 pr-2 text-left">Präfix</th>
+                <th className="py-2 pr-2 text-left">GTIN / UDI-DI</th>
+                <th className="py-2 pr-2 text-left">Hersteller</th>
+                <th className="py-2 pr-3 text-left">Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productUdiRegistry.map((entry) => (
+                <tr
+                  key={entry.id}
+                  className="border-b border-slate-800 last:border-b-0"
+                >
+                  <td className="py-2 pr-2 pl-3 text-slate-100">{entry.productName}</td>
+                  <td className="py-2 pr-2 text-slate-300">{entry.customerPrefix}</td>
+                  <td className="py-2 pr-2 break-all text-sky-100">{entry.udiDi}</td>
+                  <td className="py-2 pr-2 text-slate-300">{entry.manufacturerName || "–"}</td>
+                  <td className="py-2 pr-3">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => {
+                          setNewProductName(entry.productName);
+                          setProductPrefix(entry.customerPrefix);
+                          setRegisteredUdiDi(entry.udiDi);
+                          setMatchedRegistryEntryId(entry.id);
+                          setNewManufacturerName(entry.manufacturerName || "");
+                          setIsCreateDevicePanelOpen(true);
+                        }}
+                        className="rounded-md border border-sky-500/50 bg-sky-900/20 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-800/40"
+                      >
+                        Laden
+                      </button>
+                      <button
+                        onClick={() => handleDeleteProductRegistry(entry.id)}
+                        className="rounded-md border border-rose-500/50 bg-rose-900/20 px-2 py-1 text-[11px] text-rose-100 hover:bg-rose-800/40"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+  const overviewSection = (
+    <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+      <div className="flex flex-col gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-sky-100 drop-shadow-[0_0_4px_rgba(0,200,255,0.3)]">
+            MedSafe-UDI – Geräteübersicht
+          </h1>
+        </div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap gap-3 text-xs md:text-sm">
+            <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+              <div className="text-slate-400">Geräte gesamt</div>
+              <div className="text-lg font-semibold">{totalDevices}</div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+              <div className="text-slate-400">Dokumente</div>
+              <div className="text-lg font-semibold">{totalDocs}</div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
+              <div className="text-slate-400">Archiviert</div>
+              <div className="text-lg font-semibold">{totalArchived}</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={loadAllFromSupabase}
+              className="
+                text-xs md:text-sm rounded-lg border border-slate-700
+                px-3 py-2 bg-slate-900
+                hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+                transition
+              "
+            >
+              Cloud aktualisieren
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className="
+                text-xs md:text-sm rounded-lg border border-slate-700
+                px-3 py-2 bg-slate-900
+                hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
+                transition
+              "
+            >
+              Export CSV
+            </button>
+          </div>
+        </div>
+      </div>
+      {groupedDevicesForOverview.length === 0 ? (
+        <div className="text-sm text-slate-400">Noch keine Geräte gespeichert.</div>
+      ) : (
+        <div className="max-h-[420px] overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
+          <table className="w-full border-collapse text-[11px]">
+            <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+              <tr className="border-b border-slate-700">
+                <th className="py-2 pr-2 text-left">#</th>
+                <th className="py-2 pr-2 text-left">Produkt</th>
+                <th className="py-2 pr-2 text-left">Anzahl</th>
+                <th className="py-2 pr-2 text-left">UDI-DI</th>
+                <th className="py-2 pr-2 text-left">Charge</th>
+                <th className="py-2 pr-2 text-left">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupedDevicesForOverview.map((group, index) => {
+                const isSelectedGroup =
+                  !!selectedDevice &&
+                  selectedDevice.name === group.name &&
+                  (selectedDevice.batch || "–") === group.batch;
+                const statusLabel =
+                  group.status === "mixed"
+                    ? "Gemischter Status"
+                    : DEVICE_STATUS_LABELS[group.status];
+
+                return (
+                  <tr
+                    key={group.key}
+                    className={
+                      "border-b border-slate-800 last:border-b-0 cursor-pointer hover:bg-slate-800/40 " +
+                      (isSelectedGroup ? "bg-emerald-900/30" : "")
+                    }
+                    onClick={() => {
+                      setIsOverviewPanelOpen(false);
+                      handleSelectDevice(group.representativeId);
+                    }}
+                  >
+                    <td className="py-2 pr-2 text-slate-400">{index + 1}</td>
+                    <td className="py-2 pr-2">{group.name}</td>
+                    <td className="py-2 pr-2">{group.quantity}</td>
+                    <td className="py-2 pr-2 break-all">{group.udiDi}</td>
+                    <td className="py-2 pr-2">{group.batch}</td>
+                    <td className="py-2 pr-2">{statusLabel}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
   const deviceDocumentsSection = (
     <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
       <h2 className="text-lg font-semibold text-slate-100">UDI-Dokumente</h2>
@@ -3507,26 +3822,51 @@ export default function MedSafePage() {
     aiConversations[0] ??
     null;
   const aiChatHistory = activeAiConversation?.messages ?? [];
-  const handleCreateAiConversation = () => {
+  const handleCreateAiConversation = async (): Promise<AiConversation | null> => {
+    if (!user) return null;
+
     const nextConversation = createAiConversation();
+    const { error } = await supabase.from("ai_conversations").insert({
+      id: nextConversation.id,
+      user_id: user.id,
+      title: nextConversation.title,
+      created_at: nextConversation.updatedAt,
+      updated_at: nextConversation.updatedAt,
+    });
+
+    if (error) {
+      console.error("AI conversation insert failed:", error);
+      setMessage("Neue AI-Unterhaltung konnte nicht in Supabase angelegt werden.");
+      return null;
+    }
+
     setAiConversations((prev) => [nextConversation, ...prev]);
     setActiveAiConversationId(nextConversation.id);
     setAiCopilotInput("");
+    return nextConversation;
   };
-  const handleDeleteAiConversation = (conversationId: string) => {
-    setAiConversations((prev) => {
-      const remaining = prev.filter((conversation) => conversation.id !== conversationId);
-      if (remaining.length) {
-        if (activeAiConversationId === conversationId) {
-          setActiveAiConversationId(remaining[0].id);
-        }
-        return remaining;
-      }
+  const handleDeleteAiConversation = async (conversationId: string) => {
+    const { error } = await supabase
+      .from("ai_conversations")
+      .delete()
+      .eq("id", conversationId);
 
-      const fallbackConversation = createAiConversation();
-      setActiveAiConversationId(fallbackConversation.id);
-      return [fallbackConversation];
-    });
+    if (error) {
+      console.error("AI conversation delete failed:", error);
+      setMessage("AI-Unterhaltung konnte nicht gelöscht werden.");
+      return;
+    }
+
+    const remaining = aiConversations.filter((conversation) => conversation.id !== conversationId);
+    setAiConversations(remaining);
+    if (remaining.length) {
+      if (activeAiConversationId === conversationId) {
+        setActiveAiConversationId(remaining[0].id);
+      }
+      return;
+    }
+
+    setActiveAiConversationId("pending");
   };
   const aiSection = (
     <section
@@ -3721,25 +4061,6 @@ export default function MedSafePage() {
     setMessage("Geräte als JSON exportiert.");
   };
 
-  const handleExportCSV = () => {
-    if (!devices.length) {
-      setMessage("Keine Geräte zum Exportieren vorhanden.");
-      return;
-    }
-
-    const csv = devicesToCSV(devices);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "medsafe-devices.csv";
-    a.click();
-
-    URL.revokeObjectURL(url);
-    setMessage("Geräte als CSV exportiert.");
-  };
-
   const handleExportDhrJson = () => {
     if (!selectedDevice) {
       setMessage("Kein Gerät für DHR-Export ausgewählt.");
@@ -3902,283 +4223,66 @@ if (!user) {
           </div>
         )}
 
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3">
-            <div className="flex flex-col gap-3">
-              <div>
-                <h1 className="text-2xl font-bold text-sky-100 drop-shadow-[0_0_4px_rgba(0,200,255,0.3)]">
-                  MedSafe-UDI – Geräteübersicht
-                </h1>
-              </div>
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex flex-wrap gap-3 text-xs md:text-sm">
-                  <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
-                    <div className="text-slate-400">Geräte gesamt</div>
-                    <div className="text-lg font-semibold">{totalDevices}</div>
-                  </div>
-                  <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
-                    <div className="text-slate-400">Dokumente</div>
-                    <div className="text-lg font-semibold">{totalDocs}</div>
-                  </div>
-                  <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 shadow-[0_0_10px_rgba(0,200,255,0.05)]">
-                    <div className="text-slate-400">Archiviert</div>
-                    <div className="text-lg font-semibold">{totalArchived}</div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={loadAllFromSupabase}
-                    className="
-                      text-xs md:text-sm rounded-lg border border-slate-700
-                      px-3 py-2 bg-slate-900
-                      hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
-                      transition
-                    "
-                  >
-                    Cloud aktualisieren
-                  </button>
-                  <button
-                    onClick={handleExportCSV}
-                    className="
-                      text-xs md:text-sm rounded-lg border border-slate-700
-                      px-3 py-2 bg-slate-900
-                      hover:border-cyan-500 hover:shadow-[0_0_10px_rgba(0,200,255,0.5)]
-                      transition
-                    "
-                  >
-                    Export CSV
-                  </button>
-                </div>
-              </div>
-            </div>
-            {groupedDevicesForOverview.length === 0 ? (
-              <div className="text-sm text-slate-400">Noch keine Geräte gespeichert.</div>
-            ) : (
-              <div className="max-h-[248px] overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
-                <table className="w-full border-collapse text-[11px]">
-                  <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
-                    <tr className="border-b border-slate-700">
-                      <th className="py-2 pr-2 text-left">#</th>
-                      <th className="py-2 pr-2 text-left">Produkt</th>
-                      <th className="py-2 pr-2 text-left">Anzahl</th>
-                      <th className="py-2 pr-2 text-left">UDI-DI</th>
-                      <th className="py-2 pr-2 text-left">Charge</th>
-                      <th className="py-2 pr-2 text-left">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedDevicesForOverview.map((group, index) => {
-                      const isSelectedGroup =
-                        !!selectedDevice &&
-                        selectedDevice.name === group.name &&
-                        (selectedDevice.batch || "–") === group.batch;
-                      const statusLabel =
-                        group.status === "mixed"
-                          ? "Gemischter Status"
-                          : DEVICE_STATUS_LABELS[group.status];
-
-                      return (
-                      <tr
-                        key={group.key}
-                        className={
-                          "border-b border-slate-800 last:border-b-0 cursor-pointer hover:bg-slate-800/40 " +
-                          (isSelectedGroup ? "bg-emerald-900/30" : "")
-                        }
-                        onClick={() => handleSelectDevice(group.representativeId)}
-                      >
-                        <td className="py-2 pr-2 text-slate-400">{index + 1}</td>
-                        <td className="py-2 pr-2">{group.name}</td>
-                        <td className="py-2 pr-2">{group.quantity}</td>
-                        <td className="py-2 pr-2 break-all">{group.udiDi}</td>
-                        <td className="py-2 pr-2">{group.batch}</td>
-                        <td className="py-2 pr-2">{statusLabel}</td>
-                      </tr>
-                    )})}
-                  </tbody>
-                </table>
-              </div>
-            )}
-        </section>
-
         <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-5">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">Neues Gerät anlegen</h2>
-              <div className="mt-1 text-sm text-slate-400">
-                Produktdaten eingeben, Gerät erstellen und UDI automatisch generieren.
-              </div>
-            </div>
-            <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-100">
-              Flow: Create → Generate → Review → Manage
+          <div className="text-center">
+            <h1 className="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-4xl md:text-5xl font-bold text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.18)]">
+              MedSafe Dashboard
+            </h1>
+            <div className="mt-1 bg-gradient-to-r from-cyan-200/80 via-slate-300 to-emerald-200/80 bg-clip-text text-sm text-transparent">
+              Bereiche getrennt öffnen: Übersicht, registrierte Produkte oder neue Geräteanlage.
             </div>
           </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Produktname</div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Produktname"
-                value={newProductName}
-                onChange={(e) => setNewProductName(e.target.value)}
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Anzahl</div>
-              <input
-                type="number"
-                min={1}
-                max={999}
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Anzahl"
-                value={quantity}
-                onChange={(e) =>
-                  setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
-                }
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Hersteller</div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                placeholder="Hersteller"
-                value={newManufacturerName}
-                onChange={(e) => setNewManufacturerName(e.target.value)}
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Gerätekategorie</div>
-              <input
-                className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
-                placeholder="Gerätekategorie"
-                value={iuGenericDeviceGroup}
-                onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
-              />
-            </div>
-            {riskAnalysisEnabled && (
-              <div>
-                <div className="mb-1 text-[11px] text-slate-400">Risikoklasse (optional)</div>
-                <select
-                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                  value={newRiskClass}
-                  onChange={(e) => setNewRiskClass(e.target.value)}
-                >
-                  <option value="">Nicht gesetzt</option>
-                  <option value="I">I</option>
-                  <option value="IIa">IIa</option>
-                  <option value="IIb">IIb</option>
-                  <option value="III">III</option>
-                </select>
-              </div>
-            )}
-            <div>
-              <div className="mb-1 text-[11px] text-slate-400">Angelegt von</div>
-              <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
-                {createdByLabel}
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-sky-500/20 bg-sky-950/20 p-4 space-y-4">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-sky-100">
-                  Produkt-UDI-Zuordnung
-                </h3>
-                <div className="text-xs text-slate-400">
-                  Präfix und feste UDI-DI pro Produkt speichern. Bei gleicher Produkteingabe wird die Zuordnung automatisch wiederverwendet.
-                </div>
-              </div>
-              <div className="rounded-full border border-sky-500/30 bg-slate-900/70 px-3 py-1 text-[11px] text-sky-100">
-                {matchedRegistryEntryId
-                  ? "Gespeicherte Zuordnung erkannt"
-                  : "Noch keine Zuordnung gefunden"}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <div>
-                <div className="mb-1 text-[11px] text-slate-400">Kunden-Präfix</div>
-                <input
-                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
-                  placeholder="z.B. TH-ACME"
-                  value={productPrefix}
-                  onChange={(e) => setProductPrefix(e.target.value)}
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-[11px] text-slate-400">Feste UDI-DI</div>
-                <input
-                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
-                  placeholder="z.B. ACME-DI-INFUSION-01"
-                  value={registeredUdiDi}
-                  onChange={(e) => setRegisteredUdiDi(e.target.value)}
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-[11px] text-slate-400">Status</div>
-                <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 break-all">
-                  {registeredUdiDi.trim()
-                    ? `Aktive UDI-DI: ${registeredUdiDi.trim()}`
-                    : "Noch keine feste UDI-DI hinterlegt"}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={handleSaveProductRegistry}
-                className="inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
-              >
-                Produkt-Zuordnung speichern
-              </button>
-              {matchedRegistryEntryId && (
-                <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-100">
-                  Dieses Produkt nutzt beim Gerätespeichern automatisch die hinterlegte UDI-DI.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
-              onClick={handleSaveDevice}
-              className="inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+              onClick={() => setIsOverviewPanelOpen(true)}
+              className="h-[116px] w-[210px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-5 py-4 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] transition"
             >
-              Gerät erstellen &amp; UDI generieren
+              <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
+                Übersicht
+              </div>
+              <div className="mt-1 text-base font-semibold text-slate-50 leading-tight">
+                MedSafe-UDI – Geräteübersicht
+              </div>
+              <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                {totalDevices} Geräte, {totalDocs} Dokumente, {totalArchived} archiviert.
+              </div>
             </button>
-            {riskAnalysisEnabled && (
-              <>
-                <button
-                  onClick={handleGenerateIntendedUseDraft}
-                  disabled={aiBusyTask === "intended-use"}
-                  className="inline-flex items-center rounded-lg border border-violet-500/60 bg-violet-900/30 hover:bg-violet-800/40 px-4 py-2 text-sm font-medium"
-                >
-                  {aiBusyTask === "intended-use" ? "Generating…" : "Generate Purpose Draft (MDR)"}
-                </button>
-                <button
-                  onClick={handleGenerateFmeaDraft}
-                  disabled={aiBusyTask === "fmea-draft"}
-                  className="inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
-                >
-                  {aiBusyTask === "fmea-draft" ? "Generating…" : "Generate FMEA Draft"}
-                </button>
-                <select
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
-                  value={iuReviewStatus}
-                  onChange={(e) =>
-                    setIuReviewStatus(e.target.value as IntendedUseReviewStatus)
-                  }
-                >
-                  <option value="Draft">Intended Use Status: Draft</option>
-                  <option value="Review">Intended Use Status: Review</option>
-                  <option value="Approved">Intended Use Status: Approved</option>
-                </select>
-              </>
-            )}
+            <div className="hidden sm:flex items-center px-1 text-cyan-300/80">
+              <span className="text-xl">→</span>
+            </div>
+            <button
+              onClick={() => setIsRegistryPanelOpen(true)}
+              className="h-[116px] w-[210px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-5 py-4 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] transition"
+            >
+              <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
+                Register
+              </div>
+              <div className="mt-1 text-base font-semibold text-slate-50 leading-tight">
+                Registrierte Produkte
+              </div>
+              <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                {productUdiRegistry.length} gespeicherte Produkt-Zuordnungen mit GTIN / UDI-DI.
+              </div>
+            </button>
+            <div className="hidden sm:flex items-center px-1 text-emerald-300/80">
+              <span className="text-xl">→</span>
+            </div>
+            <button
+              onClick={() => setIsCreateDevicePanelOpen(true)}
+              className="h-[116px] w-[210px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-5 py-4 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] transition"
+            >
+              <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
+                Erstellen
+              </div>
+              <div className="mt-1 text-base font-semibold text-slate-50 leading-tight">
+                Neues Gerät anlegen
+              </div>
+              <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                Produkt zuordnen, Menge festlegen und Geräte automatisch erzeugen.
+              </div>
+            </button>
           </div>
         </section>
-
-        {deviceDocumentsSection}
 
         {riskAnalysisEnabled && (
         <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
@@ -4313,7 +4417,284 @@ if (!user) {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
-                  {aiSection}
+                  <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+                    {aiSection}
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {isCreateDevicePanelOpen &&
+          createPortal(
+            <div className="pointer-events-none fixed inset-0 z-[123] bg-slate-950/88 p-4 backdrop-blur-sm md:p-6">
+              <div
+                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
+                      Neues Gerät
+                    </div>
+                    <div className="mt-1 text-base font-semibold text-slate-100">
+                      Produkt auswählen, GTIN / UDI-DI zuordnen und Gerät erzeugen
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsCreateDevicePanelOpen(false)}
+                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+                  >
+                    X
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                  <div className="space-y-5 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h2 className="text-xl font-semibold">Neues Gerät anlegen</h2>
+                        <div className="mt-1 text-sm text-slate-400">
+                          Produktdaten eingeben, Gerät erstellen und UDI automatisch generieren.
+                        </div>
+                      </div>
+                      <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] text-slate-200">
+                        Flow: Create → Generate → Review → Manage
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">Produktname</div>
+                        <input
+                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                          placeholder="Produktname"
+                          value={newProductName}
+                          onChange={(e) => setNewProductName(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">Anzahl</div>
+                        <input
+                          type="number"
+                          min={1}
+                          max={999}
+                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                          placeholder="Anzahl"
+                          value={quantity}
+                          onChange={(e) =>
+                            setQuantity(Math.max(1, Number(e.target.value || "1") || 1))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">Hersteller</div>
+                        <input
+                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                          placeholder="Hersteller"
+                          value={newManufacturerName}
+                          onChange={(e) => setNewManufacturerName(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">Produktgruppe</div>
+                        <input
+                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-violet-500"
+                          placeholder="Produktgruppe"
+                          value={iuGenericDeviceGroup}
+                          onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
+                        />
+                      </div>
+                      {riskAnalysisEnabled && (
+                        <div>
+                          <div className="mb-1 text-[11px] text-slate-400">Risikoklasse</div>
+                          <select
+                            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                            value={newRiskClass}
+                            onChange={(e) => setNewRiskClass(e.target.value)}
+                          >
+                            <option value="">Nicht gesetzt</option>
+                            <option value="I">I</option>
+                            <option value="IIa">IIa</option>
+                            <option value="IIb">IIb</option>
+                            <option value="III">III</option>
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">Angelegt von</div>
+                        <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
+                          {createdByLabel}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 space-y-4">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-100">
+                            Produkt-UDI-Zuordnung
+                          </h3>
+                          <div className="text-xs text-slate-400">
+                            Kunde speichert hier einmal Präfix, Produktname und GTIN / UDI-DI. Danach erkennt das System den Produktnamen automatisch und verwendet immer dieselbe gespeicherte Kennung.
+                          </div>
+                        </div>
+                        <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[11px] text-slate-200">
+                          {matchedRegistryEntryId
+                            ? "Gespeicherte Zuordnung erkannt"
+                            : "Noch keine Zuordnung gefunden"}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <div>
+                          <div className="mb-1 text-[11px] text-slate-400">Kunden-Präfix</div>
+                          <input
+                            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
+                            placeholder="z.B. TH-ACME"
+                            value={productPrefix}
+                            onChange={(e) => setProductPrefix(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="mb-1 text-[11px] text-slate-400">GTIN / UDI-DI</div>
+                          <input
+                            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
+                            placeholder="z.B. 04012345678901"
+                            value={registeredUdiDi}
+                            onChange={(e) => setRegisteredUdiDi(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="mb-1 text-[11px] text-slate-400">Status</div>
+                          <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 break-all">
+                            {registeredUdiDi.trim()
+                              ? `Aktive GTIN / UDI-DI: ${registeredUdiDi.trim()}`
+                              : "Noch keine GTIN / UDI-DI hinterlegt"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={handleSaveProductRegistry}
+                          className="inline-flex items-center rounded-lg border border-slate-600 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-sm font-medium text-slate-100"
+                        >
+                          Produkt-Zuordnung speichern
+                        </button>
+                        {matchedRegistryEntryId && (
+                          <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200">
+                            Dieses Produkt nutzt beim Gerätespeichern automatisch die hinterlegte GTIN / UDI-DI.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={handleSaveDevice}
+                        className="inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+                      >
+                        Gerät erstellen &amp; UDI generieren
+                      </button>
+                      {riskAnalysisEnabled && (
+                        <>
+                          <button
+                            onClick={handleGenerateIntendedUseDraft}
+                            disabled={aiBusyTask === "intended-use"}
+                            className="inline-flex items-center rounded-lg border border-violet-500/60 bg-violet-900/30 hover:bg-violet-800/40 px-4 py-2 text-sm font-medium"
+                          >
+                            {aiBusyTask === "intended-use" ? "Generating…" : "Generate Purpose Draft (MDR)"}
+                          </button>
+                          <button
+                            onClick={handleGenerateFmeaDraft}
+                            disabled={aiBusyTask === "fmea-draft"}
+                            className="inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
+                          >
+                            {aiBusyTask === "fmea-draft" ? "Generating…" : "Generate FMEA Draft"}
+                          </button>
+                          <select
+                            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
+                            value={iuReviewStatus}
+                            onChange={(e) =>
+                              setIuReviewStatus(e.target.value as IntendedUseReviewStatus)
+                            }
+                          >
+                            <option value="Draft">Intended Use Status: Draft</option>
+                            <option value="Review">Intended Use Status: Review</option>
+                            <option value="Approved">Intended Use Status: Approved</option>
+                          </select>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {isOverviewPanelOpen &&
+          createPortal(
+            <div className="pointer-events-none fixed inset-0 z-[122] bg-slate-950/88 p-4 backdrop-blur-sm md:p-6">
+              <div
+                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
+                      Übersicht
+                    </div>
+                    <div className="mt-1 text-base font-semibold text-slate-100">
+                      MedSafe-UDI – Geräteübersicht
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsOverviewPanelOpen(false)}
+                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+                  >
+                    X
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                  <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+                    {overviewSection}
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {isRegistryPanelOpen &&
+          createPortal(
+            <div className="pointer-events-none fixed inset-0 z-[121] bg-slate-950/88 p-4 backdrop-blur-sm md:p-6">
+              <div
+                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
+                      Produktregister
+                    </div>
+                    <div className="mt-1 text-base font-semibold text-slate-100">
+                      Registrierte Produkte
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsRegistryPanelOpen(false)}
+                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+                  >
+                    X
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                  <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+                    {productRegistrySection}
+                  </div>
                 </div>
               </div>
             </div>,

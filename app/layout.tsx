@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
-import AppHeader from "./components/AppHeader";
-import Sidebar from "./components/Sidebar";
+import LayoutShell from "./components/LayoutShell";
 
 export const metadata: Metadata = {
   title: "MedSafe-UDI",
@@ -22,13 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <div className="pointer-events-none absolute -right-10 bottom-10 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
 
           <div className="relative mx-auto flex min-h-screen w-full min-w-0 max-w-[1800px] flex-col gap-5 px-6 py-6 sm:px-8 lg:px-10 2xl:px-10">
-            <AppHeader />
-
-            <Sidebar />
-
-            <main className="flex-1 overflow-visible rounded-3xl border border-white/10 bg-black/40 p-4 shadow-inner shadow-slate-950/70 backdrop-blur-2xl sm:p-6">
-              {children}
-            </main>
+            <LayoutShell>{children}</LayoutShell>
           </div>
         </div>
       </body>

@@ -6,7 +6,9 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "create-admin": "node scripts/create-admin-user.mjs",
+    "set-password": "node scripts/set-user-password.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",
