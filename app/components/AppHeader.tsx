@@ -106,13 +106,13 @@ export default function AppHeader() {
 
       <div className="flex flex-col items-center gap-2 sm:ml-auto sm:items-end">
         <div className="flex flex-col items-center gap-2 sm:items-end">
-          <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80 sm:flex">
+          <div className="flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80">
             <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80 animate-pulse" />
             <span>{isAdmin ? `${onlineUsers.length} online` : "Online"}</span>
           </div>
 
           {isAdmin && onlineUsers.length > 0 && (
-            <div className="hidden min-w-[240px] rounded-2xl border border-emerald-400/20 bg-slate-950/90 px-3 py-2 shadow-[0_0_18px_rgba(16,185,129,0.08)] sm:block">
+            <div className="w-full min-w-[240px] rounded-2xl border border-emerald-400/20 bg-slate-950/90 px-3 py-2 shadow-[0_0_18px_rgba(16,185,129,0.08)]">
               <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-emerald-200/80">
                 Aktuell online
               </div>
