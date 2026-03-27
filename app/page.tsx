@@ -4085,6 +4085,16 @@ export default function MedSafePage() {
 
   // ---------- CONDITIONAL UI (LOGIN / DASHBOARD) ----------
 
+if (authLoading) {
+  return (
+    <main className="relative flex min-h-[70vh] items-center justify-center">
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/90 px-5 py-4 text-sm text-slate-200 shadow-[0_0_24px_rgba(15,23,42,0.35)]">
+        Sitzung wird geladen …
+      </div>
+    </main>
+  );
+}
+
 if (!user) {
   return (
     <main className="relative min-h-[70vh] flex items-center justify-center">
