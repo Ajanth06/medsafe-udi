@@ -143,8 +143,9 @@ export default function Sidebar() {
               <span className="sm:hidden">Docs</span>
               <span className="hidden sm:inline">Dokumente</span>
             </div>
-            <div className="mt-1 text-[10px] font-medium leading-4 text-slate-300 sm:mt-2 sm:text-xs sm:leading-5">
-              DHR, DMR und UDI-Unterlagen
+            <div className="mt-1 text-[9px] font-medium leading-3 text-slate-300 sm:mt-2 sm:text-xs sm:leading-5">
+              <span className="sm:hidden">DHR, DMR, UDI</span>
+              <span className="hidden sm:inline">DHR, DMR und UDI-Unterlagen</span>
             </div>
           </div>
         </button>
