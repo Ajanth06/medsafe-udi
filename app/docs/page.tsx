@@ -803,8 +803,8 @@ export default function DocsPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="space-y-6">
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+      <div className="space-y-6 rounded-3xl bg-slate-950 p-1 sm:p-2">
+        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5 space-y-3">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold">Dokumente Modul</h1>
@@ -864,7 +864,7 @@ export default function DocsPage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-semibold">Pflichtdokument-Matrix (Gruppe)</div>
             <button
@@ -895,7 +895,7 @@ export default function DocsPage() {
           )}
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
               <div className="text-sm font-semibold">QMS Dokument Draft</div>
@@ -1016,7 +1016,7 @@ export default function DocsPage() {
           )}
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5 space-y-3">
           <div className="text-sm font-semibold">Dokumente im gewählten Kontext</div>
           {isLoading ? (
             <div className="text-sm text-slate-400">Lade Dokumente …</div>

@@ -4233,7 +4233,7 @@ if (!user) {
         )}
 
         {!isAiAssistantVisible && (
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
+          <section className="p-0">
             {isUdiSectionVisible && (
               <div className="mb-3 flex justify-end">
                 <button
@@ -4249,57 +4249,63 @@ if (!user) {
                 </button>
               </div>
             )}
-            {isUdiSectionVisible && (
-            <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
-              <button
-                onClick={() => setIsOverviewPanelOpen(true)}
-                className="h-[104px] w-full max-w-[320px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-              >
-                <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
-                  Übersicht
+            {isUdiSectionVisible ? (
+              <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
+                <button
+                  onClick={() => setIsOverviewPanelOpen(true)}
+                  className="h-[104px] w-full max-w-[320px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+                >
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
+                    Übersicht
+                  </div>
+                  <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
+                    MedSafe-UDI – Geräteübersicht
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                    {totalDevices} Geräte, {totalDocs} Dokumente, {totalArchived} archiviert.
+                  </div>
+                </button>
+                <div className="hidden sm:flex items-center px-1 text-cyan-300/80">
+                  <span className="text-xl">→</span>
                 </div>
-                <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                  MedSafe-UDI – Geräteübersicht
+                <button
+                  onClick={() => setIsRegistryPanelOpen(true)}
+                  className="h-[104px] w-full max-w-[320px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+                >
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
+                    Register
+                  </div>
+                  <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
+                    Registrierte Produkte
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                    {productUdiRegistry.length} gespeicherte Produkt-Zuordnungen mit GTIN / UDI-DI.
+                  </div>
+                </button>
+                <div className="hidden sm:flex items-center px-1 text-emerald-300/80">
+                  <span className="text-xl">→</span>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                  {totalDevices} Geräte, {totalDocs} Dokumente, {totalArchived} archiviert.
-                </div>
-              </button>
-              <div className="hidden sm:flex items-center px-1 text-cyan-300/80">
-                <span className="text-xl">→</span>
+                <button
+                  onClick={() => setIsCreateDevicePanelOpen(true)}
+                  className="h-[104px] w-full max-w-[320px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+                >
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
+                    Erstellen
+                  </div>
+                  <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
+                    Neues Gerät anlegen
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                    Produkt zuordnen, Menge festlegen und Geräte automatisch erzeugen.
+                  </div>
+                </button>
               </div>
-              <button
-                onClick={() => setIsRegistryPanelOpen(true)}
-                className="h-[104px] w-full max-w-[320px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-              >
-                <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
-                  Register
+            ) : (
+              <div className="mx-auto max-w-sm rounded-2xl bg-slate-950/70 px-4 py-4 text-center shadow-[0_0_18px_rgba(15,23,42,0.16)]">
+                <div className="text-sm font-medium text-slate-100">
+                  Bitte oben einen Bereich wählen
                 </div>
-                <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                  Registrierte Produkte
-                </div>
-                <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                  {productUdiRegistry.length} gespeicherte Produkt-Zuordnungen mit GTIN / UDI-DI.
-                </div>
-              </button>
-              <div className="hidden sm:flex items-center px-1 text-emerald-300/80">
-                <span className="text-xl">→</span>
               </div>
-              <button
-                onClick={() => setIsCreateDevicePanelOpen(true)}
-                className="h-[104px] w-full max-w-[320px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-              >
-                <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
-                  Erstellen
-                </div>
-                <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                  Neues Gerät anlegen
-                </div>
-                <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                  Produkt zuordnen, Menge festlegen und Geräte automatisch erzeugen.
-                </div>
-              </button>
-            </div>
             )}
           </section>
         )}

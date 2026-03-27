@@ -83,7 +83,7 @@ export default function Sidebar() {
   }
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
+    <div className="p-0">
       <nav className="grid grid-cols-3 gap-2 text-sm">
         <button
           type="button"
