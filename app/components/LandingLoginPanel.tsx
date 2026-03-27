@@ -69,7 +69,7 @@ export default function LandingLoginPanel() {
   };
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-emerald-500/20 bg-slate-950/90 p-3 shadow-[0_0_24px_rgba(16,185,129,0.08)]">
+    <div className="w-full max-w-md rounded-2xl border border-emerald-500/20 bg-slate-950/90 p-3 shadow-[0_0_24px_rgba(16,185,129,0.08)] sm:p-4">
       <div className="flex flex-col gap-2">
         <input
           id="auth-email"

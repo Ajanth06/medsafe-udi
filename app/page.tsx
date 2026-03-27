@@ -4100,16 +4100,16 @@ if (!user) {
     <main className="relative min-h-[70vh] flex items-center justify-center">
       <div className="w-full max-w-5xl space-y-8">
         <div className="flex flex-col items-center text-center">
-          <div className="relative mb-6 flex h-36 w-36 items-center justify-center">
+          <div className="relative mb-6 flex h-28 w-28 items-center justify-center md:h-36 md:w-36">
             <div className="absolute inset-0 rounded-[34px] bg-sky-500/30 blur-3xl animate-pulse" />
             <div className="absolute inset-1 rounded-[33px] bg-sky-400/24 blur-[30px] animate-ping" />
             <div className="absolute inset-4 rounded-[30px] bg-cyan-300/18 blur-2xl animate-pulse" />
             <div className="absolute inset-8 rounded-[26px] bg-emerald-400/14 blur-xl" />
-            <div className="relative flex h-28 w-28 items-center justify-center rounded-[32px] border border-sky-300/55 bg-slate-950/95 px-5 shadow-[0_0_76px_rgba(56,189,248,0.34)]">
+            <div className="relative flex h-20 w-20 items-center justify-center rounded-[28px] border border-sky-300/55 bg-slate-950/95 px-4 shadow-[0_0_52px_rgba(56,189,248,0.28)] md:h-28 md:w-28 md:rounded-[32px] md:px-5 md:shadow-[0_0_76px_rgba(56,189,248,0.34)]">
               <img
                 src="/partners/roche.png?v=20260327-2"
                 alt="Startseiten-Logo"
-                className="h-14 w-auto object-contain"
+                className="h-10 w-auto object-contain md:h-14"
               />
             </div>
           </div>
@@ -4179,16 +4179,16 @@ if (!user) {
             Healthcare &amp; Pharma
           </div>
 
-          <div className="logo-glide flex flex-wrap items-center justify-center gap-5 opacity-75">
+          <div className="logo-glide flex flex-wrap items-center justify-center gap-3 opacity-75 md:gap-5">
           <img
             src="/partners/novartis.png?v=20260327-2"
-            className="h-[52px] w-auto object-contain"
+            className="h-8 w-auto object-contain md:h-[52px]"
             alt="Novartis"
           />
-          <img src="/partners/roche.png?v=20260327-2" className="h-[52px] w-auto object-contain" alt="Roche" />
-          <img src="/partners/pfizer.png?v=20260327-2" className="h-[52px] w-auto object-contain" alt="Pfizer" />
-          <img src="/partners/johnson.png?v=20260327-2" className="h-[52px] w-auto object-contain" alt="Merck" />
-          <img src="/partners/bayer.png?v=20260326-1" className="h-[52px] w-auto object-contain" alt="Thalheimer" />
+          <img src="/partners/roche.png?v=20260327-2" className="h-8 w-auto object-contain md:h-[52px]" alt="Roche" />
+          <img src="/partners/pfizer.png?v=20260327-2" className="h-8 w-auto object-contain md:h-[52px]" alt="Pfizer" />
+          <img src="/partners/johnson.png?v=20260327-2" className="h-8 w-auto object-contain md:h-[52px]" alt="Merck" />
+          <img src="/partners/bayer.png?v=20260326-1" className="h-8 w-auto object-contain md:h-[52px]" alt="Thalheimer" />
           </div>
         </div>
       </div>
@@ -4211,7 +4211,7 @@ if (!user) {
 
  return (
   <main className="min-h-screen bg-slate-950 text-slate-100">
-    <div className="w-full min-w-0 mx-auto px-0 py-10 space-y-8">
+    <div className="mx-auto w-full min-w-0 space-y-6 px-0 py-6 sm:space-y-8 sm:py-10">
         {isLoading && (
           <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
             Daten werden aus Supabase geladen …
@@ -4224,24 +4224,24 @@ if (!user) {
           </div>
         )}
 
-        <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-5">
+        <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
           <div className="text-center">
-            <h1 className="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-4xl md:text-5xl font-bold text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.18)]">
+            <h1 className="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-3xl font-bold text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.18)] sm:text-4xl md:text-5xl">
               MedSafe Dashboard
             </h1>
-            <div className="mt-1 bg-gradient-to-r from-cyan-200/80 via-slate-300 to-emerald-200/80 bg-clip-text text-sm text-transparent">
+            <div className="mt-1 bg-gradient-to-r from-cyan-200/80 via-slate-300 to-emerald-200/80 bg-clip-text text-xs text-transparent sm:text-sm">
               Bereiche getrennt öffnen: Übersicht, registrierte Produkte oder neue Geräteanlage.
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
             <button
               onClick={() => setIsOverviewPanelOpen(true)}
-              className="h-[116px] w-[210px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-5 py-4 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] transition"
+              className="h-[104px] w-full max-w-[320px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
             >
               <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
                 Übersicht
               </div>
-              <div className="mt-1 text-base font-semibold text-slate-50 leading-tight">
+              <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
                 MedSafe-UDI – Geräteübersicht
               </div>
               <div className="mt-1 text-[11px] text-slate-300 leading-tight">
@@ -4253,12 +4253,12 @@ if (!user) {
             </div>
             <button
               onClick={() => setIsRegistryPanelOpen(true)}
-              className="h-[116px] w-[210px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-5 py-4 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] transition"
+              className="h-[104px] w-full max-w-[320px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
             >
               <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
                 Register
               </div>
-              <div className="mt-1 text-base font-semibold text-slate-50 leading-tight">
+              <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
                 Registrierte Produkte
               </div>
               <div className="mt-1 text-[11px] text-slate-300 leading-tight">
@@ -4270,12 +4270,12 @@ if (!user) {
             </div>
             <button
               onClick={() => setIsCreateDevicePanelOpen(true)}
-              className="h-[116px] w-[210px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-5 py-4 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] transition"
+              className="h-[104px] w-full max-w-[320px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
             >
               <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
                 Erstellen
               </div>
-              <div className="mt-1 text-base font-semibold text-slate-50 leading-tight">
+              <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
                 Neues Gerät anlegen
               </div>
               <div className="mt-1 text-[11px] text-slate-300 leading-tight">
@@ -4395,12 +4395,12 @@ if (!user) {
 
         {isAiAssistantModalOpen &&
           createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[125] bg-slate-950/82 p-4 backdrop-blur-sm md:p-6">
+            <div className="pointer-events-none fixed inset-0 z-[125] bg-slate-950/82 p-2 backdrop-blur-sm sm:p-4 md:p-6">
               <div
-                className="pointer-events-auto mx-auto flex h-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-amber-400/20 bg-slate-950/96 shadow-[0_0_50px_rgba(120,53,15,0.28)]"
+                className="pointer-events-auto mx-auto flex h-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-amber-400/20 bg-slate-950/96 shadow-[0_0_50px_rgba(120,53,15,0.28)] sm:rounded-3xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between border-b border-amber-400/15 px-4 py-3 md:px-6">
+                <div className="flex items-start justify-between gap-3 border-b border-amber-400/15 px-3 py-3 sm:items-center sm:px-4 md:px-6">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.22em] text-amber-300/80">
                       MedSafe AI
@@ -4417,7 +4417,7 @@ if (!user) {
                   </button>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-6">
                   <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
                     {aiSection}
                   </div>
@@ -4429,12 +4429,12 @@ if (!user) {
 
         {isCreateDevicePanelOpen &&
           createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[123] bg-slate-950/88 p-4 backdrop-blur-sm md:p-6">
+            <div className="pointer-events-none fixed inset-0 z-[123] bg-slate-950/88 p-2 backdrop-blur-sm sm:p-4 md:p-6">
               <div
-                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)] sm:rounded-3xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                <div className="flex items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:items-center sm:px-4 md:px-6">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
                       Neues Gerät
@@ -4451,7 +4451,7 @@ if (!user) {
                   </button>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-6">
                   <div className="space-y-5 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                       <div>
@@ -4638,12 +4638,12 @@ if (!user) {
 
         {isOverviewPanelOpen &&
           createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[122] bg-slate-950/88 p-4 backdrop-blur-sm md:p-6">
+            <div className="pointer-events-none fixed inset-0 z-[122] bg-slate-950/88 p-2 backdrop-blur-sm sm:p-4 md:p-6">
               <div
-                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)] sm:rounded-3xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                <div className="flex items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:items-center sm:px-4 md:px-6">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
                       Übersicht
@@ -4659,7 +4659,7 @@ if (!user) {
                     X
                   </button>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-6">
                   <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
                     {overviewSection}
                   </div>
@@ -4671,12 +4671,12 @@ if (!user) {
 
         {isRegistryPanelOpen &&
           createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[121] bg-slate-950/88 p-4 backdrop-blur-sm md:p-6">
+            <div className="pointer-events-none fixed inset-0 z-[121] bg-slate-950/88 p-2 backdrop-blur-sm sm:p-4 md:p-6">
               <div
-                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
+                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)] sm:rounded-3xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 md:px-6">
+                <div className="flex items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:items-center sm:px-4 md:px-6">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
                       Produktregister
@@ -4692,7 +4692,7 @@ if (!user) {
                     X
                   </button>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
+                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-6">
                   <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
                     {productRegistrySection}
                   </div>

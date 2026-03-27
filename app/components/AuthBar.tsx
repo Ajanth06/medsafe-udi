@@ -209,13 +209,13 @@ export default function AuthBar() {
   //
   if (!user) {
     return (
-      <div className="flex flex-col items-end gap-1 text-xs">
-        <div className="flex items-center gap-2">
+      <div className="flex w-full flex-col items-stretch gap-1 text-xs sm:w-auto sm:items-end">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <input
             id="auth-email"
             type="email"
             placeholder="E-Mail"
-            className="h-7 rounded-full bg-slate-900/80 px-3 text-[11px] text-slate-100 placeholder:text-slate-400 focus:outline-none"
+            className="h-9 w-full rounded-full bg-slate-900/80 px-3 text-[12px] text-slate-100 placeholder:text-slate-400 focus:outline-none sm:h-7 sm:w-auto sm:text-[11px]"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
@@ -223,7 +223,7 @@ export default function AuthBar() {
             id="auth-password"
             type={showPassword ? "text" : "password"}
             placeholder="Passwort"
-            className="h-7 rounded-full bg-slate-900/80 px-3 text-[11px] text-slate-100 placeholder:text-slate-400 focus:outline-none"
+            className="h-9 w-full rounded-full bg-slate-900/80 px-3 text-[12px] text-slate-100 placeholder:text-slate-400 focus:outline-none sm:h-7 sm:w-auto sm:text-[11px]"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -231,20 +231,21 @@ export default function AuthBar() {
             onClick={handleLogin}
             disabled={loading}
             className="
-              h-7 rounded-full
+              h-9 rounded-full
               bg-sky-700
-              px-3 text-[11px] font-medium text-white
+              px-3 text-[12px] font-medium text-white
               shadow-[0_0_8px_rgba(56,189,248,0.4)]
               hover:shadow-[0_0_12px_rgba(56,189,248,0.7)]
               hover:bg-sky-600
               transition-all duration-200
               disabled:opacity-60
+              sm:h-7 sm:text-[11px]
             "
           >
             {loading ? "Prüfe…" : "Login"}
           </button>
         </div>
-        <label className="flex items-center gap-2 text-[11px] text-slate-300">
+        <label className="flex items-center gap-2 text-[11px] text-slate-300 sm:self-end">
           <input
             type="checkbox"
             checked={showPassword}
@@ -301,7 +302,7 @@ export default function AuthBar() {
       </div>
 
         {isAdmin && adminFormOpen && (
-        <div className="w-[340px] rounded-2xl border border-emerald-400/20 bg-slate-950/95 p-3 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+        <div className="w-full max-w-[340px] rounded-2xl border border-emerald-400/20 bg-slate-950/95 p-3 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
           <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-emerald-200/80">
             Admin · Benutzerverwaltung
           </div>
