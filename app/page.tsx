@@ -4104,11 +4104,11 @@ if (!user) {
             <div className="absolute inset-0 rounded-full bg-sky-500/25 blur-2xl animate-pulse" />
             <div className="absolute inset-2 rounded-full bg-sky-400/20 blur-xl animate-ping" />
             <div className="absolute inset-5 rounded-full bg-emerald-400/14 blur-lg" />
-            <div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-sky-400/80 bg-slate-950 shadow-[0_0_52px_rgba(56,189,248,0.3)]">
+            <div className="relative flex h-24 w-24 items-center justify-center rounded-[28px] border border-sky-400/40 bg-slate-950/95 px-4 shadow-[0_0_42px_rgba(56,189,248,0.16)]">
               <img
-                src="/icons/red-bird.svg"
-                alt="MedSafe Bird"
-                className="h-16 w-16 object-contain"
+                src="/partners/roche.png?v=20260327-2"
+                alt="Roche"
+                className="h-10 w-auto object-contain"
               />
             </div>
           </div>

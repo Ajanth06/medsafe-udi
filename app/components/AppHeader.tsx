@@ -96,9 +96,9 @@ export default function AppHeader() {
           <div className="absolute inset-1 rounded-full bg-sky-500/10 blur-md" />
           <div className="relative flex h-10 w-10 items-center justify-center rounded-full border border-sky-400/60 bg-slate-900 shadow-[0_0_16px_rgba(56,189,248,0.12)] float-soft">
             <img
-              src="/icons/red-bird.svg"
-              alt="MedSafe Bird"
-              className="h-70 w-70"
+              src="/partners/roche.png?v=20260327-2"
+              alt="Roche"
+              className="h-6 w-auto object-contain"
             />
           </div>
         </div>
