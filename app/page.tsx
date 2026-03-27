@@ -4181,13 +4181,13 @@ if (!user) {
           <div className="logo-glide flex flex-wrap items-center justify-center gap-5 opacity-75">
           <img
             src="/partners/novartis.png"
-            className="h-8 w-auto object-contain"
+            className="h-40 w-auto object-contain"
             alt="Novartis"
           />
-          <img src="/partners/roche.png" className="h-5" alt="Roche" />
-          <img src="/partners/pfizer.png" className="h-8" alt="Pfizer" />
-          <img src="/partners/johnson.png" className="h-4" alt="Merck" />
-          <img src="/partners/bayer.png?v=20260326-1" className="h-20" alt="Thalheimer" />
+          <img src="/partners/roche.png" className="h-40 w-auto object-contain" alt="Roche" />
+          <img src="/partners/pfizer.png" className="h-40 w-auto object-contain" alt="Pfizer" />
+          <img src="/partners/johnson.png" className="h-40 w-auto object-contain" alt="Merck" />
+          <img src="/partners/bayer.png?v=20260326-1" className="h-40 w-auto object-contain" alt="Thalheimer" />
           </div>
         </div>
       </div>
