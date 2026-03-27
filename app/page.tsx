@@ -4100,15 +4100,16 @@ if (!user) {
     <main className="relative min-h-[70vh] flex items-center justify-center">
       <div className="w-full max-w-5xl space-y-8">
         <div className="flex flex-col items-center text-center">
-          <div className="relative mb-6 flex h-28 w-28 items-center justify-center">
-            <div className="absolute inset-0 rounded-full bg-sky-500/25 blur-2xl animate-pulse" />
-            <div className="absolute inset-2 rounded-full bg-sky-400/20 blur-xl animate-ping" />
-            <div className="absolute inset-5 rounded-full bg-emerald-400/14 blur-lg" />
-            <div className="relative flex h-24 w-24 items-center justify-center rounded-[28px] border border-sky-400/40 bg-slate-950/95 px-4 shadow-[0_0_42px_rgba(56,189,248,0.16)]">
+          <div className="relative mb-6 flex h-36 w-36 items-center justify-center">
+            <div className="absolute inset-0 rounded-[34px] bg-sky-500/30 blur-3xl animate-pulse" />
+            <div className="absolute inset-1 rounded-[33px] bg-sky-400/24 blur-[30px] animate-ping" />
+            <div className="absolute inset-4 rounded-[30px] bg-cyan-300/18 blur-2xl animate-pulse" />
+            <div className="absolute inset-8 rounded-[26px] bg-emerald-400/14 blur-xl" />
+            <div className="relative flex h-28 w-28 items-center justify-center rounded-[32px] border border-sky-300/55 bg-slate-950/95 px-5 shadow-[0_0_76px_rgba(56,189,248,0.34)]">
               <img
                 src="/partners/roche.png?v=20260327-2"
-                alt="Roche"
-                className="h-10 w-auto object-contain"
+                alt="Startseiten-Logo"
+                className="h-14 w-auto object-contain"
               />
             </div>
           </div>
