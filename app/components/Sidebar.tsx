@@ -11,10 +11,13 @@ export default function Sidebar() {
   const [documentCount, setDocumentCount] = useState<number | null>(null);
   const [isUdiPulseActive, setIsUdiPulseActive] = useState(false);
   const [isDocsPulseActive, setIsDocsPulseActive] = useState(false);
+  const [isAiPulseActive, setIsAiPulseActive] = useState(false);
+  const [hash, setHash] = useState("");
   const pathname = usePathname();
   const router = useRouter();
-  const isUdiControlActive = pathname === "/";
+  const isUdiControlActive = pathname === "/" && hash !== "#medsafe-ai";
   const isDocumentsActive = pathname?.startsWith("/docs");
+  const isAiActive = pathname === "/" && hash === "#medsafe-ai";
 
   useEffect(() => {
     const loadUser = async () => {
@@ -49,6 +52,16 @@ export default function Sidebar() {
     loadOverviewCounts();
   }, [user]);
 
+  useEffect(() => {
+    const syncHash = () => {
+      setHash(typeof window !== "undefined" ? window.location.hash : "");
+    };
+
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, [pathname]);
+
   const closeActiveDetailView = () => {
     window.dispatchEvent(new CustomEvent("medsafe:close-detail"));
   };
@@ -62,6 +75,7 @@ export default function Sidebar() {
       return;
     }
     window.history.pushState(null, "", "/");
+    setHash("");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   };
 
@@ -71,7 +85,7 @@ export default function Sidebar() {
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-slate-950/70 backdrop-blur-2xl">
-      <nav className="grid gap-2 md:grid-cols-2 text-sm">
+      <nav className="grid gap-2 md:grid-cols-3 text-sm">
         <button
           type="button"
           onClick={() => {
@@ -130,6 +144,34 @@ export default function Sidebar() {
             </div>
             <div className="mt-2 text-xs font-medium leading-5 text-slate-300">
               DHR, DMR und UDI-Unterlagen
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setIsAiPulseActive(true);
+            window.setTimeout(() => setIsAiPulseActive(false), 900);
+            closeActiveDetailView();
+            if (pathname !== "/") {
+              router.push("/#medsafe-ai");
+              return;
+            }
+            window.location.hash = "medsafe-ai";
+            setHash("#medsafe-ai");
+          }}
+          className={
+            "flex min-h-[96px] flex-col justify-between rounded-2xl px-5 py-4 text-slate-50 transition border border-amber-400/40 bg-amber-500/12 shadow-[0_0_24px_rgba(245,158,11,0.14)] " +
+            (isAiActive || isAiPulseActive ? "animate-pulse" : "hover:bg-amber-500/16")
+          }
+        >
+          <div className="text-center">
+            <div className="text-xl font-black tracking-[0.08em] uppercase text-slate-50">
+              MedSafe AI
+            </div>
+            <div className="mt-2 text-xs font-medium leading-5 text-slate-300">
+              Fragen und schnelle MDR Hinweise
             </div>
           </div>
         </button>

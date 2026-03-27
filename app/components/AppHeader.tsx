@@ -5,7 +5,6 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import { isAdminEmail } from "../../lib/adminAccess";
 import AuthBar from "./AuthBar";
-import HeaderAiLauncher from "./HeaderAiLauncher";
 
 type OnlineUser = {
   id: string;
@@ -92,18 +91,17 @@ export default function AppHeader() {
   return (
     <header className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl sm:rounded-3xl sm:px-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start sm:gap-4">
-        <div className="relative flex h-14 w-14 items-center justify-center sm:h-20 sm:w-20">
-          <div className="absolute inset-1 rounded-full bg-sky-500/10 blur-md" />
-          <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-sky-400/60 bg-slate-900 shadow-[0_0_16px_rgba(56,189,248,0.12)] float-soft sm:h-10 sm:w-10">
+        <div className="relative flex h-14 w-14 items-center justify-center sm:h-36 sm:w-36">
+          <div className="absolute inset-0 rounded-full bg-sky-500/24 blur-xl sm:blur-3xl" />
+          <div className="absolute inset-1 rounded-full bg-cyan-400/18 blur-lg sm:blur-2xl" />
+          <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-sky-300/70 bg-slate-900 shadow-[0_0_26px_rgba(56,189,248,0.22)] sm:h-24 sm:w-24 sm:shadow-[0_0_70px_rgba(56,189,248,0.4)]">
             <img
               src="/partners/roche.png?v=20260327-2"
               alt="Startseiten-Logo"
-              className="h-5 w-auto object-contain sm:h-6"
+              className="h-5 w-auto object-contain sm:h-14"
             />
           </div>
         </div>
-
-        <HeaderAiLauncher />
       </div>
 
       <div className="flex flex-col items-center gap-2 sm:ml-auto sm:items-end">

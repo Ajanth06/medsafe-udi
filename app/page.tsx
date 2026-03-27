@@ -1141,7 +1141,7 @@ export default function MedSafePage() {
     () => "pending"
   );
   const [isAiHistoryVisible, setIsAiHistoryVisible] = useState(true);
-  const [isAiAssistantModalOpen, setIsAiAssistantModalOpen] = useState(false);
+  const [isAiAssistantVisible, setIsAiAssistantVisible] = useState(false);
 
   const aiRowSuggestions = useMemo(() => {
     const inferredType = inferDeviceType(newProductName || "Device");
@@ -1324,7 +1324,7 @@ export default function MedSafePage() {
 
   useEffect(() => {
     const syncHash = () => {
-      setIsAiAssistantModalOpen((window.location.hash || "") === "#medsafe-ai");
+      setIsAiAssistantVisible((window.location.hash || "") === "#medsafe-ai");
     };
     syncHash();
     window.addEventListener("hashchange", syncHash);
@@ -1349,7 +1349,6 @@ export default function MedSafePage() {
 
   useEffect(() => {
     const shouldLockBodyScroll =
-      isAiAssistantModalOpen ||
       !!selectedDeviceId ||
       isCreateDevicePanelOpen ||
       isOverviewPanelOpen ||
@@ -1364,7 +1363,6 @@ export default function MedSafePage() {
       document.body.style.overflow = previousOverflow;
     };
   }, [
-    isAiAssistantModalOpen,
     selectedDeviceId,
     isCreateDevicePanelOpen,
     isOverviewPanelOpen,
@@ -2179,7 +2177,7 @@ export default function MedSafePage() {
       window.history.pushState(null, "", window.location.pathname);
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     }
-    setIsAiAssistantModalOpen(false);
+    setIsAiAssistantVisible(false);
     setSelectedDeviceId(id);
     if (id !== lastCreatedDeviceId) {
       setLastCreatedDeviceId(null);
@@ -2194,14 +2192,6 @@ export default function MedSafePage() {
     setEditDraft(null);
     setIsGroupPinned(false);
     setUdiPiSearch("");
-  };
-
-  const handleCloseAiAssistantModal = () => {
-    setIsAiAssistantModalOpen(false);
-    if (window.location.hash === "#medsafe-ai") {
-      window.history.pushState(null, "", window.location.pathname);
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -4224,66 +4214,68 @@ if (!user) {
           </div>
         )}
 
-        <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
-          <div className="text-center">
-            <h1 className="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-3xl font-bold text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.18)] sm:text-4xl md:text-5xl">
-              MedSafe Dashboard
-            </h1>
-            <div className="mt-1 bg-gradient-to-r from-cyan-200/80 via-slate-300 to-emerald-200/80 bg-clip-text text-xs text-transparent sm:text-sm">
-              Bereiche getrennt öffnen: Übersicht, registrierte Produkte oder neue Geräteanlage.
+        {!isAiAssistantVisible && (
+          <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
+            <div className="text-center">
+              <h1 className="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-3xl font-bold text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.18)] sm:text-4xl md:text-5xl">
+                MedSafe Dashboard
+              </h1>
+              <div className="mt-1 bg-gradient-to-r from-cyan-200/80 via-slate-300 to-emerald-200/80 bg-clip-text text-xs text-transparent sm:text-sm">
+                Bereiche getrennt öffnen: Übersicht, registrierte Produkte oder neue Geräteanlage.
+              </div>
             </div>
-          </div>
-          <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
-            <button
-              onClick={() => setIsOverviewPanelOpen(true)}
-              className="h-[104px] w-full max-w-[320px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-            >
-              <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
-                Übersicht
+            <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
+              <button
+                onClick={() => setIsOverviewPanelOpen(true)}
+                className="h-[104px] w-full max-w-[320px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+              >
+                <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
+                  Übersicht
+                </div>
+                <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
+                  MedSafe-UDI – Geräteübersicht
+                </div>
+                <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                  {totalDevices} Geräte, {totalDocs} Dokumente, {totalArchived} archiviert.
+                </div>
+              </button>
+              <div className="hidden sm:flex items-center px-1 text-cyan-300/80">
+                <span className="text-xl">→</span>
               </div>
-              <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                MedSafe-UDI – Geräteübersicht
+              <button
+                onClick={() => setIsRegistryPanelOpen(true)}
+                className="h-[104px] w-full max-w-[320px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+              >
+                <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
+                  Register
+                </div>
+                <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
+                  Registrierte Produkte
+                </div>
+                <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                  {productUdiRegistry.length} gespeicherte Produkt-Zuordnungen mit GTIN / UDI-DI.
+                </div>
+              </button>
+              <div className="hidden sm:flex items-center px-1 text-emerald-300/80">
+                <span className="text-xl">→</span>
               </div>
-              <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                {totalDevices} Geräte, {totalDocs} Dokumente, {totalArchived} archiviert.
-              </div>
-            </button>
-            <div className="hidden sm:flex items-center px-1 text-cyan-300/80">
-              <span className="text-xl">→</span>
+              <button
+                onClick={() => setIsCreateDevicePanelOpen(true)}
+                className="h-[104px] w-full max-w-[320px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+              >
+                <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
+                  Erstellen
+                </div>
+                <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
+                  Neues Gerät anlegen
+                </div>
+                <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                  Produkt zuordnen, Menge festlegen und Geräte automatisch erzeugen.
+                </div>
+              </button>
             </div>
-            <button
-              onClick={() => setIsRegistryPanelOpen(true)}
-              className="h-[104px] w-full max-w-[320px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-            >
-              <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
-                Register
-              </div>
-              <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                Registrierte Produkte
-              </div>
-              <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                {productUdiRegistry.length} gespeicherte Produkt-Zuordnungen mit GTIN / UDI-DI.
-              </div>
-            </button>
-            <div className="hidden sm:flex items-center px-1 text-emerald-300/80">
-              <span className="text-xl">→</span>
-            </div>
-            <button
-              onClick={() => setIsCreateDevicePanelOpen(true)}
-              className="h-[104px] w-full max-w-[320px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-            >
-              <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
-                Erstellen
-              </div>
-              <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                Neues Gerät anlegen
-              </div>
-              <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                Produkt zuordnen, Menge festlegen und Geräte automatisch erzeugen.
-              </div>
-            </button>
-          </div>
-        </section>
+          </section>
+        )}
 
         {riskAnalysisEnabled && (
         <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
@@ -4393,39 +4385,13 @@ if (!user) {
         </section>
         )}
 
-        {isAiAssistantModalOpen &&
-          createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[125] bg-slate-950/82 p-2 backdrop-blur-sm sm:p-4 md:p-6">
-              <div
-                className="pointer-events-auto mx-auto flex h-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-amber-400/20 bg-slate-950/96 shadow-[0_0_50px_rgba(120,53,15,0.28)] sm:rounded-3xl"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-start justify-between gap-3 border-b border-amber-400/15 px-3 py-3 sm:items-center sm:px-4 md:px-6">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-amber-300/80">
-                      MedSafe AI
-                    </div>
-                    <div className="mt-1 text-base font-semibold text-slate-100">
-                      Fragen und schnelle MDR Hinweise
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleCloseAiAssistantModal}
-                    className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-100 hover:bg-amber-500/15"
-                  >
-                    X
-                  </button>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-6">
-                  <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
-                    {aiSection}
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )}
+        {isAiAssistantVisible && (
+          <section className="rounded-2xl border border-amber-400/20 bg-slate-950/96 p-3 shadow-[0_0_32px_rgba(120,53,15,0.18)] sm:p-4 md:p-6">
+            <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+              {aiSection}
+            </div>
+          </section>
+        )}
 
         {isCreateDevicePanelOpen &&
           createPortal(
