@@ -108,6 +108,16 @@ type AuditEntry = {
   timestamp: string;
 };
 
+type ProductUdiRegistryEntry = {
+  id: string;
+  productName: string;
+  customerPrefix: string;
+  udiDi: string;
+  manufacturerName?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
 // PIN nur UI-Schutz
 const ADMIN_PIN = "4837";
 
@@ -351,6 +361,10 @@ function formatDateYYMMDD(date: Date): string {
 
 function slugifyName(name: string): string {
   return name.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
+}
+
+function normalizeLookupKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ").replace(/[^a-z0-9 ]/g, "");
 }
 
 function toSafeFilename(value: string): string {
@@ -983,6 +997,18 @@ function mapAuditRowToEntry(row: any): AuditEntry {
   };
 }
 
+function mapProductRegistryRow(row: any): ProductUdiRegistryEntry {
+  return {
+    id: row.id,
+    productName: row.product_name ?? "",
+    customerPrefix: row.customer_prefix ?? "",
+    udiDi: row.udi_di ?? "",
+    manufacturerName: row.manufacturer_name ?? "",
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+  };
+}
+
 function mapAuditToDb(entry: AuditEntry | Partial<AuditEntry>): any {
   return {
     device_id: entry.deviceId ?? null,
@@ -1007,6 +1033,7 @@ export default function MedSafePage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [productUdiRegistry, setProductUdiRegistry] = useState<ProductUdiRegistryEntry[]>([]);
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [lastCreatedDeviceId, setLastCreatedDeviceId] = useState<string | null>(null);
@@ -1022,6 +1049,9 @@ export default function MedSafePage() {
   const [newRiskClass, setNewRiskClass] = useState<string>("");
   const [newBasicUdiDi, setNewBasicUdiDi] = useState("");
   const [newManufacturerName, setNewManufacturerName] = useState("");
+  const [productPrefix, setProductPrefix] = useState("");
+  const [registeredUdiDi, setRegisteredUdiDi] = useState("");
+  const [matchedRegistryEntryId, setMatchedRegistryEntryId] = useState<string | null>(null);
   const [newDeviceVersionVariants, setNewDeviceVersionVariants] = useState("");
   const [iuGenericDeviceGroup, setIuGenericDeviceGroup] = useState("");
   const [iuIntendedIndication, setIuIntendedIndication] = useState("");
@@ -1235,19 +1265,26 @@ export default function MedSafePage() {
         { data: deviceRows, error: devErr },
         { data: docRows, error: docErr },
         { data: auditRows, error: audErr },
+        { data: registryRows, error: registryErr },
       ] = await Promise.all([
         supabase.from("devices").select("*").order("created_at", { ascending: false }),
         supabase.from("docs").select("*").order("created_at", { ascending: false }),
         supabase.from("audit_log").select("*").order("timestamp", { ascending: false }),
+        supabase
+          .from("product_udi_registry")
+          .select("*")
+          .order("updated_at", { ascending: false }),
       ]);
 
       if (devErr) throw devErr;
       if (docErr) throw docErr;
       if (audErr) throw audErr;
+      if (registryErr) throw registryErr;
 
       setDevices((deviceRows || []).map(mapDeviceRowToDevice));
       setDocs((docRows || []).map(mapDocRowToDoc));
       setAudit((auditRows || []).map(mapAuditRowToEntry));
+      setProductUdiRegistry((registryRows || []).map(mapProductRegistryRow));
     } catch (err: any) {
       console.error("Fehler beim Laden aus Supabase:", err);
       setMessage("Fehler beim Laden der Daten aus Supabase.");
@@ -1262,6 +1299,30 @@ export default function MedSafePage() {
       loadAllFromSupabase();
     }
   }, [user]);
+
+  useEffect(() => {
+    const normalizedProductName = normalizeLookupKey(newProductName);
+    if (!normalizedProductName) {
+      setMatchedRegistryEntryId(null);
+      return;
+    }
+
+    const matchedEntry = productUdiRegistry.find(
+      (entry) => normalizeLookupKey(entry.productName) === normalizedProductName
+    );
+
+    if (!matchedEntry) {
+      setMatchedRegistryEntryId(null);
+      return;
+    }
+
+    setMatchedRegistryEntryId(matchedEntry.id);
+    setProductPrefix((current) => current || matchedEntry.customerPrefix || "");
+    setRegisteredUdiDi((current) => current || matchedEntry.udiDi || "");
+    setNewManufacturerName(
+      (current) => current || matchedEntry.manufacturerName || ""
+    );
+  }, [newProductName, productUdiRegistry]);
 
   useEffect(() => {
     setAiComplianceAlertText(null);
@@ -1672,6 +1733,10 @@ export default function MedSafePage() {
       activeIntendedUseDraft.trim() || aiRowSuggestions.intendedIndication;
     const autoBasicUdiDi = generateBasicUdiDi(resolvedManufacturer, newProductName);
     const resolvedBasicUdiDi = newBasicUdiDi.trim() || autoBasicUdiDi;
+    const normalizedProductName = normalizeLookupKey(newProductName);
+    const matchedRegistryEntry = productUdiRegistry.find(
+      (entry) => normalizeLookupKey(entry.productName) === normalizedProductName
+    );
 
     const devicesSameBatch = devices.filter((d) => d.batch === batch);
     const existingInBatch = devicesSameBatch.length;
@@ -1685,7 +1750,9 @@ export default function MedSafePage() {
     for (let i = 0; i < qty; i++) {
       const serialRunningNumber = String(existingInBatch + i + 1).padStart(3, "0");
       const deviceIndex = startDeviceIndex + i + 1;
-      const generatedUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
+      const fallbackUdiDi = `TH-DI-${deviceIndex.toString().padStart(6, "0")}`;
+      const generatedUdiDi =
+        registeredUdiDi.trim() || matchedRegistryEntry?.udiDi || fallbackUdiDi;
       const generatedSerial = `TH-SN-${productionDate}-${serialRunningNumber}`;
       const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
       const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
@@ -1911,6 +1978,78 @@ export default function MedSafePage() {
       console.error("Supabase Devices Insert Exception:", e);
       const detail = e?.message ? String(e.message) : "Unbekannter Fehler.";
       setMessage(`Fehler beim Speichern in Supabase: ${detail}`);
+    }
+  };
+
+  const handleSaveProductRegistry = async () => {
+    const trimmedProductName = newProductName.trim();
+    const trimmedPrefix = productPrefix.trim();
+    const trimmedUdiDi = registeredUdiDi.trim();
+
+    if (!trimmedProductName) {
+      setMessage("Bitte zuerst einen Produktnamen für die UDI-Zuordnung eingeben.");
+      return;
+    }
+    if (!trimmedPrefix) {
+      setMessage("Bitte ein Kunden-Präfix eingeben.");
+      return;
+    }
+    if (!trimmedUdiDi) {
+      setMessage("Bitte eine feste UDI-DI eingeben.");
+      return;
+    }
+
+    const payload = {
+      product_name: trimmedProductName,
+      normalized_product_name: normalizeLookupKey(trimmedProductName),
+      customer_prefix: trimmedPrefix,
+      udi_di: trimmedUdiDi,
+      manufacturer_name: newManufacturerName.trim() || null,
+      updated_at: new Date().toISOString(),
+      ...(user?.id ? { user_id: user.id } : {}),
+      ...(createdByLabel && createdByLabel !== "—" ? { created_by: createdByLabel } : {}),
+    };
+
+    try {
+      const query = supabase.from("product_udi_registry");
+      const existing = matchedRegistryEntryId
+        ? productUdiRegistry.find((entry) => entry.id === matchedRegistryEntryId)
+        : productUdiRegistry.find(
+            (entry) =>
+              normalizeLookupKey(entry.productName) ===
+              normalizeLookupKey(trimmedProductName)
+          );
+
+      const result = existing
+        ? await query.update(payload).eq("id", existing.id)
+        : await query.insert({
+            id: crypto.randomUUID(),
+            created_at: new Date().toISOString(),
+            ...payload,
+          });
+
+      if (result.error) {
+        if (/row-level security|permission denied|new row violates row-level security/i.test(result.error.message || "")) {
+          setMessage(
+            "Speichern der Produkt-UDI-Zuordnung ist durch Supabase-RLS blockiert. Bitte die Policies für `product_udi_registry` prüfen."
+          );
+          return;
+        }
+        throw result.error;
+      }
+
+      await loadAllFromSupabase();
+      setMessage(
+        `Produkt-Zuordnung gespeichert: ${trimmedProductName} -> ${trimmedUdiDi}`
+      );
+      await addAuditEntry(
+        null,
+        "product_udi_registry_saved",
+        `Produkt-Zuordnung gespeichert: ${trimmedProductName} mit Präfix ${trimmedPrefix} und UDI-DI ${trimmedUdiDi}.`
+      );
+    } catch (err: any) {
+      console.error("Fehler beim Speichern der Produkt-UDI-Zuordnung:", err);
+      setMessage("Produkt-Zuordnung konnte nicht in Supabase gespeichert werden.");
     }
   };
 
@@ -3936,6 +4075,67 @@ if (!user) {
               <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
                 {createdByLabel}
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sky-500/20 bg-sky-950/20 p-4 space-y-4">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-sky-100">
+                  Produkt-UDI-Zuordnung
+                </h3>
+                <div className="text-xs text-slate-400">
+                  Präfix und feste UDI-DI pro Produkt speichern. Bei gleicher Produkteingabe wird die Zuordnung automatisch wiederverwendet.
+                </div>
+              </div>
+              <div className="rounded-full border border-sky-500/30 bg-slate-900/70 px-3 py-1 text-[11px] text-sky-100">
+                {matchedRegistryEntryId
+                  ? "Gespeicherte Zuordnung erkannt"
+                  : "Noch keine Zuordnung gefunden"}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div>
+                <div className="mb-1 text-[11px] text-slate-400">Kunden-Präfix</div>
+                <input
+                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
+                  placeholder="z.B. TH-ACME"
+                  value={productPrefix}
+                  onChange={(e) => setProductPrefix(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] text-slate-400">Feste UDI-DI</div>
+                <input
+                  className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
+                  placeholder="z.B. ACME-DI-INFUSION-01"
+                  value={registeredUdiDi}
+                  onChange={(e) => setRegisteredUdiDi(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] text-slate-400">Status</div>
+                <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 break-all">
+                  {registeredUdiDi.trim()
+                    ? `Aktive UDI-DI: ${registeredUdiDi.trim()}`
+                    : "Noch keine feste UDI-DI hinterlegt"}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleSaveProductRegistry}
+                className="inline-flex items-center rounded-lg border border-sky-500/60 bg-sky-900/30 hover:bg-sky-800/40 px-4 py-2 text-sm font-medium"
+              >
+                Produkt-Zuordnung speichern
+              </button>
+              {matchedRegistryEntryId && (
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-100">
+                  Dieses Produkt nutzt beim Gerätespeichern automatisch die hinterlegte UDI-DI.
+                </div>
+              )}
             </div>
           </div>
 
