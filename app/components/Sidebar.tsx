@@ -139,8 +139,9 @@ export default function Sidebar() {
           }
         >
           <div className="text-center">
-            <div className="text-sm font-black tracking-[0.06em] uppercase text-slate-50 sm:text-xl sm:tracking-[0.08em]">
-              Dokumente
+            <div className="text-[11px] font-black tracking-[0.04em] uppercase text-slate-50 sm:text-xl sm:tracking-[0.08em]">
+              <span className="sm:hidden">Docs</span>
+              <span className="hidden sm:inline">Dokumente</span>
             </div>
             <div className="mt-1 text-[10px] font-medium leading-4 text-slate-300 sm:mt-2 sm:text-xs sm:leading-5">
               DHR, DMR und UDI-Unterlagen
