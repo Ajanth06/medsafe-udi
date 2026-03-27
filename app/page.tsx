@@ -1060,6 +1060,7 @@ export default function MedSafePage() {
   const [isCreateDevicePanelOpen, setIsCreateDevicePanelOpen] = useState(false);
   const [isOverviewPanelOpen, setIsOverviewPanelOpen] = useState(false);
   const [isRegistryPanelOpen, setIsRegistryPanelOpen] = useState(false);
+  const [isUdiSectionVisible, setIsUdiSectionVisible] = useState(false);
   const [editRowId, setEditRowId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
     status: DeviceStatus;
@@ -1324,7 +1325,9 @@ export default function MedSafePage() {
 
   useEffect(() => {
     const syncHash = () => {
-      setIsAiAssistantVisible((window.location.hash || "") === "#medsafe-ai");
+      const hash = window.location.hash || "";
+      setIsAiAssistantVisible(hash === "#medsafe-ai");
+      setIsUdiSectionVisible(hash === "#udi");
     };
     syncHash();
     window.addEventListener("hashchange", syncHash);
@@ -2177,7 +2180,12 @@ export default function MedSafePage() {
       window.history.pushState(null, "", window.location.pathname);
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     }
+    if (window.location.hash === "#udi") {
+      window.history.pushState(null, "", window.location.pathname);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
     setIsAiAssistantVisible(false);
+    setIsUdiSectionVisible(false);
     setSelectedDeviceId(id);
     if (id !== lastCreatedDeviceId) {
       setLastCreatedDeviceId(null);
@@ -4226,6 +4234,22 @@ if (!user) {
 
         {!isAiAssistantVisible && (
           <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
+            {isUdiSectionVisible && (
+              <div className="mb-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.history.pushState(null, "", window.location.pathname);
+                    window.dispatchEvent(new HashChangeEvent("hashchange"));
+                    setIsUdiSectionVisible(false);
+                  }}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+                >
+                  X
+                </button>
+              </div>
+            )}
+            {isUdiSectionVisible && (
             <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
               <button
                 onClick={() => setIsOverviewPanelOpen(true)}
@@ -4276,6 +4300,7 @@ if (!user) {
                 </div>
               </button>
             </div>
+            )}
           </section>
         )}
 
@@ -4389,6 +4414,19 @@ if (!user) {
 
         {isAiAssistantVisible && (
           <section className="rounded-2xl border border-amber-400/20 bg-slate-950/96 p-3 shadow-[0_0_32px_rgba(120,53,15,0.18)] sm:p-4 md:p-6">
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  window.history.pushState(null, "", window.location.pathname);
+                  window.dispatchEvent(new HashChangeEvent("hashchange"));
+                  setIsAiAssistantVisible(false);
+                }}
+                className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-100 hover:bg-amber-500/15"
+              >
+                X
+              </button>
+            </div>
             <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
               {aiSection}
             </div>
@@ -4475,22 +4513,20 @@ if (!user) {
                           onChange={(e) => setIuGenericDeviceGroup(e.target.value)}
                         />
                       </div>
-                      {riskAnalysisEnabled && (
-                        <div>
-                          <div className="mb-1 text-[11px] text-slate-400">Risikoklasse</div>
-                          <select
-                            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                            value={newRiskClass}
-                            onChange={(e) => setNewRiskClass(e.target.value)}
-                          >
-                            <option value="">Nicht gesetzt</option>
-                            <option value="I">I</option>
-                            <option value="IIa">IIa</option>
-                            <option value="IIb">IIb</option>
-                            <option value="III">III</option>
-                          </select>
-                        </div>
-                      )}
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">Risikoklasse</div>
+                        <select
+                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
+                          value={newRiskClass}
+                          onChange={(e) => setNewRiskClass(e.target.value)}
+                        >
+                          <option value="">Nicht gesetzt</option>
+                          <option value="I">I</option>
+                          <option value="IIa">IIa</option>
+                          <option value="IIb">IIb</option>
+                          <option value="III">III</option>
+                        </select>
+                      </div>
                       <div>
                         <div className="mb-1 text-[11px] text-slate-400">Angelegt von</div>
                         <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">

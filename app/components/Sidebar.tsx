@@ -15,7 +15,7 @@ export default function Sidebar() {
   const [hash, setHash] = useState("");
   const pathname = usePathname();
   const router = useRouter();
-  const isUdiControlActive = pathname === "/" && hash !== "#medsafe-ai";
+  const isUdiControlActive = pathname === "/" && hash === "#udi";
   const isDocumentsActive = pathname?.startsWith("/docs");
   const isAiActive = pathname === "/" && hash === "#medsafe-ai";
 
@@ -71,12 +71,11 @@ export default function Sidebar() {
     window.setTimeout(() => setIsUdiPulseActive(false), 900);
     closeActiveDetailView();
     if (pathname !== "/") {
-      router.push("/");
+      router.push("/#udi");
       return;
     }
-    window.history.pushState(null, "", "/");
-    setHash("");
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    window.location.hash = "udi";
+    setHash("#udi");
   };
 
   if (!user) {
