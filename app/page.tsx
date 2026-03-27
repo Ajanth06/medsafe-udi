@@ -4225,15 +4225,7 @@ if (!user) {
         )}
 
         {!isAiAssistantVisible && (
-          <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
-            <div className="text-center">
-              <h1 className="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-3xl font-bold text-transparent drop-shadow-[0_0_6px_rgba(34,211,238,0.18)] sm:text-4xl md:text-5xl">
-                MedSafe Dashboard
-              </h1>
-              <div className="mt-1 bg-gradient-to-r from-cyan-200/80 via-slate-300 to-emerald-200/80 bg-clip-text text-xs text-transparent sm:text-sm">
-                Bereiche getrennt öffnen: Übersicht, registrierte Produkte oder neue Geräteanlage.
-              </div>
-            </div>
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 sm:p-4 md:p-6">
             <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
               <button
                 onClick={() => setIsOverviewPanelOpen(true)}
@@ -4287,7 +4279,7 @@ if (!user) {
           </section>
         )}
 
-        {riskAnalysisEnabled && (
+        {!isAiAssistantVisible && false && riskAnalysisEnabled && (
         <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-4">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
