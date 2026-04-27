@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
+import { loadUserWithTimeout } from "../lib/authBootstrap";
 import Lottie from "lottie-react";
 import birdAnimation from "./animations/bird.json"; // Lege bird.json unter app/animations/ ab
 import LandingLoginPanel from "./components/LandingLoginPanel";
@@ -1196,37 +1197,31 @@ export default function MedSafePage() {
   // ---------- AUTH ----------
 
   useEffect(() => {
-  const initAuth = async () => {
-    try {
-      const { data, error } = await supabase.auth.getUser();
-
-      if (error) {
-        // "Auth session missing!" = niemand eingeloggt → ist OK, kein echter Fehler
-        if (error.message !== "Auth session missing!") {
-          console.error("Supabase getUser error:", error);
-        }
-        setUser(null);
-        return;
+    const initAuth = async () => {
+      try {
+        const loadedUser = await loadUserWithTimeout();
+        setUser(loadedUser);
+      } finally {
+        setAuthLoading(false);
       }
+    };
 
-      setUser(data.user ?? null);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
+    void initAuth();
 
-  initAuth();
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === "PASSWORD_RECOVERY" && typeof window !== "undefined") {
+          window.location.href = "/reset-password";
+          return;
+        }
+        setUser(session?.user ?? null);
+      }
+    );
 
-  const { data: authListener } = supabase.auth.onAuthStateChange(
-    (_event, session) => {
-      setUser(session?.user ?? null);
-    }
-  );
-
-  return () => {
-    authListener.subscription.unsubscribe();
-  };
-}, []);
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) return;

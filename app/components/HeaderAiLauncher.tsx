@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
+import { loadUserWithTimeout } from "../../lib/authBootstrap";
 
 export default function HeaderAiLauncher() {
   const pathname = usePathname();
@@ -13,11 +14,10 @@ export default function HeaderAiLauncher() {
 
   useEffect(() => {
     const loadUser = async () => {
-      const { data, error } = await supabase.auth.getUser();
-      if (!error) setUser(data.user ?? null);
+      setUser(await loadUserWithTimeout());
     };
 
-    loadUser();
+    void loadUser();
 
     const {
       data: { subscription },

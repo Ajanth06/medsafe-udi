@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import { isAdminEmail } from "../../lib/adminAccess";
+import { getAuthErrorMessage } from "../../lib/authError";
+import { loadUserWithTimeout } from "../../lib/authBootstrap";
 
 export default function AuthBar() {
   const [user, setUser] = useState<User | null>(null);
@@ -12,6 +14,7 @@ export default function AuthBar() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
+  const [recoveryLink, setRecoveryLink] = useState<string | null>(null);
   const [adminFormOpen, setAdminFormOpen] = useState(false);
   const [createEmail, setCreateEmail] = useState("");
   const [createPassword, setCreatePassword] = useState("");
@@ -25,11 +28,10 @@ export default function AuthBar() {
   //
   useEffect(() => {
     const loadUser = async () => {
-      const { data, error } = await supabase.auth.getUser();
-      if (!error) setUser(data.user ?? null);
+      setUser(await loadUserWithTimeout());
     };
 
-    loadUser();
+    void loadUser();
 
     const {
       data: { subscription },
@@ -53,9 +55,10 @@ export default function AuthBar() {
 
     setLoading(true);
     setAuthInfo(null);
+    setRecoveryLink(null);
 
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim(),
       password,
     });
 
@@ -63,7 +66,7 @@ export default function AuthBar() {
 
     if (error) {
       console.error("signInWithPassword error:", error);
-      setAuthInfo("Login fehlgeschlagen.");
+      setAuthInfo(`Login fehlgeschlagen: ${getAuthErrorMessage(error)}`);
       return;
     }
 
@@ -79,19 +82,34 @@ export default function AuthBar() {
 
     setLoading(true);
     setAuthInfo(null);
+    setRecoveryLink(null);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo:
-        typeof window !== "undefined"
-          ? `${window.location.origin}/reset-password`
-          : undefined,
+    const response = await fetch("/api/auth/reset-password", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: email.trim(),
+      }),
     });
 
+    const payload = await response.json().catch(() => ({}));
     setLoading(false);
 
-    if (error) {
-      console.error("resetPasswordForEmail error:", error);
-      setAuthInfo("Reset-Mail konnte nicht gesendet werden.");
+    if (!response.ok) {
+      console.error("reset password route error:", payload);
+      setAuthInfo(
+        `Reset-Mail konnte nicht gesendet werden: ${getAuthErrorMessage(
+          payload?.error ? { message: payload.error } : null
+        )}`
+      );
+      return;
+    }
+
+    if (payload?.recoveryLink) {
+      setRecoveryLink(payload.recoveryLink);
+      setAuthInfo("Reset-Mail war lokal nicht verfügbar. Öffne stattdessen den direkten Reset-Link.");
       return;
     }
 
@@ -262,6 +280,14 @@ export default function AuthBar() {
         >
           Passwort vergessen?
         </button>
+        {recoveryLink && (
+          <a
+            href={recoveryLink}
+            className="text-[11px] text-emerald-200 underline underline-offset-4 transition hover:text-emerald-100"
+          >
+            Reset-Link öffnen
+          </a>
+        )}
         {authInfo && <div className="text-[11px] text-slate-300">{authInfo}</div>}
       </div>
     );

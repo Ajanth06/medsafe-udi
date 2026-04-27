@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
+import { getAuthErrorMessage } from "../../lib/authError";
 
 export default function LandingLoginPanel() {
   const [email, setEmail] = useState("");
@@ -9,6 +10,7 @@ export default function LandingLoginPanel() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  const [recoveryLink, setRecoveryLink] = useState<string | null>(null);
 
   const handleLogin = async () => {
     if (!email.trim()) {
@@ -22,6 +24,7 @@ export default function LandingLoginPanel() {
 
     setLoading(true);
     setInfo(null);
+    setRecoveryLink(null);
 
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
@@ -32,7 +35,7 @@ export default function LandingLoginPanel() {
 
     if (error) {
       console.error("landing signInWithPassword error:", error);
-      setInfo("Login fehlgeschlagen.");
+      setInfo(`Login fehlgeschlagen: ${getAuthErrorMessage(error)}`);
       return;
     }
 
@@ -49,19 +52,34 @@ export default function LandingLoginPanel() {
 
     setLoading(true);
     setInfo(null);
+    setRecoveryLink(null);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo:
-        typeof window !== "undefined"
-          ? `${window.location.origin}/reset-password`
-          : undefined,
+    const response = await fetch("/api/auth/reset-password", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: email.trim(),
+      }),
     });
 
+    const payload = await response.json().catch(() => ({}));
     setLoading(false);
 
-    if (error) {
-      console.error("resetPasswordForEmail error:", error);
-      setInfo("Reset-Mail konnte nicht gesendet werden.");
+    if (!response.ok) {
+      console.error("reset password route error:", payload);
+      setInfo(
+        `Reset-Mail konnte nicht gesendet werden: ${getAuthErrorMessage(
+          payload?.error ? { message: payload.error } : null
+        )}`
+      );
+      return;
+    }
+
+    if (payload?.recoveryLink) {
+      setRecoveryLink(payload.recoveryLink);
+      setInfo("Reset-Mail war lokal nicht verfügbar. Öffne stattdessen den direkten Reset-Link.");
       return;
     }
 
@@ -120,6 +138,16 @@ export default function LandingLoginPanel() {
           Passwort vergessen?
         </button>
       </div>
+      {recoveryLink && (
+        <div className="mt-2 flex justify-center">
+          <a
+            href={recoveryLink}
+            className="text-xs text-emerald-200 underline underline-offset-4 transition hover:text-emerald-100"
+          >
+            Reset-Link öffnen
+          </a>
+        </div>
+      )}
       {info && <div className="mt-2 text-center text-xs text-slate-300">{info}</div>}
     </div>
   );
