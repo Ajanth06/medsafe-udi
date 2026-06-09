@@ -4182,17 +4182,6 @@ if (!user) {
             Healthcare &amp; Pharma
           </div>
 
-          <div className="logo-glide flex flex-wrap items-center justify-center gap-3 opacity-75 md:gap-5">
-          <img
-            src="/partners/novartis.png?v=20260327-2"
-            className="h-8 w-auto object-contain md:h-[52px]"
-            alt="Novartis"
-          />
-          <img src="/partners/roche.png?v=20260327-2" className="h-8 w-auto object-contain md:h-[52px]" alt="Roche" />
-          <img src="/partners/pfizer.png?v=20260327-2" className="h-8 w-auto object-contain md:h-[52px]" alt="Pfizer" />
-          <img src="/partners/johnson.png?v=20260327-2" className="h-8 w-auto object-contain md:h-[52px]" alt="Merck" />
-          <img src="/partners/bayer.png?v=20260326-1" className="h-8 w-auto object-contain md:h-[52px]" alt="Thalheimer" />
-          </div>
         </div>
       </div>
     </main>
