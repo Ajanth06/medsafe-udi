@@ -96,6 +96,26 @@ export type AuditEntry = {
   timestamp: string;
 };
 
+/** MDR-Stammdaten (DMR) — einmal pro Produkt, auf Geräte vererbt */
+export type ProductDmrFields = {
+  deviceDescription?: string;
+  intendedPurpose?: string;
+  principleOfOperation?: string;
+  keyComponents?: string;
+  accessories?: string;
+  deviceVersionVariants?: string;
+  riskFileId?: string;
+  fmeaId?: string;
+  hazardAnalysisRef?: string;
+  ceStatus?: string;
+  notifiedBody?: string;
+  conformityRoute?: string;
+  clinicalEvaluationRef?: string;
+  gsprChecklistLink?: string;
+  warningsPrecautions?: string;
+  internalRiskLevel?: string;
+};
+
 export type ProductUdiRegistryEntry = {
   id: string;
   productName: string;
@@ -105,7 +125,7 @@ export type ProductUdiRegistryEntry = {
   manufacturerSrn?: string;
   createdAt: string;
   updatedAt?: string;
-};
+} & ProductDmrFields;
 
 export type BatchGroup = {
   key: string;

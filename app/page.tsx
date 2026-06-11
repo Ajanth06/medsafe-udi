@@ -22,6 +22,8 @@ import {
   generateDhrId,
   generateManufacturerSrn,
   formatManufacturerSrn,
+  applyProductDmrToDevice,
+  extractProductDmrFields,
   getInitialDeviceStatus,
   getNextDeviceSerialNumbers,
   isLikelyGtin,
@@ -29,6 +31,7 @@ import {
   resolveGtinForSave,
   validateReleaseReadiness,
 } from "../lib/udiCore";
+import type { ProductUdiRegistryEntry } from "../types/medsafe";
 import GtinValidationBadge from "./components/GtinValidationBadge";
 import UdiDataMatrixPanel from "./components/UdiDataMatrixPanel";
 import {
@@ -147,16 +150,75 @@ type AuditEntry = {
   timestamp: string;
 };
 
-type ProductUdiRegistryEntry = {
-  id: string;
-  productName: string;
+type RegistryProductForm = {
+  productFamily: string;
+  productModel: string;
   customerPrefix: string;
   udiDi: string;
-  manufacturerName?: string;
-  manufacturerSrn?: string;
-  createdAt: string;
-  updatedAt?: string;
+  manufacturerName: string;
+  manufacturerSrn: string;
+  deviceDescription: string;
+  intendedPurpose: string;
+  principleOfOperation: string;
+  keyComponents: string;
+  accessories: string;
+  deviceVersionVariants: string;
+  riskFileId: string;
+  fmeaId: string;
+  hazardAnalysisRef: string;
+  ceStatus: string;
+  notifiedBody: string;
+  conformityRoute: string;
+  clinicalEvaluationRef: string;
+  gsprChecklistLink: string;
+  warningsPrecautions: string;
+  internalRiskLevel: string;
 };
+
+const EMPTY_REGISTRY_PRODUCT_FORM: RegistryProductForm = {
+  productFamily: "",
+  productModel: "",
+  customerPrefix: "",
+  udiDi: "",
+  manufacturerName: "",
+  manufacturerSrn: "",
+  deviceDescription: "",
+  intendedPurpose: "",
+  principleOfOperation: "",
+  keyComponents: "",
+  accessories: "",
+  deviceVersionVariants: "",
+  riskFileId: "",
+  fmeaId: "",
+  hazardAnalysisRef: "",
+  ceStatus: "",
+  notifiedBody: "",
+  conformityRoute: "",
+  clinicalEvaluationRef: "",
+  gsprChecklistLink: "",
+  warningsPrecautions: "",
+  internalRiskLevel: "",
+};
+
+const REGISTRY_OPTIONAL_DB_COLUMNS = [
+  "manufacturer_srn",
+  "device_description",
+  "intended_purpose",
+  "principle_of_operation",
+  "key_components",
+  "accessories",
+  "device_version_variants",
+  "risk_file_id",
+  "fmea_id",
+  "hazard_analysis_ref",
+  "ce_status",
+  "notified_body",
+  "conformity_route",
+  "clinical_evaluation_ref",
+  "gspr_checklist_link",
+  "warnings_precautions",
+  "internal_risk_level",
+] as const;
 
 const ADMIN_PIN = getClientAdminPin();
 
@@ -575,6 +637,14 @@ function extractNotNullColumnName(errorMessage: string): string | null {
   return match?.[1] ?? null;
 }
 
+function formatCsvCell(value: unknown): string {
+  const safe = String(value ?? "")
+    .replace(/\r?\n/g, " ")
+    .replace(/;/g, ",")
+    .replace(/"/g, '""');
+  return `"${safe}"`;
+}
+
 function devicesToCSV(devices: Device[]): string {
   const header = [
     "Produktfamilie",
@@ -591,8 +661,25 @@ function devicesToCSV(devices: Device[]): string {
     "RiskClass",
     "MDRClass",
     "MDRRule",
+    "DeviceDescription",
     "IntendedPurpose",
+    "PrincipleOfOperation",
+    "KeyComponents",
+    "Accessories",
+    "DeviceVersionVariants",
+    "RiskFileID",
+    "FMEA-ID",
+    "HazardAnalysisRef",
+    "CEStatus",
+    "NotifiedBody",
+    "ConformityRoute",
+    "ClinicalEvaluationRef",
+    "GSPRChecklistLink",
+    "WarningsPrecautions",
     "InternalRiskLevel",
+    "ValidationStatus",
+    "DMR-ID",
+    "DHR-ID",
     "BlockComment",
     "Responsible",
     "NonconformityCategory",
@@ -604,23 +691,6 @@ function devicesToCSV(devices: Device[]): string {
     "NextServiceDate",
     "ServiceNotes",
     "PMSNotes",
-    "DeviceVersionVariants",
-    "DeviceDescription",
-    "PrincipleOfOperation",
-    "KeyComponents",
-    "Accessories",
-    "RiskFileID",
-    "FMEA-ID",
-    "HazardAnalysisRef",
-    "CEStatus",
-    "NotifiedBody",
-    "ConformityRoute",
-    "ClinicalEvaluationRef",
-    "GSPRChecklistLink",
-    "WarningsPrecautions",
-    "ValidationStatus",
-    "DMR-ID",
-    "DHR-ID",
     "Archived",
     "ArchivedAt",
     "ArchiveReason",
@@ -643,8 +713,25 @@ function devicesToCSV(devices: Device[]): string {
       d.riskClass || "",
       d.mdrClass || "",
       d.mdrRule || "",
+      d.deviceDescription || "",
       d.intendedPurpose || "",
+      d.principleOfOperation || "",
+      d.keyComponents || "",
+      d.accessories || "",
+      d.deviceVersionVariants || "",
+      d.riskFileId || "",
+      d.fmeaId || "",
+      d.hazardAnalysisRef || "",
+      d.ceStatus || "",
+      d.notifiedBody || "",
+      d.conformityRoute || "",
+      d.clinicalEvaluationRef || "",
+      d.gsprChecklistLink || "",
+      d.warningsPrecautions || "",
       d.internalRiskLevel || "",
+      d.validationStatus || "",
+      d.dmrId || "",
+      d.dhrId || "",
       d.blockComment || "",
       d.responsible || "",
       d.nonconformityCategory || "",
@@ -656,36 +743,16 @@ function devicesToCSV(devices: Device[]): string {
       d.nextServiceDate || "",
       d.serviceNotes || "",
       d.pmsNotes || "",
-      d.deviceVersionVariants || "",
-      d.deviceDescription || "",
-      d.principleOfOperation || "",
-      d.keyComponents || "",
-      d.accessories || "",
-      d.riskFileId || "",
-      d.fmeaId || "",
-      d.hazardAnalysisRef || "",
-      d.ceStatus || "",
-      d.notifiedBody || "",
-      d.conformityRoute || "",
-      d.clinicalEvaluationRef || "",
-      d.gsprChecklistLink || "",
-      d.warningsPrecautions || "",
-      d.validationStatus || "",
-      d.dmrId || "",
-      d.dhrId || "",
       d.isArchived ? "true" : "false",
       d.archivedAt || "",
       d.archiveReason || "",
       d.createdAt || "",
-    ].map((val) => {
-      const safe = String(val ?? "").replace(/"/g, '""');
-      return `"${safe}"`;
-    });
+    ].map(formatCsvCell);
 
     return cols.join(";");
   });
 
-  return [header, ...rows].join("\n");
+  return `\uFEFFsep=;\r\n${header}\r\n${rows.join("\r\n")}`;
 }
 
 function copyToClipboard(value: string) {
@@ -1179,8 +1246,139 @@ function mapProductRegistryRow(row: any): ProductUdiRegistryEntry {
     udiDi: row.udi_di ?? "",
     manufacturerName: row.manufacturer_name ?? "",
     manufacturerSrn: row.manufacturer_srn ?? "",
+    deviceDescription: row.device_description ?? "",
+    intendedPurpose: row.intended_purpose ?? "",
+    principleOfOperation: row.principle_of_operation ?? "",
+    keyComponents: row.key_components ?? "",
+    accessories: row.accessories ?? "",
+    deviceVersionVariants: row.device_version_variants ?? "",
+    riskFileId: row.risk_file_id ?? "",
+    fmeaId: row.fmea_id ?? "",
+    hazardAnalysisRef: row.hazard_analysis_ref ?? "",
+    ceStatus: row.ce_status ?? "",
+    notifiedBody: row.notified_body ?? "",
+    conformityRoute: row.conformity_route ?? "",
+    clinicalEvaluationRef: row.clinical_evaluation_ref ?? "",
+    gsprChecklistLink: row.gspr_checklist_link ?? "",
+    warningsPrecautions: row.warnings_precautions ?? "",
+    internalRiskLevel: row.internal_risk_level ?? "",
     createdAt: row.created_at ?? "",
     updatedAt: row.updated_at ?? "",
+  };
+}
+
+function mapProductRegistryToDb(
+  entry: ProductUdiRegistryEntry,
+  userId?: string,
+  createdBy?: string
+): Record<string, unknown> {
+  return {
+    id: entry.id,
+    product_name: entry.productName,
+    normalized_product_name: normalizeLookupKey(entry.productName),
+    customer_prefix: entry.customerPrefix,
+    udi_di: entry.udiDi,
+    manufacturer_name: entry.manufacturerName || null,
+    manufacturer_srn: entry.manufacturerSrn || null,
+    device_description: entry.deviceDescription || null,
+    intended_purpose: entry.intendedPurpose || null,
+    principle_of_operation: entry.principleOfOperation || null,
+    key_components: entry.keyComponents || null,
+    accessories: entry.accessories || null,
+    device_version_variants: entry.deviceVersionVariants || null,
+    risk_file_id: entry.riskFileId || null,
+    fmea_id: entry.fmeaId || null,
+    hazard_analysis_ref: entry.hazardAnalysisRef || null,
+    ce_status: entry.ceStatus || null,
+    notified_body: entry.notifiedBody || null,
+    conformity_route: entry.conformityRoute || null,
+    clinical_evaluation_ref: entry.clinicalEvaluationRef || null,
+    gspr_checklist_link: entry.gsprChecklistLink || null,
+    warnings_precautions: entry.warningsPrecautions || null,
+    internal_risk_level: entry.internalRiskLevel || null,
+    created_at: entry.createdAt,
+    updated_at: entry.updatedAt || entry.createdAt,
+    ...(userId ? { user_id: userId } : {}),
+    ...(createdBy && createdBy !== "—" ? { created_by: createdBy } : {}),
+  };
+}
+
+function buildRegistryEntryFromForm(
+  form: RegistryProductForm,
+  id: string,
+  timestamps: { createdAt: string; updatedAt: string }
+): ProductUdiRegistryEntry | null {
+  const productName = buildRegistryProductName(form.productFamily, form.productModel);
+  if (!productName.trim()) return null;
+
+  const gtinResolved = resolveGtinForSave(form.udiDi.trim());
+  if (!gtinResolved.valid) return null;
+
+  return {
+    id,
+    productName,
+    customerPrefix: form.customerPrefix.trim(),
+    udiDi: gtinResolved.value,
+    manufacturerName: form.manufacturerName.trim() || undefined,
+    manufacturerSrn: formatManufacturerSrn(form.manufacturerSrn) || undefined,
+    deviceDescription: form.deviceDescription.trim() || undefined,
+    intendedPurpose: form.intendedPurpose.trim() || undefined,
+    principleOfOperation: form.principleOfOperation.trim() || undefined,
+    keyComponents: form.keyComponents.trim() || undefined,
+    accessories: form.accessories.trim() || undefined,
+    deviceVersionVariants: form.deviceVersionVariants.trim() || undefined,
+    riskFileId: form.riskFileId.trim() || undefined,
+    fmeaId: form.fmeaId.trim() || undefined,
+    hazardAnalysisRef: form.hazardAnalysisRef.trim() || undefined,
+    ceStatus: form.ceStatus.trim() || undefined,
+    notifiedBody: form.notifiedBody.trim() || undefined,
+    conformityRoute: form.conformityRoute.trim() || undefined,
+    clinicalEvaluationRef: form.clinicalEvaluationRef.trim() || undefined,
+    gsprChecklistLink: form.gsprChecklistLink.trim() || undefined,
+    warningsPrecautions: form.warningsPrecautions.trim() || undefined,
+    internalRiskLevel: form.internalRiskLevel.trim() || undefined,
+    createdAt: timestamps.createdAt,
+    updatedAt: timestamps.updatedAt,
+  };
+}
+
+function loadRegistryEntryToForm(entry: ProductUdiRegistryEntry): RegistryProductForm {
+  const registryKey = normalizeLookupKey(entry.productName);
+  const parts = registryKey.split(" ").filter(Boolean);
+  let productFamily = "";
+  let productModel = "";
+  if (parts.length >= 2) {
+    productFamily = formatProductFamily(parts[0]);
+    productModel = parts.slice(1).join(" ");
+  } else {
+    productFamily = formatProductFamily(entry.productName);
+    productModel = "";
+  }
+
+  const dmr = extractProductDmrFields(entry);
+  return {
+    productFamily,
+    productModel,
+    customerPrefix: entry.customerPrefix,
+    udiDi: entry.udiDi,
+    manufacturerName: entry.manufacturerName || "",
+    manufacturerSrn: entry.manufacturerSrn || "",
+    deviceDescription: dmr.deviceDescription || "",
+    intendedPurpose: dmr.intendedPurpose || "",
+    principleOfOperation: dmr.principleOfOperation || "",
+    keyComponents: dmr.keyComponents || "",
+    accessories: dmr.accessories || "",
+    deviceVersionVariants: dmr.deviceVersionVariants || "",
+    riskFileId: dmr.riskFileId || "",
+    fmeaId: dmr.fmeaId || "",
+    hazardAnalysisRef: dmr.hazardAnalysisRef || "",
+    ceStatus: dmr.ceStatus || "",
+    notifiedBody: dmr.notifiedBody || "",
+    conformityRoute: dmr.conformityRoute || "",
+    clinicalEvaluationRef: dmr.clinicalEvaluationRef || "",
+    gsprChecklistLink: dmr.gsprChecklistLink || "",
+    warningsPrecautions: dmr.warningsPrecautions || "",
+    internalRiskLevel: dmr.internalRiskLevel || "",
   };
 }
 
@@ -1253,6 +1451,10 @@ export default function MedSafePage() {
     null | "overview" | "hub"
   >(null);
   const [selectedRegistryEntryIds, setSelectedRegistryEntryIds] = useState<string[]>([]);
+  const [registryProductForm, setRegistryProductForm] = useState<RegistryProductForm>(
+    EMPTY_REGISTRY_PRODUCT_FORM
+  );
+  const [editingRegistryId, setEditingRegistryId] = useState<string | null>(null);
   const [isUdiSectionVisible, setIsUdiSectionVisible] = useState(false);
   const [editRowId, setEditRowId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
@@ -2152,26 +2354,6 @@ export default function MedSafePage() {
     const resolvedRiskClass = newRiskClass.trim() || aiRowSuggestions.riskClass;
     const resolvedGenericGroup =
       iuGenericDeviceGroup.trim() || aiRowSuggestions.genericDeviceGroup;
-    const resolvedWarnings =
-      iuLimitations.trim() || aiRowSuggestions.warningsAndLimitations;
-    const resolvedDeviceDescription =
-      newDeviceDescription.trim() ||
-      `${newProductName || "Das Produkt"} ist ein ${
-        resolvedGenericGroup || inferDeviceType(newProductName)
-      } für die sichere Anwendung gemäß Zweckbestimmung.`;
-    const resolvedPrinciple =
-      newPrincipleOfOperation.trim() ||
-      "Kontrollierter Gerätebetrieb gemäß IFU und spezifizierter Leistungsgrenzen.";
-    const resolvedKeyComponents =
-      newKeyComponents.trim() || "Steuereinheit, sicherheitsrelevante Komponenten, Schnittstellen.";
-    const resolvedRiskFileId =
-      newRiskFileId.trim() ||
-      `RMF-${slugifyName(newProductName || "DEVICE").slice(0, 10)}`;
-    const resolvedFmeaId =
-      newFmeaId.trim() ||
-      `FMEA-${slugifyName(newProductName || "DEVICE").slice(0, 10)}`;
-    const resolvedIntendedPurpose =
-      activeIntendedUseDraft.trim() || aiRowSuggestions.intendedIndication;
     const registryProductName = buildRegistryProductName(
       newProductFamily,
       newProductName
@@ -2218,34 +2400,22 @@ export default function MedSafePage() {
         updatedAt: new Date().toISOString(),
       };
 
-      const registryPayloadBase = {
-        product_name: newRegistryEntry.productName,
-        normalized_product_name: normalizedProductName,
-        customer_prefix: newRegistryEntry.customerPrefix,
-        udi_di: newRegistryEntry.udiDi,
-        manufacturer_name: newRegistryEntry.manufacturerName || null,
-        created_at: newRegistryEntry.createdAt,
-        updated_at: newRegistryEntry.updatedAt,
-        user_id: user.id,
-        ...(createdByLabel && createdByLabel !== "—" ? { created_by: createdByLabel } : {}),
-      };
-
-      const registryPayloadWithSrn = {
-        ...registryPayloadBase,
-        id: newRegistryEntry.id,
-        manufacturer_srn: newRegistryEntry.manufacturerSrn || null,
-      };
-
+      let registryPayload = mapProductRegistryToDb(
+        newRegistryEntry,
+        user.id,
+        createdByLabel
+      );
       let registryError = (
-        await supabase.from("product_udi_registry").insert(registryPayloadWithSrn)
+        await supabase.from("product_udi_registry").insert(registryPayload)
       ).error;
 
-      if (registryError && /manufacturer_srn/i.test(registryError.message || "")) {
+      for (const column of REGISTRY_OPTIONAL_DB_COLUMNS) {
+        if (!registryError || !new RegExp(column, "i").test(registryError.message || "")) {
+          break;
+        }
+        delete registryPayload[column];
         registryError = (
-          await supabase.from("product_udi_registry").insert({
-            id: newRegistryEntry.id,
-            ...registryPayloadBase,
-          })
+          await supabase.from("product_udi_registry").insert(registryPayload)
         ).error;
       }
 
@@ -2334,7 +2504,6 @@ export default function MedSafePage() {
       resolvedProductFamily,
       extractRevisionFromVariants(newDeviceVersionVariants)
     );
-    const intendedUseDraft = resolvedIntendedPurpose;
     const resolvedManufacturerSrn =
       formatManufacturerSrn(newManufacturerSrn.trim()) ||
       formatManufacturerSrn(
@@ -2373,7 +2542,7 @@ export default function MedSafePage() {
       );
 
       const id = crypto.randomUUID();
-      const deviceCandidate: Device = {
+      let deviceCandidate: Device = {
         id,
         name: resolvedDeviceName,
         productFamily: resolvedProductFamily,
@@ -2385,20 +2554,20 @@ export default function MedSafePage() {
         createdBy: createdByLabel && createdByLabel !== "—" ? createdByLabel : "system",
         manufacturerName: resolvedManufacturer,
         manufacturerSrn: resolvedManufacturerSrn,
-        deviceVersionVariants: newDeviceVersionVariants.trim(),
-        deviceDescription: resolvedDeviceDescription,
-        principleOfOperation: resolvedPrinciple,
-        keyComponents: resolvedKeyComponents,
-        accessories: newAccessories.trim(),
-        riskFileId: resolvedRiskFileId,
-        fmeaId: resolvedFmeaId,
-        hazardAnalysisRef: newHazardAnalysisRef.trim(),
-        ceStatus: newCeStatus.trim(),
-        notifiedBody: newNotifiedBody.trim(),
-        conformityRoute: newConformityRoute.trim(),
-        clinicalEvaluationRef: newClinicalEvaluationRef.trim(),
-        gsprChecklistLink: newGsprChecklistLink.trim(),
-        warningsPrecautions: resolvedWarnings,
+        deviceVersionVariants: "",
+        deviceDescription: "",
+        principleOfOperation: "",
+        keyComponents: "",
+        accessories: "",
+        riskFileId: "",
+        fmeaId: "",
+        hazardAnalysisRef: "",
+        ceStatus: "",
+        notifiedBody: "",
+        conformityRoute: "",
+        clinicalEvaluationRef: "",
+        gsprChecklistLink: "",
+        warningsPrecautions: "",
         batch,
         productionDate,
         udiPi,
@@ -2406,7 +2575,7 @@ export default function MedSafePage() {
         riskClass: resolvedRiskClass,
         mdrClass: "",
         mdrRule: "",
-        intendedPurpose: intendedUseDraft,
+        intendedPurpose: "",
         internalRiskLevel: "",
         blockComment: "",
         responsible: "",
@@ -2427,6 +2596,7 @@ export default function MedSafePage() {
         nonconformityId: "",
         genericDeviceGroup: resolvedGenericGroup || inferDeviceType(newProductName),
       };
+      deviceCandidate = applyProductDmrToDevice(deviceCandidate, matchedRegistryEntry);
       deviceCandidate.status = getInitialDeviceStatus(deviceCandidate);
       newDevices.push(deviceCandidate);
     }
@@ -2611,6 +2781,148 @@ export default function MedSafePage() {
       const detail = e?.message ? String(e.message) : "Unbekannter Fehler.";
       setMessage(`Fehler beim Speichern in Supabase: ${detail}`);
     }
+  };
+
+  const clearRegistryProductForm = () => {
+    setRegistryProductForm(EMPTY_REGISTRY_PRODUCT_FORM);
+    setEditingRegistryId(null);
+  };
+
+  const handleSaveRegistryProduct = async () => {
+    if (!user?.id) {
+      setMessage("Bitte einloggen, um Produktstammdaten zu speichern.");
+      return;
+    }
+
+    if (!registryProductForm.productFamily.trim()) {
+      setMessage("Bitte Produktfamilie eingeben (z. B. VARIO).");
+      return;
+    }
+    if (!registryProductForm.productModel.trim()) {
+      setMessage("Bitte Produktmodell eingeben (z. B. 500).");
+      return;
+    }
+    if (!registryProductForm.customerPrefix.trim()) {
+      setMessage("Bitte Kunden-Präfix eingeben.");
+      return;
+    }
+    if (!registryProductForm.udiDi.trim()) {
+      setMessage("Bitte GTIN / UDI-DI eingeben.");
+      return;
+    }
+    if (!registryProductForm.manufacturerName.trim()) {
+      setMessage("Bitte Hersteller eingeben.");
+      return;
+    }
+
+    const gtinCheck = resolveGtinForSave(registryProductForm.udiDi.trim());
+    if (!gtinCheck.valid) {
+      setMessage(gtinCheck.message);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const entryId = editingRegistryId || crypto.randomUUID();
+    const existing = productUdiRegistry.find((item) => item.id === editingRegistryId);
+    const entry = buildRegistryEntryFromForm(registryProductForm, entryId, {
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    });
+
+    if (!entry) {
+      setMessage("Produktstammdaten konnten nicht aufgebaut werden.");
+      return;
+    }
+
+    const normalizedName = normalizeLookupKey(entry.productName);
+    const duplicate = productUdiRegistry.find(
+      (item) =>
+        item.id !== entryId &&
+        normalizeLookupKey(item.productName) === normalizedName
+    );
+    if (duplicate) {
+      setMessage(`Produkt '${entry.productName}' ist bereits gespeichert.`);
+      return;
+    }
+
+    let payload = mapProductRegistryToDb(entry, user.id, createdByLabel);
+
+    if (editingRegistryId) {
+      const updatePayload = { ...payload };
+      delete updatePayload.id;
+
+      let updateError = (
+        await supabase
+          .from("product_udi_registry")
+          .update(updatePayload)
+          .eq("id", editingRegistryId)
+      ).error;
+
+      for (const column of REGISTRY_OPTIONAL_DB_COLUMNS) {
+        if (!updateError || !new RegExp(column, "i").test(updateError.message || "")) {
+          break;
+        }
+        delete updatePayload[column];
+        updateError = (
+          await supabase
+            .from("product_udi_registry")
+            .update(updatePayload)
+            .eq("id", editingRegistryId)
+        ).error;
+      }
+
+      if (updateError) {
+        setMessage(
+          `Produktstammdaten konnten nicht aktualisiert werden: ${formatSupabaseError(updateError)}`
+        );
+        return;
+      }
+
+      setProductUdiRegistry((prev) =>
+        prev.map((item) => (item.id === editingRegistryId ? entry : item))
+      );
+      await addAuditEntry(
+        null,
+        "product_udi_registry_updated",
+        `${createdByLabel} hat Produktstammdaten aktualisiert: ${entry.productName}.`
+      );
+      setMessage(`Produktstammdaten für '${entry.productName}' gespeichert.`);
+    } else {
+      let insertError = (
+        await supabase.from("product_udi_registry").insert(payload)
+      ).error;
+
+      for (const column of REGISTRY_OPTIONAL_DB_COLUMNS) {
+        if (!insertError || !new RegExp(column, "i").test(insertError.message || "")) {
+          break;
+        }
+        delete payload[column];
+        insertError = (
+          await supabase.from("product_udi_registry").insert(payload)
+        ).error;
+      }
+
+      if (insertError) {
+        if (/duplicate key|unique constraint/i.test(insertError.message || "")) {
+          setMessage(`Produkt '${entry.productName}' ist bereits gespeichert.`);
+          return;
+        }
+        setMessage(
+          `Produktstammdaten konnten nicht gespeichert werden: ${formatSupabaseError(insertError)}`
+        );
+        return;
+      }
+
+      setProductUdiRegistry((prev) => [entry, ...prev]);
+      await addAuditEntry(
+        null,
+        "product_udi_registry_saved",
+        `${createdByLabel} hat Produktstammdaten angelegt: ${entry.productName} mit GTIN / UDI-DI ${entry.udiDi}.`
+      );
+      setMessage(`Produkt '${entry.productName}' in Produktstammdaten gespeichert.`);
+    }
+
+    clearRegistryProductForm();
   };
 
   const clearRegistryFormIfDeleted = (deletedEntries: ProductUdiRegistryEntry[]) => {
@@ -4959,72 +5271,416 @@ export default function MedSafePage() {
     URL.revokeObjectURL(url);
   };
 
-  const productRegistrySection = (
-    <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
-      <div className="flex flex-col gap-3">
+  const registryFormSection = (
+    <div className="space-y-4 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-xl font-semibold text-slate-100">
-              Registrierte Produkte
+              Produktstammdaten (DMR)
             </h2>
             <div className="text-sm text-slate-400">
-              Gespeicherte Produktnamen mit Präfix und GTIN / UDI-DI.
+              MDR-Felder einmal pflegen — neue Geräte übernehmen sie automatisch.
             </div>
           </div>
           <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-300">
             {productUdiRegistry.length} gespeichert
           </div>
         </div>
-        {productUdiRegistry.length > 0 && (
+
+        <div className="rounded-2xl border border-sky-500/25 bg-sky-950/20 p-4 space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-sky-100">
+                {editingRegistryId ? "Produktstammdaten bearbeiten" : "Produkt anlegen (DMR)"}
+              </h3>
+              <p className="text-xs text-slate-400">
+                Identität &amp; MDR-Felder — werden bei Geräteerzeugung vererbt, nicht pro Gerät
+                eingegeben.
+              </p>
+            </div>
+            {editingRegistryId && (
+              <button
+                type="button"
+                onClick={clearRegistryProductForm}
+                className="rounded-lg border border-slate-600 px-3 py-1.5 text-[11px] text-slate-200 hover:bg-slate-800"
+              >
+                Bearbeitung abbrechen
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Produktfamilie *</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.productFamily}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    productFamily: e.target.value,
+                  }))
+                }
+                placeholder="z. B. VARIO"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Produktmodell *</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.productModel}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    productModel: e.target.value,
+                  }))
+                }
+                placeholder="z. B. 500"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Kunden-Präfix *</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.customerPrefix}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    customerPrefix: e.target.value,
+                  }))
+                }
+                placeholder="z. B. TH"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">GTIN / UDI-DI *</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.udiDi}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({ ...prev, udiDi: e.target.value }))
+                }
+                placeholder="04012345678903"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">Hersteller *</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.manufacturerName}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    manufacturerName: name,
+                    manufacturerSrn: name.trim()
+                      ? generateManufacturerSrn(name)
+                      : prev.manufacturerSrn,
+                  }));
+                }}
+                placeholder="Hersteller"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">SRN (EUDAMED)</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.manufacturerSrn}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    manufacturerSrn: formatManufacturerSrn(e.target.value),
+                  }))
+                }
+                placeholder="DE-MF-0000123456"
+              />
+            </div>
+          </div>
+
+          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+            MDR / DMR-Stammdaten
+          </div>
+          <div className="max-h-[min(52vh,520px)] overflow-y-auto overscroll-contain rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-3">
+            <div className="grid grid-cols-1 gap-4">
+              <div className="min-w-0 shrink-0">
+                <div className="mb-1 text-[11px] text-slate-400">DeviceDescription</div>
+                <textarea
+                  className="w-full min-h-[72px] max-h-32 resize-none overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                  value={registryProductForm.deviceDescription}
+                  onChange={(e) =>
+                    setRegistryProductForm((prev) => ({
+                      ...prev,
+                      deviceDescription: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="min-w-0 shrink-0">
+                <div className="mb-1 text-[11px] leading-snug text-slate-400">
+                  <span className="block">Zweckbestimmung</span>
+                  <span className="block text-[10px] text-slate-500">IntendedPurpose</span>
+                </div>
+                <textarea
+                  className="w-full min-h-[96px] max-h-40 resize-none overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                  value={registryProductForm.intendedPurpose}
+                  onChange={(e) =>
+                    setRegistryProductForm((prev) => ({
+                      ...prev,
+                      intendedPurpose: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="min-w-0 shrink-0">
+                <div className="mb-1 text-[11px] text-slate-400">PrincipleOfOperation</div>
+                <textarea
+                  className="w-full min-h-[72px] max-h-32 resize-none overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                  value={registryProductForm.principleOfOperation}
+                  onChange={(e) =>
+                    setRegistryProductForm((prev) => ({
+                      ...prev,
+                      principleOfOperation: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="min-w-0 shrink-0">
+                <div className="mb-1 text-[11px] text-slate-400">KeyComponents</div>
+                <textarea
+                  className="w-full min-h-[72px] max-h-32 resize-none overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                  value={registryProductForm.keyComponents}
+                  onChange={(e) =>
+                    setRegistryProductForm((prev) => ({
+                      ...prev,
+                      keyComponents: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="min-w-0 shrink-0">
+                <div className="mb-1 text-[11px] text-slate-400">WarningsPrecautions</div>
+                <textarea
+                  className="w-full min-h-[72px] max-h-32 resize-none overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                  value={registryProductForm.warningsPrecautions}
+                  onChange={(e) =>
+                    setRegistryProductForm((prev) => ({
+                      ...prev,
+                      warningsPrecautions: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="min-w-0">
+              <div className="mb-1 text-[11px] text-slate-400">Accessories</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.accessories}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    accessories: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">DeviceVersionVariants</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.deviceVersionVariants}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    deviceVersionVariants: e.target.value,
+                  }))
+                }
+                placeholder="REV-A"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">RiskFileID</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.riskFileId}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    riskFileId: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">FMEA_ID</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.fmeaId}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({ ...prev, fmeaId: e.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">HazardAnalysisRef</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.hazardAnalysisRef}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    hazardAnalysisRef: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">CEStatus</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.ceStatus}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    ceStatus: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">NotifiedBody</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.notifiedBody}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    notifiedBody: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">ConformityRoute</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.conformityRoute}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    conformityRoute: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">ClinicalEvaluationRef</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.clinicalEvaluationRef}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    clinicalEvaluationRef: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-slate-400">GSPRChecklistLink</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.gsprChecklistLink}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    gsprChecklistLink: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="min-w-0">
+              <div className="mb-1 text-[11px] text-slate-400">InternalRiskLevel</div>
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                value={registryProductForm.internalRiskLevel}
+                onChange={(e) =>
+                  setRegistryProductForm((prev) => ({
+                    ...prev,
+                    internalRiskLevel: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-2">
-            {selectedRegistryEntryIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleSaveRegistryProduct()}
+              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
+            >
+              {editingRegistryId ? "Produktstammdaten speichern" : "Produkt anlegen"}
+            </button>
+          </div>
+        </div>
+    </div>
+  );
+
+  const registryListSection = (
+    <div className="space-y-4 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+          <h3 className="text-sm font-semibold text-slate-200">Gespeicherte Produkte</h3>
+          {productUdiRegistry.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {selectedRegistryEntryIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleDeleteSelectedProductRegistry();
+                  }}
+                  className="text-xs md:text-sm rounded-lg border border-rose-500/50 bg-rose-900/20 px-3 py-2 text-rose-100 hover:border-rose-400 hover:bg-rose-800/30 transition"
+                >
+                  {selectedRegistryEntryIds.length} löschen
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
-                  void handleDeleteSelectedProductRegistry();
+                  void handleDeleteAllProductRegistry();
                 }}
-                className="text-xs md:text-sm rounded-lg border border-rose-500/50 bg-rose-900/20 px-3 py-2 text-rose-100 hover:border-rose-400 hover:bg-rose-800/30 transition"
+                className="inline-flex items-center gap-1.5 text-xs md:text-sm rounded-lg border border-rose-500/60 bg-rose-950/30 px-3 py-2 font-medium text-rose-100 hover:border-rose-400 hover:bg-rose-900/40 transition"
+                title="Alle Produkt-Zuordnungen löschen"
               >
-                {selectedRegistryEntryIds.length} löschen
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                Alles löschen
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                void handleDeleteAllProductRegistry();
-              }}
-              className="inline-flex items-center gap-1.5 text-xs md:text-sm rounded-lg border border-rose-500/60 bg-rose-950/30 px-3 py-2 font-medium text-rose-100 hover:border-rose-400 hover:bg-rose-900/40 transition"
-              title="Alle Produkt-Zuordnungen löschen"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="h-3.5 w-3.5"
-                aria-hidden="true"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              Alles löschen
-            </button>
-          </div>
-        )}
-      </div>
+            </div>
+          )}
 
-      {productUdiRegistry.length === 0 ? (
+          {productUdiRegistry.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-3 text-sm text-slate-400">
           Noch keine Produkt-Zuordnung gespeichert.
         </div>
       ) : (
-              <div className="max-h-[260px] overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
-          <table className="w-full border-collapse text-[11px]">
-            <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+              <div className="isolate max-h-[min(42vh,360px)] overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/40">
+          <table className="w-full table-fixed border-collapse text-[11px]">
+            <thead className="bg-slate-900/95">
               <tr className="border-b border-slate-700">
-                <th className="py-2 pl-3 pr-2 text-left">
+                <th className="w-8 py-2 pl-3 pr-2 text-left">
                   <input
                     type="checkbox"
                     checked={
@@ -5046,12 +5702,12 @@ export default function MedSafePage() {
                     title="Alle auswählen"
                   />
                 </th>
-                <th className="py-2 pr-2 text-left">Produkt</th>
-                <th className="py-2 pr-2 text-left">Präfix</th>
-                <th className="py-2 pr-2 text-left">GTIN / UDI-DI</th>
-                <th className="py-2 pr-2 text-left">Hersteller</th>
-                <th className="py-2 pr-2 text-left">SRN</th>
-                <th className="py-2 pr-3 text-left">Aktion</th>
+                <th className="w-[22%] py-2 pr-2 text-left">Produkt</th>
+                <th className="w-[10%] py-2 pr-2 text-left">Präfix</th>
+                <th className="w-[22%] py-2 pr-2 text-left">GTIN / UDI-DI</th>
+                <th className="w-[18%] py-2 pr-2 text-left">Hersteller</th>
+                <th className="w-[18%] py-2 pr-2 text-left">SRN</th>
+                <th className="w-[14%] py-2 pr-3 text-left">Aktion</th>
               </tr>
             </thead>
             <tbody>
@@ -5074,11 +5730,17 @@ export default function MedSafePage() {
                       title="Zum Löschen auswählen"
                     />
                   </td>
-                  <td className="py-2 pr-2 text-slate-100">{entry.productName}</td>
-                  <td className="py-2 pr-2 text-slate-300">{entry.customerPrefix}</td>
-                  <td className="py-2 pr-2 break-all text-sky-100">{entry.udiDi}</td>
-                  <td className="py-2 pr-2 text-slate-300">{entry.manufacturerName || "–"}</td>
-                  <td className="py-2 pr-2 break-all text-slate-400">
+                  <td className="py-2 pr-2 truncate text-slate-100" title={entry.productName}>
+                    {entry.productName}
+                  </td>
+                  <td className="py-2 pr-2 truncate text-slate-300">{entry.customerPrefix}</td>
+                  <td className="py-2 pr-2 truncate text-sky-100" title={entry.udiDi}>
+                    {entry.udiDi}
+                  </td>
+                  <td className="py-2 pr-2 truncate text-slate-300" title={entry.manufacturerName || ""}>
+                    {entry.manufacturerName || "–"}
+                  </td>
+                  <td className="py-2 pr-2 truncate text-slate-400" title={entry.manufacturerSrn || ""}>
                     {entry.manufacturerSrn
                       ? formatManufacturerSrn(entry.manufacturerSrn)
                       : "–"}
@@ -5086,8 +5748,20 @@ export default function MedSafePage() {
                   <td className="py-2 pr-3">
                     <div className="flex flex-wrap gap-2">
                       <button
+                        type="button"
                         onClick={() => {
-                          setNewProductName(entry.productName);
+                          setRegistryProductForm(loadRegistryEntryToForm(entry));
+                          setEditingRegistryId(entry.id);
+                        }}
+                        className="rounded-md border border-amber-500/50 bg-amber-900/20 px-2 py-1 text-[11px] text-amber-100 hover:bg-amber-800/40"
+                      >
+                        Bearbeiten
+                      </button>
+                      <button
+                        onClick={() => {
+                          const form = loadRegistryEntryToForm(entry);
+                          setNewProductFamily(form.productFamily);
+                          setNewProductName(form.productModel);
                           setProductPrefix(entry.customerPrefix);
                           setRegisteredUdiDi(entry.udiDi);
                           setMatchedRegistryEntryId(entry.id);
@@ -5102,7 +5776,7 @@ export default function MedSafePage() {
                         }}
                         className="rounded-md border border-sky-500/50 bg-sky-900/20 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-800/40"
                       >
-                        Laden
+                        Gerät anlegen
                       </button>
                       <button
                         type="button"
@@ -5121,9 +5795,9 @@ export default function MedSafePage() {
             </tbody>
           </table>
         </div>
-      )}
+          )}
 
-      <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
         <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
             Audit Produktstammdaten
@@ -5159,7 +5833,7 @@ export default function MedSafePage() {
           </ul>
         )}
       </div>
-    </section>
+    </div>
   );
   const overviewSection = (
     <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
@@ -6654,7 +7328,8 @@ if (!user) {
                       <div>
                         <h2 className="text-xl font-semibold">Neues Gerät anlegen</h2>
                         <div className="mt-1 text-sm text-slate-400">
-                          Produktdaten eingeben, Gerät erstellen und UDI automatisch generieren.
+                          Produkt aus Stammdaten wählen — MDR-Felder werden aus DMR übernommen,
+                          nicht hier eingegeben.
                         </div>
                       </div>
                       <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] text-slate-200">
@@ -7048,9 +7723,14 @@ if (!user) {
                     X
                   </button>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-6">
-                  <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
-                    {productRegistrySection}
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-2">
+                    <div className="min-h-0 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4 md:px-6 md:py-6">
+                      {registryFormSection}
+                    </div>
+                    <div className="min-h-0 overflow-y-auto overscroll-contain border-t border-white/10 px-3 py-4 sm:px-4 md:px-6 md:py-6 xl:border-l xl:border-t-0">
+                      {registryListSection}
+                    </div>
                   </div>
                 </div>
               </div>

@@ -1,4 +1,9 @@
-import type { Device, DeviceStatus, ProductUdiRegistryEntry } from "../types/medsafe";
+import type {
+  Device,
+  DeviceStatus,
+  ProductDmrFields,
+  ProductUdiRegistryEntry,
+} from "../types/medsafe";
 
 /** EUDAMED Single Registration Number (SRN) — Format DE-MF-0000123456 */
 export function generateManufacturerSrn(manufacturerName: string): string {
@@ -78,6 +83,55 @@ export function getNextDeviceSerialNumbers(
     serials.push(`${prefix}-SN-${productionDate}-${String(n).padStart(3, "0")}`);
   }
   return serials;
+}
+
+/** DMR-Felder aus Produktstammdaten (leere Strings wenn nicht gepflegt). */
+export function extractProductDmrFields(entry: ProductUdiRegistryEntry): ProductDmrFields {
+  return {
+    deviceDescription: entry.deviceDescription?.trim() || "",
+    intendedPurpose: entry.intendedPurpose?.trim() || "",
+    principleOfOperation: entry.principleOfOperation?.trim() || "",
+    keyComponents: entry.keyComponents?.trim() || "",
+    accessories: entry.accessories?.trim() || "",
+    deviceVersionVariants: entry.deviceVersionVariants?.trim() || "",
+    riskFileId: entry.riskFileId?.trim() || "",
+    fmeaId: entry.fmeaId?.trim() || "",
+    hazardAnalysisRef: entry.hazardAnalysisRef?.trim() || "",
+    ceStatus: entry.ceStatus?.trim() || "",
+    notifiedBody: entry.notifiedBody?.trim() || "",
+    conformityRoute: entry.conformityRoute?.trim() || "",
+    clinicalEvaluationRef: entry.clinicalEvaluationRef?.trim() || "",
+    gsprChecklistLink: entry.gsprChecklistLink?.trim() || "",
+    warningsPrecautions: entry.warningsPrecautions?.trim() || "",
+    internalRiskLevel: entry.internalRiskLevel?.trim() || "",
+  };
+}
+
+/** DMR-Stammdaten auf Gerätedatensatz übernehmen (DHR-Felder bleiben unberührt). */
+export function applyProductDmrToDevice(
+  device: Device,
+  entry: ProductUdiRegistryEntry
+): Device {
+  const dmr = extractProductDmrFields(entry);
+  return {
+    ...device,
+    deviceVersionVariants: dmr.deviceVersionVariants || "",
+    deviceDescription: dmr.deviceDescription || "",
+    principleOfOperation: dmr.principleOfOperation || "",
+    keyComponents: dmr.keyComponents || "",
+    accessories: dmr.accessories || "",
+    riskFileId: dmr.riskFileId || "",
+    fmeaId: dmr.fmeaId || "",
+    hazardAnalysisRef: dmr.hazardAnalysisRef || "",
+    ceStatus: dmr.ceStatus || "",
+    notifiedBody: dmr.notifiedBody || "",
+    conformityRoute: dmr.conformityRoute || "",
+    clinicalEvaluationRef: dmr.clinicalEvaluationRef || "",
+    gsprChecklistLink: dmr.gsprChecklistLink || "",
+    warningsPrecautions: dmr.warningsPrecautions || "",
+    intendedPurpose: dmr.intendedPurpose || "",
+    internalRiskLevel: dmr.internalRiskLevel || "",
+  };
 }
 
 /** Basic UDI-DI für EUDAMED — Format: TH-BUDI-VARIO-001 */
