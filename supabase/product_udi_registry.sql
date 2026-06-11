@@ -7,6 +7,7 @@ create table if not exists product_udi_registry (
   customer_prefix text not null,
   udi_di text not null,
   manufacturer_name text null,
+  manufacturer_srn text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

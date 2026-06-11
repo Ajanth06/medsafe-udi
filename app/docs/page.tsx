@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
+import { authFetch, openAuthenticatedDocument } from "../../lib/authFetch";
 import LandingLoginPanel from "../components/LandingLoginPanel";
 
 type Device = {
@@ -448,7 +449,7 @@ export default function DocsPage() {
   );
 
   const runAiDocumentDraft = async (payload: unknown) => {
-    const response = await fetch("/api/ai", {
+    const response = await authFetch("/api/ai", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -485,7 +486,7 @@ export default function DocsPage() {
     );
     formData.append("deviceId", deviceId);
 
-    const uploadResponse = await fetch("/api/upload", {
+    const uploadResponse = await authFetch("/api/upload", {
       method: "POST",
       body: formData,
     });
@@ -618,7 +619,7 @@ export default function DocsPage() {
     formData.append("userId", user.id);
 
     try {
-      const response = await fetch("/api/qms-documents", {
+      const response = await authFetch("/api/qms-documents", {
         method: "POST",
         body: formData,
       });
@@ -802,8 +803,8 @@ export default function DocsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="space-y-6 rounded-3xl bg-slate-950 p-1 sm:p-2">
+    <main className="text-slate-100">
+      <div className="space-y-6">
         <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5 space-y-3">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
@@ -1043,16 +1044,17 @@ export default function DocsPage() {
                   </div>
                   {doc.purpose && <div className="text-slate-300 mt-1">Ziel: {doc.purpose}</div>}
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <a
-                      href={`/api/docs/open?cid=${encodeURIComponent(doc.cid)}&url=${encodeURIComponent(
-                        doc.url
-                      )}`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void openAuthenticatedDocument(doc.cid, doc.url).catch((err) => {
+                          alert(err instanceof Error ? err.message : "Dokument konnte nicht geöffnet werden.");
+                        });
+                      }}
                       className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] hover:border-sky-500"
                     >
                       Dokument öffnen
-                    </a>
+                    </button>
                     {selectedDevice && (
                       <Link
                         href={`/risk-analysis?scope=device&device=${encodeURIComponent(

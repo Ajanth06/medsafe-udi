@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { assertServiceRoleKey } from "./supabaseKeyRole";
 
 export function getSupabaseAdmin() {
   const supabaseUrl =
@@ -20,6 +21,8 @@ export function getSupabaseAdmin() {
     }
     throw new Error(`Fehlende Umgebungsvariablen: ${missing.join(", ")}`);
   }
+
+  assertServiceRoleKey(serviceRoleKey);
 
   return createClient(supabaseUrl, serviceRoleKey, {
     auth: {

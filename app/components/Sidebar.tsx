@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
@@ -79,6 +80,10 @@ export default function Sidebar() {
   };
 
   if (!user) {
+    return null;
+  }
+
+  if (isUdiControlActive || isDocumentsActive || isAiActive) {
     return null;
   }
 
@@ -177,6 +182,21 @@ export default function Sidebar() {
           </div>
         </button>
       </nav>
+      <div className="mt-3 flex flex-wrap justify-center gap-2">
+        {[
+          { href: "/batches", label: "Chargen" },
+          { href: "/audit-log", label: "Audit-Log" },
+          { href: "/risk-analysis", label: "Risikoanalyse" },
+        ].map((link) => (
+          <Link
+            key={link.href}
+            href={link.href}
+            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-slate-300 transition hover:bg-white/10"
+          >
+            {link.label}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

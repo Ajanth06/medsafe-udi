@@ -87,6 +87,10 @@ export default function AppHeader() {
   }
 
   const isAdmin = isAdminEmail(user.email);
+  const userDisplayName =
+    typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()
+      ? user.user_metadata.full_name.trim()
+      : user.email || "Angemeldeter Benutzer";
 
   return (
     <header className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 shadow-lg shadow-slate-950/60 backdrop-blur-2xl sm:rounded-3xl sm:px-4 sm:flex-row sm:items-center sm:justify-between">
@@ -108,8 +112,13 @@ export default function AppHeader() {
         <div className="flex flex-col items-center gap-2 sm:items-end">
           <div className="flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-3 py-1 text-[11px] text-slate-100/80">
             <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-500/80 animate-pulse" />
-            <span>{isAdmin ? `${onlineUsers.length} online` : "Online"}</span>
+            <span>Angemeldet: {userDisplayName}</span>
           </div>
+          {isAdmin && (
+            <div className="text-[11px] text-slate-400">
+              {onlineUsers.length} online
+            </div>
+          )}
 
           {isAdmin && onlineUsers.length > 0 && (
             <div className="w-full min-w-[240px] rounded-2xl border border-emerald-400/20 bg-slate-950/90 px-3 py-2 shadow-[0_0_18px_rgba(16,185,129,0.08)]">

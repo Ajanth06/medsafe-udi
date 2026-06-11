@@ -1,12 +1,45 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 import { loadUserWithTimeout } from "../lib/authBootstrap";
+import { authFetch, openAuthenticatedDocument } from "../lib/authFetch";
+import { getClientAdminPin } from "../lib/adminPin";
+import {
+  buildLabelUdi,
+  buildProductModelLabel,
+  buildUdiPi,
+  formatGs1HumanReadable,
+  extractRevisionFromVariants,
+  formatBatchChipLabel,
+  formatProductFamily,
+  formatProductionDateDisplay,
+  formatProductionDateInternal,
+  generateBasicUdiDi,
+  generateDmrId,
+  generateDhrId,
+  generateManufacturerSrn,
+  formatManufacturerSrn,
+  getInitialDeviceStatus,
+  getNextDeviceSerialNumbers,
+  isLikelyGtin,
+  patchDevicesAfterLoad,
+  resolveGtinForSave,
+  validateReleaseReadiness,
+} from "../lib/udiCore";
+import GtinValidationBadge from "./components/GtinValidationBadge";
+import UdiDataMatrixPanel from "./components/UdiDataMatrixPanel";
+import {
+  getTrashDaysRemaining,
+  isActiveDevice,
+  isTrashExpired,
+  TRASH_RETENTION_DAYS,
+} from "../lib/trash";
 import Lottie from "lottie-react";
 import birdAnimation from "./animations/bird.json"; // Lege bird.json unter app/animations/ ab
+import MedSafeDialogCard from "./components/MedSafeDialogCard";
 import LandingLoginPanel from "./components/LandingLoginPanel";
 
 type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
@@ -14,12 +47,15 @@ type DeviceStatus = "released" | "blocked" | "in_production" | "recall";
 type Device = {
   id: string;
   name: string;
+  productFamily?: string;
   udiDi: string;
   basicUdiDi?: string;
   serial: string;
   udiHash: string;
   createdAt: string;
+  createdBy?: string;
   manufacturerName?: string;
+  manufacturerSrn?: string;
   deviceVersionVariants?: string;
   deviceDescription?: string;
   principleOfOperation?: string;
@@ -67,6 +103,7 @@ type Device = {
 
   pmsNotes?: string;
   genericDeviceGroup?: string;
+  deletedAt?: string;
 };
 
 type DocStatus = "Draft" | "Controlled" | "Final";
@@ -99,6 +136,7 @@ type Doc = {
   assignedProductGroup?: string;
   isMandatory?: boolean;
   purpose?: string;
+  deletedAt?: string;
 };
 
 type AuditEntry = {
@@ -115,12 +153,12 @@ type ProductUdiRegistryEntry = {
   customerPrefix: string;
   udiDi: string;
   manufacturerName?: string;
+  manufacturerSrn?: string;
   createdAt: string;
   updatedAt?: string;
 };
 
-// PIN nur UI-Schutz
-const ADMIN_PIN = "4837";
+const ADMIN_PIN = getClientAdminPin();
 
 const DOC_CATEGORIES = [
   "Konformität / Declaration of Conformity",
@@ -362,6 +400,130 @@ function normalizeLookupKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ").replace(/[^a-z0-9 ]/g, "");
 }
 
+function formatSupabaseError(error: unknown): string {
+  if (!error) return "Unbekannter Fehler";
+  if (typeof error === "string") return error;
+  if (error instanceof Error && error.message) return error.message;
+  const postgrest = error as {
+    message?: string;
+    details?: string;
+    hint?: string;
+    code?: string;
+  };
+  const parts = [
+    postgrest.message,
+    postgrest.details,
+    postgrest.hint,
+    postgrest.code ? `Code ${postgrest.code}` : "",
+  ].filter(Boolean);
+  if (parts.length > 0) return parts.join(" — ");
+  try {
+    const json = JSON.stringify(error);
+    return json === "{}" ? "Unbekannter Supabase-Fehler" : json;
+  } catch {
+    return "Unbekannter Fehler";
+  }
+}
+
+function buildRegistryProductName(family: string, model: string): string {
+  const familyTrim = family.trim();
+  const modelTrim = model.trim();
+  if (!modelTrim) return familyTrim;
+  if (!familyTrim) return modelTrim;
+  const modelKey = normalizeLookupKey(modelTrim);
+  const familyKey = normalizeLookupKey(familyTrim);
+  if (modelKey === familyKey) return familyTrim;
+  if (modelKey.startsWith(`${familyKey} `)) return modelTrim;
+  return `${familyTrim} ${modelTrim}`;
+}
+
+function getRegistryFamilyVariants(
+  registry: ProductUdiRegistryEntry[],
+  familyKey: string
+): ProductUdiRegistryEntry[] {
+  if (!familyKey) return registry;
+  return registry.filter((entry) => {
+    const key = normalizeLookupKey(entry.productName);
+    return key === familyKey || key.startsWith(`${familyKey} `);
+  });
+}
+
+/**
+ * GTIN-Zuordnung nur über Produktmodell (Variante), nicht allein über Produktfamilie.
+ * z. B. Familie „vario“ + Modell „500“ → Registry „vario 500“.
+ */
+function findProductRegistryMatch(
+  registry: ProductUdiRegistryEntry[],
+  productModel: string,
+  productFamily: string
+): ProductUdiRegistryEntry | null {
+  const modelKey = normalizeLookupKey(productModel);
+  const familyKey = normalizeLookupKey(productFamily);
+
+  if (!modelKey && !familyKey) return null;
+
+  const familyScope = familyKey ? getRegistryFamilyVariants(registry, familyKey) : registry;
+
+  if (modelKey) {
+    const exactModel = familyScope.find(
+      (entry) => normalizeLookupKey(entry.productName) === modelKey
+    );
+    if (exactModel) return exactModel;
+
+    if (familyKey) {
+      const combinedKey = `${familyKey} ${modelKey}`;
+      const exactCombined = familyScope.find(
+        (entry) => normalizeLookupKey(entry.productName) === combinedKey
+      );
+      if (exactCombined) return exactCombined;
+
+      const suffixCandidates = familyScope.filter((entry) => {
+        const key = normalizeLookupKey(entry.productName);
+        return key === modelKey || key.endsWith(` ${modelKey}`);
+      });
+      if (suffixCandidates.length === 1) return suffixCandidates[0];
+    }
+
+    if (!familyKey) {
+      const prefixMatches = registry.filter((entry) =>
+        normalizeLookupKey(entry.productName).startsWith(modelKey)
+      );
+      if (prefixMatches.length === 1) return prefixMatches[0];
+    }
+  }
+
+  // Nur Familie ohne Modell: keine GTIN-Zuordnung
+  return null;
+}
+
+function listProductRegistrySuggestions(
+  registry: ProductUdiRegistryEntry[],
+  productModel: string,
+  productFamily: string,
+  limit = 6
+): ProductUdiRegistryEntry[] {
+  const modelKey = normalizeLookupKey(productModel);
+  const familyKey = normalizeLookupKey(productFamily);
+  const scope = familyKey ? getRegistryFamilyVariants(registry, familyKey) : registry;
+
+  if (!modelKey && familyKey) {
+    return scope
+      .sort((a, b) => a.productName.localeCompare(b.productName, "de-DE"))
+      .slice(0, limit);
+  }
+
+  const needle = normalizeLookupKey([familyKey, modelKey].filter(Boolean).join(" "));
+  if (!needle) return [];
+
+  return scope
+    .filter((entry) => {
+      const key = normalizeLookupKey(entry.productName);
+      return key.startsWith(needle) || key.includes(modelKey);
+    })
+    .sort((a, b) => a.productName.localeCompare(b.productName, "de-DE"))
+    .slice(0, limit);
+}
+
 function toSafeFilename(value: string): string {
   const normalized = value
     .trim()
@@ -372,13 +534,6 @@ function toSafeFilename(value: string): string {
     .replace(/^-|-$/g, "");
   return normalized || "dokument";
 }
-
-function generateBasicUdiDi(manufacturerName: string, productName: string): string {
-  const manufacturer = slugifyName(manufacturerName || "MFR").replace(/-/g, "").slice(0, 6);
-  const product = slugifyName(productName || "DEVICE").replace(/-/g, "").slice(0, 8);
-  return `TH-BDI-${manufacturer || "MFR"}-${product || "DEVICE"}`;
-}
-
 
 function generateNonconformityId(): string {
   const year = new Date().getFullYear();
@@ -422,15 +577,16 @@ function extractNotNullColumnName(errorMessage: string): string | null {
 
 function devicesToCSV(devices: Device[]): string {
   const header = [
-    "Name",
+    "Produktfamilie",
+    "Produktmodell",
     "Manufacturer",
-    "BasicUDI-DI",
-    "UDI-DI",
+    "Basic UDI-DI",
+    "UDI-DI / GTIN",
     "Serial",
     "Batch",
     "ProductionDate(YYMMDD)",
-    "UDI-PI",
-    "UDI-Hash",
+    "UDI-PI / Produktionskennung",
+    "UDI-Prüfhash intern",
     "Status",
     "RiskClass",
     "MDRClass",
@@ -473,6 +629,7 @@ function devicesToCSV(devices: Device[]): string {
 
   const rows = devices.map((d) => {
     const cols = [
+      d.productFamily || "",
       d.name || "",
       d.manufacturerName || "",
       d.basicUdiDi || "",
@@ -568,20 +725,25 @@ function findMissingRequiredDocs(deviceDocs: Doc[]): string[] {
 function getDeviceValidationWarnings(device: Device, allDevices: Device[]): string[] {
   const warnings: string[] = [];
 
-  if (device.udiDi && !/^TH-DI-\d{6}$/.test(device.udiDi)) {
-    warnings.push("UDI-DI-Struktur ist ungewöhnlich.");
+  if (device.udiDi && !/^(TH-DI-\d{6}|\d{8,14})$/.test(device.udiDi)) {
+    warnings.push("UDI-DI / GTIN-Struktur ist ungewöhnlich.");
   }
 
   if (device.serial && !/^TH-SN-\d{6}-\d{3}$/.test(device.serial)) {
     warnings.push("Seriennummer-Struktur ist ungewöhnlich.");
   }
 
-  const duplicateSerial = allDevices.filter((d) => d.serial === device.serial);
-  if (device.serial && duplicateSerial.length > 1) {
+  const duplicateSerial = allDevices.filter(
+    (d) =>
+      d.id !== device.id &&
+      isActiveDevice(d) &&
+      d.serial === device.serial
+  );
+  if (device.serial && duplicateSerial.length > 0) {
     warnings.push("Doppelte Seriennummer erkannt.");
   }
 
-  if (device.batch && !/^\d{6}$/.test(device.batch)) {
+  if (device.batch && !/^\d{6}(?:-\d{3})?$/.test(device.batch)) {
     warnings.push("Charge-Format ist ungewöhnlich.");
   }
 
@@ -659,28 +821,36 @@ function computeComplianceBreakdown(
   const udiReasons: string[] = [];
   if (!device.udiDi?.trim()) {
     udiScore -= 25;
-    udiReasons.push("UDI-DI fehlt.");
-  } else if (!/^TH-DI-\d{6}$/.test(device.udiDi)) {
+    udiReasons.push("UDI-DI / GTIN fehlt.");
+  } else if (!/^(TH-DI-\d{6}|\d{8,14})$/.test(device.udiDi)) {
     udiScore -= 12;
-    udiReasons.push("UDI-DI-Format ist unklar.");
+    udiReasons.push("UDI-DI / GTIN-Format ist unklar.");
   }
   if (!device.udiPi?.trim()) {
     udiScore -= 20;
-    udiReasons.push("UDI-PI fehlt.");
+    udiReasons.push("UDI-PI / Produktionskennung fehlt.");
   }
   if (!device.udiHash?.trim()) {
     udiScore -= 20;
-    udiReasons.push("UDI-Hash fehlt.");
+    udiReasons.push("UDI-Prüfhash intern fehlt.");
   }
   if (device.serial && !/^TH-SN-\d{6}-\d{3}$/.test(device.serial)) {
     udiScore -= 10;
     udiReasons.push("Seriennummer-Format ist unklar.");
   }
-  if (device.serial && allDevices.filter((d) => d.serial === device.serial).length > 1) {
+  if (
+    device.serial &&
+    allDevices.filter(
+      (d) =>
+        d.id !== device.id &&
+        isActiveDevice(d) &&
+        d.serial === device.serial
+    ).length > 0
+  ) {
     udiScore -= 15;
     udiReasons.push("Doppelte Seriennummer erkannt.");
   }
-  if (device.batch && !/^\d{6}$/.test(device.batch)) {
+  if (device.batch && !/^\d{6}(?:-\d{3})?$/.test(device.batch)) {
     udiScore -= 8;
     udiReasons.push("Charge hat kein erwartetes Format.");
   }
@@ -821,12 +991,13 @@ function buildAiInsightDraft(
 
 function mapDeviceRowToDevice(row: any): Device {
   const fallbackBasicUdiDi = generateBasicUdiDi(
-    row.manufacturer_name ?? "",
-    row.name ?? ""
+    "TH",
+    row.product_family ?? row.name ?? ""
   );
   return {
     id: row.id,
     name: row.name,
+    productFamily: row.product_family ?? "",
     udiDi: row.udi_di,
     basicUdiDi:
       typeof row.basic_udi_di === "string" && row.basic_udi_di.trim().length > 0
@@ -835,7 +1006,9 @@ function mapDeviceRowToDevice(row: any): Device {
     serial: row.serial,
     udiHash: row.udi_hash,
     createdAt: row.created_at,
+    createdBy: row.created_by ?? "",
     manufacturerName: row.manufacturer_name ?? "",
+    manufacturerSrn: row.manufacturer_srn ?? "",
     deviceVersionVariants: row.device_version_variants ?? "",
     deviceDescription: row.device_description ?? "",
     principleOfOperation: row.principle_of_operation ?? "",
@@ -877,18 +1050,22 @@ function mapDeviceRowToDevice(row: any): Device {
     serviceNotes: row.service_notes ?? "",
     pmsNotes: row.pms_notes ?? "",
     genericDeviceGroup: row.generic_device_group ?? row.device_category ?? "",
+    deletedAt: row.deleted_at ?? "",
   };
 }
 
 function mapDeviceToDb(device: Device | Partial<Device>): any {
   return {
     name: device.name,
+    product_family: device.productFamily ?? null,
     udi_di: device.udiDi,
     basic_udi_di: device.basicUdiDi ?? null,
     serial: device.serial,
     udi_hash: device.udiHash,
     created_at: device.createdAt,
+    created_by: device.createdBy ?? null,
     manufacturer_name: device.manufacturerName ?? null,
+    manufacturer_srn: device.manufacturerSrn ?? null,
     device_version_variants: device.deviceVersionVariants ?? null,
     device_description: device.deviceDescription ?? null,
     principle_of_operation: device.principleOfOperation ?? null,
@@ -936,6 +1113,7 @@ function mapDeviceToDb(device: Device | Partial<Device>): any {
     pms_notes: device.pmsNotes ?? null,
     generic_device_group: device.genericDeviceGroup ?? null,
     device_category: device.genericDeviceGroup ?? null,
+    deleted_at: toNullableDateOrTimestamp(device.deletedAt),
   };
 }
 
@@ -958,6 +1136,7 @@ function mapDocRowToDoc(row: any): Doc {
     assignedProductGroup: row.assigned_product_group ?? "",
     isMandatory: row.is_mandatory ?? false,
     purpose: row.purpose ?? "",
+    deletedAt: row.deleted_at ?? "",
   };
 }
 
@@ -999,6 +1178,7 @@ function mapProductRegistryRow(row: any): ProductUdiRegistryEntry {
     customerPrefix: row.customer_prefix ?? "",
     udiDi: row.udi_di ?? "",
     manufacturerName: row.manufacturer_name ?? "",
+    manufacturerSrn: row.manufacturer_srn ?? "",
     createdAt: row.created_at ?? "",
     updatedAt: row.updated_at ?? "",
   };
@@ -1060,7 +1240,19 @@ export default function MedSafePage() {
   const [lastCreatedDeviceId, setLastCreatedDeviceId] = useState<string | null>(null);
   const [isCreateDevicePanelOpen, setIsCreateDevicePanelOpen] = useState(false);
   const [isOverviewPanelOpen, setIsOverviewPanelOpen] = useState(false);
+  const [editingOverviewGroupKey, setEditingOverviewGroupKey] = useState<string | null>(null);
+  const [overviewEditDraft, setOverviewEditDraft] = useState<{
+    productName: string;
+    quantity: number;
+  } | null>(null);
+  const [selectedOverviewGroupKeys, setSelectedOverviewGroupKeys] = useState<string[]>([]);
+  const [isTrashPanelVisible, setIsTrashPanelVisible] = useState(false);
+  const [selectedTrashGroupKeys, setSelectedTrashGroupKeys] = useState<string[]>([]);
   const [isRegistryPanelOpen, setIsRegistryPanelOpen] = useState(false);
+  const [deviceDetailReturnPanel, setDeviceDetailReturnPanel] = useState<
+    null | "overview" | "hub"
+  >(null);
+  const [selectedRegistryEntryIds, setSelectedRegistryEntryIds] = useState<string[]>([]);
   const [isUdiSectionVisible, setIsUdiSectionVisible] = useState(false);
   const [editRowId, setEditRowId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
@@ -1069,11 +1261,13 @@ export default function MedSafePage() {
     blockComment: string;
     responsible: string;
   } | null>(null);
+  const [newProductFamily, setNewProductFamily] = useState("");
   const [newProductName, setNewProductName] = useState("");
   const [quantity, setQuantity] = useState<number>(1);
   const [newRiskClass, setNewRiskClass] = useState<string>("");
   const [newBasicUdiDi, setNewBasicUdiDi] = useState("");
   const [newManufacturerName, setNewManufacturerName] = useState("");
+  const [newManufacturerSrn, setNewManufacturerSrn] = useState("");
   const [productPrefix, setProductPrefix] = useState("");
   const [registeredUdiDi, setRegisteredUdiDi] = useState("");
   const [matchedRegistryEntryId, setMatchedRegistryEntryId] = useState<string | null>(null);
@@ -1126,6 +1320,63 @@ export default function MedSafePage() {
 
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
+  const [deleteSuccessNotice, setDeleteSuccessNotice] = useState<{
+    title: string;
+    text: string;
+  } | null>(null);
+  type ActionDialogTone = "emerald" | "amber" | "rose";
+  const actionDialogResolverRef = useRef<
+    ((result: { confirmed: boolean; pin?: string }) => void) | null
+  >(null);
+  const [actionDialog, setActionDialog] = useState<{
+    open: boolean;
+    title: string;
+    text?: string;
+    confirmLabel: string;
+    requirePin: boolean;
+    tone: ActionDialogTone;
+  }>({
+    open: false,
+    title: "",
+    confirmLabel: "Bestätigen",
+    requirePin: false,
+    tone: "emerald",
+  });
+
+  const requestActionDialog = (options: {
+    title: string;
+    text?: string;
+    confirmLabel?: string;
+    requirePin?: boolean;
+    tone?: ActionDialogTone;
+  }): Promise<{ confirmed: boolean; pin?: string }> =>
+    new Promise((resolve) => {
+      actionDialogResolverRef.current = resolve;
+      setActionDialog({
+        open: true,
+        title: options.title,
+        text: options.text,
+        confirmLabel: options.confirmLabel ?? "Bestätigen",
+        requirePin: options.requirePin ?? false,
+        tone: options.tone ?? "emerald",
+      });
+    });
+
+  const closeActionDialog = (confirmed: boolean, pin?: string) => {
+    setActionDialog((prev) => ({ ...prev, open: false }));
+    const resolver = actionDialogResolverRef.current;
+    actionDialogResolverRef.current = null;
+    resolver?.({ confirmed, pin });
+  };
+
+  const showDeleteSuccessNotice = (
+    text: string,
+    title = "Erfolgreich gelöscht"
+  ) => {
+    setDeleteSuccessNotice({ title, text });
+    window.setTimeout(() => setDeleteSuccessNotice(null), 3600);
+  };
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [udiPiSearch, setUdiPiSearch] = useState("");
@@ -1269,10 +1520,17 @@ export default function MedSafePage() {
       if (audErr) throw audErr;
       if (registryErr) throw registryErr;
 
-      setDevices((deviceRows || []).map(mapDeviceRowToDevice));
+      const registry = (registryRows || []).map(mapProductRegistryRow);
+      let loadedDevices = patchDevicesAfterLoad(
+        (deviceRows || []).map(mapDeviceRowToDevice),
+        registry,
+        normalizeLookupKey
+      );
+      loadedDevices = await purgeExpiredTrashDevices(loadedDevices);
+      setDevices(loadedDevices);
       setDocs((docRows || []).map(mapDocRowToDoc));
       setAudit((auditRows || []).map(mapAuditRowToEntry));
-      setProductUdiRegistry((registryRows || []).map(mapProductRegistryRow));
+      setProductUdiRegistry(registry);
     } catch (err: any) {
       console.error("Fehler beim Laden aus Supabase:", err);
       setMessage("Fehler beim Laden der Daten aus Supabase.");
@@ -1289,30 +1547,112 @@ export default function MedSafePage() {
   }, [user]);
 
   useEffect(() => {
-    const normalizedProductName = normalizeLookupKey(newProductName);
-    if (!normalizedProductName) {
-      setMatchedRegistryEntryId(null);
-      setProductPrefix("");
-      setRegisteredUdiDi("");
-      return;
-    }
-
-    const matchedEntry = productUdiRegistry.find(
-      (entry) => normalizeLookupKey(entry.productName) === normalizedProductName
+    const matchedEntry = findProductRegistryMatch(
+      productUdiRegistry,
+      newProductName,
+      newProductFamily
     );
+
+    const modelKey = normalizeLookupKey(newProductName);
+    const familyKey = normalizeLookupKey(newProductFamily);
 
     if (!matchedEntry) {
       setMatchedRegistryEntryId(null);
-      setProductPrefix("");
       setRegisteredUdiDi("");
+
+      if (!modelKey && !familyKey) {
+        setProductPrefix("");
+        return;
+      }
+
+      if (familyKey) {
+        const siblings = getRegistryFamilyVariants(productUdiRegistry, familyKey);
+        if (siblings.length > 0) {
+          const ref = siblings[0];
+          setProductPrefix(ref.customerPrefix || "");
+          setNewManufacturerName((current) => current || ref.manufacturerName || "");
+          setNewManufacturerSrn(
+            (current) =>
+              current ||
+              ref.manufacturerSrn ||
+              (ref.manufacturerName ? generateManufacturerSrn(ref.manufacturerName) : "")
+          );
+        } else if (!modelKey) {
+          setProductPrefix("");
+        }
+      }
       return;
     }
 
     setMatchedRegistryEntryId(matchedEntry.id);
     setProductPrefix(matchedEntry.customerPrefix || "");
-    setRegisteredUdiDi(matchedEntry.udiDi || "");
+    const resolvedGtin = resolveGtinForSave(matchedEntry.udiDi || "");
+    setRegisteredUdiDi(resolvedGtin.valid ? resolvedGtin.value : matchedEntry.udiDi || "");
     setNewManufacturerName((current) => current || matchedEntry.manufacturerName || "");
-  }, [newProductName, productUdiRegistry]);
+    setNewManufacturerSrn(
+      (current) =>
+        current ||
+        matchedEntry.manufacturerSrn ||
+        (matchedEntry.manufacturerName
+          ? generateManufacturerSrn(matchedEntry.manufacturerName)
+          : "")
+    );
+  }, [newProductName, newProductFamily, productUdiRegistry]);
+
+  const productRegistrySuggestions = useMemo(
+    () =>
+      listProductRegistrySuggestions(
+        productUdiRegistry,
+        newProductName,
+        newProductFamily
+      ),
+    [newProductName, newProductFamily, productUdiRegistry]
+  );
+
+  const activeRegistryMatch = useMemo(
+    () =>
+      findProductRegistryMatch(productUdiRegistry, newProductName, newProductFamily),
+    [newProductName, newProductFamily, productUdiRegistry]
+  );
+
+  const familyRegistryVariants = useMemo(
+    () =>
+      getRegistryFamilyVariants(
+        productUdiRegistry,
+        normalizeLookupKey(newProductFamily)
+      ),
+    [newProductFamily, productUdiRegistry]
+  );
+
+  const productModelInlineSuggestion = productRegistrySuggestions.find(
+    (entry) => entry.id !== activeRegistryMatch?.id
+  );
+
+  const isProductModelEntered = Boolean(normalizeLookupKey(newProductName));
+  const needsManualGtinEntry = isProductModelEntered && !activeRegistryMatch;
+
+  const handleSelectProductSuggestion = (entry: ProductUdiRegistryEntry) => {
+    const registryKey = normalizeLookupKey(entry.productName);
+    const parts = registryKey.split(" ").filter(Boolean);
+    if (parts.length >= 2) {
+      setNewProductFamily(formatProductFamily(parts[0]));
+      setNewProductName(parts.slice(1).join(" "));
+    } else {
+      setNewProductFamily(formatProductFamily(entry.productName));
+      if (!newProductName.trim()) {
+        setNewProductName(entry.productName);
+      }
+    }
+    setProductPrefix(entry.customerPrefix || "");
+    const resolvedGtin = resolveGtinForSave(entry.udiDi || "");
+    setRegisteredUdiDi(resolvedGtin.valid ? resolvedGtin.value : entry.udiDi || "");
+    setMatchedRegistryEntryId(entry.id);
+    setNewManufacturerName(entry.manufacturerName || "");
+    setNewManufacturerSrn(
+      entry.manufacturerSrn ||
+        (entry.manufacturerName ? generateManufacturerSrn(entry.manufacturerName) : "")
+    );
+  };
 
   useEffect(() => {
     setAiComplianceAlertText(null);
@@ -1329,21 +1669,37 @@ export default function MedSafePage() {
     return () => window.removeEventListener("hashchange", syncHash);
   }, []);
 
+  const restoreUdiHubVisibility = () => {
+    setIsUdiSectionVisible(true);
+    if (window.location.hash !== "#udi") {
+      window.history.replaceState(null, "", `${window.location.pathname}#udi`);
+      setIsUdiSectionVisible(true);
+    }
+  };
+
+  const handleCloseSelectedDeviceModal = () => {
+    const returnPanel = deviceDetailReturnPanel;
+    setSelectedDeviceId(null);
+    setLastCreatedDeviceId(null);
+    setEditRowId(null);
+    setEditDraft(null);
+    setIsGroupPinned(false);
+    setUdiPiSearch("");
+    setDeviceDetailReturnPanel(null);
+    restoreUdiHubVisibility();
+    if (returnPanel === "overview") {
+      setIsOverviewPanelOpen(true);
+    }
+  };
+
   useEffect(() => {
-    const closeDetail = () => {
-      setSelectedDeviceId(null);
-      setLastCreatedDeviceId(null);
-      setEditRowId(null);
-      setEditDraft(null);
-      setIsGroupPinned(false);
-      setUdiPiSearch("");
-    };
+    const closeDetail = () => handleCloseSelectedDeviceModal();
 
     window.addEventListener("medsafe:close-detail", closeDetail as EventListener);
     return () => {
       window.removeEventListener("medsafe:close-detail", closeDetail as EventListener);
     };
-  }, []);
+  }, [deviceDetailReturnPanel]);
 
   useEffect(() => {
     const shouldLockBodyScroll =
@@ -1547,7 +1903,7 @@ export default function MedSafePage() {
   const runAiTask = async <T,>(task: string, payload: unknown): Promise<T | null> => {
     try {
       setAiBusyTask(task);
-      const res = await fetch("/api/ai", {
+      const res = await authFetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task, payload }),
@@ -1760,8 +2116,21 @@ export default function MedSafePage() {
   // ---------- GERÄTE SPEICHERN ----------
 
   const handleSaveDevice = async () => {
+    if (!user?.id) {
+      setMessage("Bitte einloggen, um ein Gerät anzulegen.");
+      return;
+    }
+
+    if (!newProductFamily.trim()) {
+      setMessage("Bitte eine Produktfamilie eingeben (z. B. vario).");
+      return;
+    }
     if (!newProductName.trim()) {
-      setMessage("Bitte einen Produktnamen eingeben.");
+      setMessage("Bitte ein Produktmodell eingeben (z. B. vario Blood).");
+      return;
+    }
+    if (!newManufacturerName.trim()) {
+      setMessage("Bitte Hersteller eingeben (Pflichtfeld).");
       return;
     }
 
@@ -1773,8 +2142,13 @@ export default function MedSafePage() {
 
     const now = new Date();
     const productionDate = formatDateYYMMDD(now);
-    const batch = productionDate;
-    const resolvedManufacturer = newManufacturerName.trim() || aiRowSuggestions.manufacturerName;
+    const batchSequence =
+      devices.reduce((max, device) => {
+        const match = (device.batch || "").match(new RegExp(`^${productionDate}-(\\d{3})$`));
+        return match ? Math.max(max, Number(match[1]) || 0) : max;
+      }, 0) + 1;
+    const batch = `${productionDate}-${String(batchSequence).padStart(3, "0")}`;
+    const resolvedManufacturer = newManufacturerName.trim();
     const resolvedRiskClass = newRiskClass.trim() || aiRowSuggestions.riskClass;
     const resolvedGenericGroup =
       iuGenericDeviceGroup.trim() || aiRowSuggestions.genericDeviceGroup;
@@ -1798,50 +2172,219 @@ export default function MedSafePage() {
       `FMEA-${slugifyName(newProductName || "DEVICE").slice(0, 10)}`;
     const resolvedIntendedPurpose =
       activeIntendedUseDraft.trim() || aiRowSuggestions.intendedIndication;
-    const autoBasicUdiDi = generateBasicUdiDi(resolvedManufacturer, newProductName);
-    const resolvedBasicUdiDi = newBasicUdiDi.trim() || autoBasicUdiDi;
-    const normalizedProductName = normalizeLookupKey(newProductName);
-    const matchedRegistryEntry = productUdiRegistry.find(
-      (entry) => normalizeLookupKey(entry.productName) === normalizedProductName
+    const registryProductName = buildRegistryProductName(
+      newProductFamily,
+      newProductName
+    );
+    const normalizedProductName = normalizeLookupKey(registryProductName);
+    let matchedRegistryEntry = findProductRegistryMatch(
+      productUdiRegistry,
+      newProductName.trim(),
+      newProductFamily.trim()
     );
 
     if (!matchedRegistryEntry) {
-      setMessage(
-        "Für dieses Produkt ist noch keine gespeicherte GTIN / UDI-DI vorhanden. Bitte zuerst Produktname, Präfix und GTIN / UDI-DI speichern."
+      const trimmedPrefix = productPrefix.trim();
+      const trimmedUdiDi = registeredUdiDi.trim();
+
+      if (!trimmedPrefix || !trimmedUdiDi) {
+        setMessage(
+          "Bitte Kunden-Präfix und GTIN / UDI-DI eingeben. Die Produkt-Zuordnung wird beim Erstellen automatisch gespeichert."
+        );
+        return;
+      }
+
+      const newEntryGtin = resolveGtinForSave(trimmedUdiDi);
+      if (!newEntryGtin.valid) {
+        setMessage(newEntryGtin.message);
+        return;
+      }
+      if (newEntryGtin.corrected) {
+        setRegisteredUdiDi(newEntryGtin.value);
+      }
+
+      const resolvedManufacturerSrn =
+        formatManufacturerSrn(newManufacturerSrn.trim()) ||
+        formatManufacturerSrn(generateManufacturerSrn(resolvedManufacturer));
+
+      const newRegistryEntry: ProductUdiRegistryEntry = {
+        id: crypto.randomUUID(),
+        productName: registryProductName,
+        customerPrefix: trimmedPrefix,
+        udiDi: newEntryGtin.value,
+        manufacturerName: resolvedManufacturer || undefined,
+        manufacturerSrn: resolvedManufacturerSrn || undefined,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const registryPayloadBase = {
+        product_name: newRegistryEntry.productName,
+        normalized_product_name: normalizedProductName,
+        customer_prefix: newRegistryEntry.customerPrefix,
+        udi_di: newRegistryEntry.udiDi,
+        manufacturer_name: newRegistryEntry.manufacturerName || null,
+        created_at: newRegistryEntry.createdAt,
+        updated_at: newRegistryEntry.updatedAt,
+        user_id: user.id,
+        ...(createdByLabel && createdByLabel !== "—" ? { created_by: createdByLabel } : {}),
+      };
+
+      const registryPayloadWithSrn = {
+        ...registryPayloadBase,
+        id: newRegistryEntry.id,
+        manufacturer_srn: newRegistryEntry.manufacturerSrn || null,
+      };
+
+      let registryError = (
+        await supabase.from("product_udi_registry").insert(registryPayloadWithSrn)
+      ).error;
+
+      if (registryError && /manufacturer_srn/i.test(registryError.message || "")) {
+        registryError = (
+          await supabase.from("product_udi_registry").insert({
+            id: newRegistryEntry.id,
+            ...registryPayloadBase,
+          })
+        ).error;
+      }
+
+      if (registryError) {
+        if (
+          /duplicate key|unique constraint/i.test(registryError.message || "")
+        ) {
+          setMessage(
+            `Produkt „${newRegistryEntry.productName}“ ist bereits gespeichert. Bitte anderes Modell oder bestehende Zuordnung nutzen.`
+          );
+          return;
+        }
+        if (
+          /row-level security|permission denied|new row violates row-level security/i.test(
+            registryError.message || ""
+          )
+        ) {
+          setMessage(
+            "Speichern der Produkt-Zuordnung ist durch Supabase-RLS blockiert. Bitte erneut einloggen oder Policies für `product_udi_registry` prüfen."
+          );
+          return;
+        }
+        setMessage(
+          `Produkt-Zuordnung konnte nicht gespeichert werden: ${formatSupabaseError(registryError)}`
+        );
+        return;
+      }
+
+      setProductUdiRegistry((prev) => [newRegistryEntry, ...prev]);
+      await addAuditEntry(
+        null,
+        "product_udi_registry_saved",
+        `${createdByLabel} hat Produkt-Zuordnung hinzugefügt: ${newRegistryEntry.productName} mit Präfix ${newRegistryEntry.customerPrefix} und GTIN / UDI-DI ${newRegistryEntry.udiDi}.`
       );
-      return;
+      matchedRegistryEntry = newRegistryEntry;
     }
 
     const customerPrefix = slugifyName(matchedRegistryEntry.customerPrefix || "CUST");
-    const productUdiDi = matchedRegistryEntry.udiDi;
+    const gtinResolved = resolveGtinForSave(matchedRegistryEntry.udiDi || registeredUdiDi.trim());
+    if (!gtinResolved.valid) {
+      setMessage(gtinResolved.message);
+      return;
+    }
+    const productUdiDi = gtinResolved.value;
+    if (gtinResolved.corrected) {
+      setRegisteredUdiDi(productUdiDi);
+      matchedRegistryEntry = { ...matchedRegistryEntry, udiDi: productUdiDi };
+      const registryId = matchedRegistryEntry.id;
+      if (registryId) {
+        const { error: gtinFixError } = await supabase
+          .from("product_udi_registry")
+          .update({
+            udi_di: productUdiDi,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", registryId);
+        if (!gtinFixError) {
+          setProductUdiRegistry((prev) =>
+            prev.map((entry) =>
+              entry.id === registryId ? { ...entry, udiDi: productUdiDi } : entry
+            )
+          );
+        }
+      }
+    }
 
-    const devicesSameBatch = devices.filter((d) => d.batch === batch);
-    const existingInBatch = devicesSameBatch.length;
-    const nameSlug = slugifyName(newProductName);
-    const dmrIdForBatch = `${customerPrefix}-DMR-${batch}-${nameSlug}`;
+    const resolvedProductFamily = formatProductFamily(
+      newProductFamily.trim() ||
+        matchedRegistryEntry.productName?.trim() ||
+        newProductName.trim()
+    );
+    const familyVariantIndex =
+      devices.filter(
+        (d) =>
+          normalizeLookupKey(d.productFamily || "") ===
+          normalizeLookupKey(resolvedProductFamily)
+      ).length + 1;
+    const autoBasicUdiDi = generateBasicUdiDi(
+      matchedRegistryEntry.customerPrefix || productPrefix.trim() || "TH",
+      resolvedProductFamily,
+      familyVariantIndex
+    );
+    const resolvedBasicUdiDi = newBasicUdiDi.trim() || autoBasicUdiDi;
+    const dmrIdForProduct = generateDmrId(
+      matchedRegistryEntry.customerPrefix || productPrefix.trim() || "TH",
+      resolvedProductFamily,
+      extractRevisionFromVariants(newDeviceVersionVariants)
+    );
     const intendedUseDraft = resolvedIntendedPurpose;
+    const resolvedManufacturerSrn =
+      formatManufacturerSrn(newManufacturerSrn.trim()) ||
+      formatManufacturerSrn(
+        matchedRegistryEntry.manufacturerSrn ||
+          generateManufacturerSrn(resolvedManufacturer)
+      );
+    const resolvedDeviceName = buildProductModelLabel(
+      resolvedProductFamily,
+      matchedRegistryEntry.productName?.trim() ||
+        buildRegistryProductName(resolvedProductFamily, newProductName.trim())
+    );
 
     const newDevices: Device[] = [];
+    const nextSerials = getNextDeviceSerialNumbers(
+      devices,
+      customerPrefix,
+      productionDate,
+      qty
+    );
 
     for (let i = 0; i < qty; i++) {
-      const serialRunningNumber = String(existingInBatch + i + 1).padStart(3, "0");
+      const generatedSerial = nextSerials[i] || `${customerPrefix}-SN-${productionDate}-001`;
+      const serialRunningNumber = generatedSerial.slice(-3);
       const generatedUdiDi = productUdiDi;
-      const generatedSerial = `${customerPrefix}-SN-${productionDate}-${serialRunningNumber}`;
       const udiHash = await hashUdi(generatedUdiDi, generatedSerial);
-      const udiPi = `(11)${productionDate}(21)${generatedSerial}(10)${batch}`;
-      const dhrId = `${customerPrefix}-DHR-${productionDate}-${serialRunningNumber}`;
+      const udiPi = buildUdiPi({
+        productionDate,
+        serial: generatedSerial,
+        batch,
+        includeBatchWithSerial: true,
+      });
+      const dhrId = generateDhrId(
+        matchedRegistryEntry.customerPrefix || productPrefix.trim() || "TH",
+        productionDate,
+        serialRunningNumber
+      );
 
       const id = crypto.randomUUID();
-
-      newDevices.push({
+      const deviceCandidate: Device = {
         id,
-        name: newProductName.trim(),
+        name: resolvedDeviceName,
+        productFamily: resolvedProductFamily,
         udiDi: generatedUdiDi,
         basicUdiDi: resolvedBasicUdiDi,
         serial: generatedSerial,
         udiHash,
         createdAt: new Date().toISOString(),
+        createdBy: createdByLabel && createdByLabel !== "—" ? createdByLabel : "system",
         manufacturerName: resolvedManufacturer,
+        manufacturerSrn: resolvedManufacturerSrn,
         deviceVersionVariants: newDeviceVersionVariants.trim(),
         deviceDescription: resolvedDeviceDescription,
         principleOfOperation: resolvedPrinciple,
@@ -1859,7 +2402,7 @@ export default function MedSafePage() {
         batch,
         productionDate,
         udiPi,
-        status: "released",
+        status: "in_production",
         riskClass: resolvedRiskClass,
         mdrClass: "",
         mdrRule: "",
@@ -1868,7 +2411,7 @@ export default function MedSafePage() {
         blockComment: "",
         responsible: "",
         isArchived: false,
-        dmrId: dmrIdForBatch,
+        dmrId: dmrIdForProduct,
         dhrId,
         validationStatus: `IntendedUse-${iuReviewStatus}`,
         nonconformityCategory: "",
@@ -1883,7 +2426,9 @@ export default function MedSafePage() {
         archiveReason: "",
         nonconformityId: "",
         genericDeviceGroup: resolvedGenericGroup || inferDeviceType(newProductName),
-      });
+      };
+      deviceCandidate.status = getInitialDeviceStatus(deviceCandidate);
+      newDevices.push(deviceCandidate);
     }
 
     try {
@@ -2024,18 +2569,21 @@ export default function MedSafePage() {
       setIuInferredProductType(null);
       setIuInferenceConfidence(null);
       setAiIntendedUseServer(null);
+      setDeviceDetailReturnPanel("hub");
+      setIsUdiSectionVisible(true);
+      if (window.location.hash !== "#udi") {
+        window.history.replaceState(null, "", `${window.location.pathname}#udi`);
+      }
       setSelectedDeviceId(newDevices[0]?.id ?? null);
       setLastCreatedDeviceId(newDevices[0]?.id ?? null);
 
-      if (qty === 1) {
-        setMessage(
-          `1 Gerät wurde gespeichert. GTIN / UDI-DI stammt aus dem gespeicherten Produkt, UDI-PI wurde automatisch erzeugt.`
-        );
-      } else {
-        setMessage(
-          `${qty} Geräte wurden gespeichert. GTIN / UDI-DI stammt aus dem gespeicherten Produkt, UDI-PI und Seriennummern wurden automatisch erzeugt.`
-        );
-      }
+      setMessage("");
+      setSaveSuccessNotice(
+        newDevices.length === 1
+          ? `${newDevices[0]?.name || "Gerät"} wurde erfolgreich gespeichert.`
+          : `${newDevices.length} Geräte wurden erfolgreich gespeichert.`
+      );
+      window.setTimeout(() => setSaveSuccessNotice(null), 3600);
 
       const firstSerial = newDevices[0]?.serial;
       const lastSerial = newDevices[newDevices.length - 1]?.serial;
@@ -2044,9 +2592,20 @@ export default function MedSafePage() {
         null,
         "devices_bulk_created",
         qty === 1
-          ? `1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForBatch}).`
-          : `${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForBatch}).`
+          ? `1 Gerät angelegt: ${newDevices[0]?.name} (Charge: ${batch}, SN: ${firstSerial}, DMR: ${dmrIdForProduct}).`
+          : `${qty} Geräte angelegt für ${newDevices[0]?.name} (Charge: ${batch}, SN von ${firstSerial} bis ${lastSerial}, DMR: ${dmrIdForProduct}).`
       );
+
+      for (const device of newDevices) {
+        const statusLabel = DEVICE_STATUS_LABELS[device.status] || device.status;
+        await addAuditEntry(device.id, "device_created", "Gerät erstellt");
+        await addAuditEntry(device.id, "udi_generated", "UDI erzeugt");
+        await addAuditEntry(
+          device.id,
+          "status_set",
+          `Status gesetzt: ${statusLabel}`
+        );
+      }
     } catch (e: any) {
       console.error("Supabase Devices Insert Exception:", e);
       const detail = e?.message ? String(e.message) : "Unbekannter Fehler.";
@@ -2054,76 +2613,57 @@ export default function MedSafePage() {
     }
   };
 
-  const handleSaveProductRegistry = async () => {
-    const trimmedProductName = newProductName.trim();
-    const trimmedPrefix = productPrefix.trim();
-    const trimmedUdiDi = registeredUdiDi.trim();
-
-    if (!trimmedProductName) {
-      setMessage("Bitte zuerst einen Produktnamen für die UDI-Zuordnung eingeben.");
-      return;
-    }
-    if (!trimmedPrefix) {
-      setMessage("Bitte ein Kunden-Präfix eingeben.");
-      return;
-    }
-    if (!trimmedUdiDi) {
-      setMessage("Bitte eine feste UDI-DI eingeben.");
-      return;
-    }
-
-    const payload = {
-      product_name: trimmedProductName,
-      normalized_product_name: normalizeLookupKey(trimmedProductName),
-      customer_prefix: trimmedPrefix,
-      udi_di: trimmedUdiDi,
-      manufacturer_name: newManufacturerName.trim() || null,
-      updated_at: new Date().toISOString(),
-      ...(user?.id ? { user_id: user.id } : {}),
-      ...(createdByLabel && createdByLabel !== "—" ? { created_by: createdByLabel } : {}),
-    };
-
-    try {
-      const query = supabase.from("product_udi_registry");
-      const existing = matchedRegistryEntryId
-        ? productUdiRegistry.find((entry) => entry.id === matchedRegistryEntryId)
-        : productUdiRegistry.find(
-            (entry) =>
-              normalizeLookupKey(entry.productName) ===
-              normalizeLookupKey(trimmedProductName)
-          );
-
-      const result = existing
-        ? await query.update(payload).eq("id", existing.id)
-        : await query.insert({
-            id: crypto.randomUUID(),
-            created_at: new Date().toISOString(),
-            ...payload,
-          });
-
-      if (result.error) {
-        if (/row-level security|permission denied|new row violates row-level security/i.test(result.error.message || "")) {
-          setMessage(
-            "Speichern der Produkt-UDI-Zuordnung ist durch Supabase-RLS blockiert. Bitte die Policies für `product_udi_registry` prüfen."
-          );
-          return;
-        }
-        throw result.error;
+  const clearRegistryFormIfDeleted = (deletedEntries: ProductUdiRegistryEntry[]) => {
+    for (const entry of deletedEntries) {
+      if (matchedRegistryEntryId === entry.id) {
+        setMatchedRegistryEntryId(null);
       }
+      if (normalizeLookupKey(newProductName) === normalizeLookupKey(entry.productName)) {
+        setProductPrefix("");
+        setRegisteredUdiDi("");
+      }
+    }
+  };
 
-      await loadAllFromSupabase();
-      setMessage(
-        `Produkt-Zuordnung gespeichert: ${trimmedProductName} -> ${trimmedUdiDi}`
-      );
+  const deleteProductRegistryEntries = async (entryIds: string[]) => {
+    const entries = productUdiRegistry.filter((item) => entryIds.includes(item.id));
+    if (entries.length === 0) {
+      setMessage("Produkt-Zuordnung wurde nicht gefunden.");
+      return false;
+    }
+
+    const { error } = await supabase
+      .from("product_udi_registry")
+      .delete()
+      .in("id", entryIds);
+
+    if (error) {
+      if (
+        /row-level security|permission denied|new row violates row-level security/i.test(
+          error.message || ""
+        )
+      ) {
+        setMessage(
+          "Löschen der Produkt-UDI-Zuordnung ist durch Supabase-RLS blockiert. Bitte die Policies für `product_udi_registry` prüfen."
+        );
+        return false;
+      }
+      throw error;
+    }
+
+    setProductUdiRegistry((prev) => prev.filter((item) => !entryIds.includes(item.id)));
+    setSelectedRegistryEntryIds((prev) => prev.filter((id) => !entryIds.includes(id)));
+    clearRegistryFormIfDeleted(entries);
+
+    for (const entry of entries) {
       await addAuditEntry(
         null,
-        "product_udi_registry_saved",
-        `Produkt-Zuordnung gespeichert: ${trimmedProductName} mit Präfix ${trimmedPrefix} und UDI-DI ${trimmedUdiDi}.`
+        "product_udi_registry_deleted",
+        `${createdByLabel} hat Produkt-Zuordnung gelöscht: ${entry.productName} mit GTIN / UDI-DI ${entry.udiDi}.`
       );
-    } catch (err: any) {
-      console.error("Fehler beim Speichern der Produkt-UDI-Zuordnung:", err);
-      setMessage("Produkt-Zuordnung konnte nicht in Supabase gespeichert werden.");
     }
+
+    return true;
   };
 
   const handleDeleteProductRegistry = async (entryId: string) => {
@@ -2133,68 +2673,801 @@ export default function MedSafePage() {
       return;
     }
 
+    const deleteConfirm = await requestActionDialog({
+      title: "Produkt-Zuordnung löschen",
+      text: `„${entry.productName}" (GTIN: ${entry.udiDi}) unwiderruflich löschen?`,
+      confirmLabel: "Löschen",
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!deleteConfirm.confirmed || !deleteConfirm.pin) return;
+
     try {
-      const { error } = await supabase
-        .from("product_udi_registry")
-        .delete()
-        .eq("id", entryId);
-
-      if (error) {
-        if (/row-level security|permission denied|new row violates row-level security/i.test(error.message || "")) {
-          setMessage(
-            "Löschen der Produkt-UDI-Zuordnung ist durch Supabase-RLS blockiert. Bitte die Policies für `product_udi_registry` prüfen."
-          );
-          return;
-        }
-        throw error;
-      }
-
-      setProductUdiRegistry((prev) => prev.filter((item) => item.id !== entryId));
-      if (matchedRegistryEntryId === entryId) {
-        setMatchedRegistryEntryId(null);
-      }
-      if (normalizeLookupKey(newProductName) === normalizeLookupKey(entry.productName)) {
-        setProductPrefix("");
-        setRegisteredUdiDi("");
-      }
-
-      setMessage(`Produkt-Zuordnung gelöscht: ${entry.productName}`);
-      await addAuditEntry(
-        null,
-        "product_udi_registry_deleted",
-        `Produkt-Zuordnung gelöscht: ${entry.productName} mit GTIN / UDI-DI ${entry.udiDi}.`
-      );
-    } catch (err: any) {
+      const deleted = await deleteProductRegistryEntries([entryId]);
+      if (!deleted) return;
+      setMessage(null);
+      showDeleteSuccessNotice(`Produkt-Zuordnung „${entry.productName}" wurde entfernt.`);
+    } catch (err: unknown) {
       console.error("Fehler beim Löschen der Produkt-UDI-Zuordnung:", err);
-      setMessage("Produkt-Zuordnung konnte nicht gelöscht werden.");
+      setMessage(
+        `Produkt-Zuordnung konnte nicht gelöscht werden: ${formatSupabaseError(err)}`
+      );
     }
   };
 
-  const handleSelectDevice = (id: string) => {
-    if (window.location.hash === "#medsafe-ai") {
-      window.history.pushState(null, "", window.location.pathname);
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
+  const toggleRegistryEntrySelection = (entryId: string) => {
+    setSelectedRegistryEntryIds((prev) =>
+      prev.includes(entryId) ? prev.filter((id) => id !== entryId) : [...prev, entryId]
+    );
+  };
+
+  const handleDeleteSelectedProductRegistry = async () => {
+    const selectedEntries = productUdiRegistry.filter((entry) =>
+      selectedRegistryEntryIds.includes(entry.id)
+    );
+    if (selectedEntries.length === 0) {
+      setMessage("Bitte mindestens ein Produkt auswählen.");
+      return;
     }
-    if (window.location.hash === "#udi") {
-      window.history.pushState(null, "", window.location.pathname);
+
+    const deleteConfirm = await requestActionDialog({
+      title: "Auswahl löschen",
+      text:
+        selectedEntries.length === 1
+          ? `„${selectedEntries[0].productName}" unwiderruflich löschen?`
+          : `${selectedEntries.length} Produkt-Zuordnung(en) unwiderruflich löschen?`,
+      confirmLabel: `${selectedEntries.length} löschen`,
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!deleteConfirm.confirmed || !deleteConfirm.pin) return;
+
+    try {
+      const deleted = await deleteProductRegistryEntries(selectedRegistryEntryIds);
+      if (!deleted) return;
+      setMessage(null);
+      showDeleteSuccessNotice(
+        selectedEntries.length === 1
+          ? `„${selectedEntries[0].productName}" wurde entfernt.`
+          : `${selectedEntries.length} Produkt-Zuordnung(en) wurden entfernt.`
+      );
+    } catch (err: unknown) {
+      console.error("Fehler beim Mehrfach-Löschen der Produkt-Zuordnung:", err);
+      setMessage(`Löschen fehlgeschlagen: ${formatSupabaseError(err)}`);
+    }
+  };
+
+  const handleDeleteAllProductRegistry = async () => {
+    if (productUdiRegistry.length === 0) {
+      setMessage("Keine Produkt-Zuordnungen gespeichert.");
+      return;
+    }
+
+    const deleteConfirm = await requestActionDialog({
+      title: "Alles löschen",
+      text: `Alle ${productUdiRegistry.length} registrierten Produkte unwiderruflich löschen?\n\nGeräte in der Übersicht bleiben erhalten — nur die Produkt-GTIN-Zuordnungen werden entfernt.`,
+      confirmLabel: "Alles löschen",
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!deleteConfirm.confirmed || !deleteConfirm.pin) return;
+
+    try {
+      const allIds = productUdiRegistry.map((entry) => entry.id);
+      const deleted = await deleteProductRegistryEntries(allIds);
+      if (!deleted) return;
+      setSelectedRegistryEntryIds([]);
+      setMessage(null);
+      showDeleteSuccessNotice(
+        `${allIds.length} Produkt-Zuordnung(en) wurden entfernt.`,
+        "Alles gelöscht"
+      );
+    } catch (err: unknown) {
+      console.error("Fehler beim Löschen aller Produkt-Zuordnungen:", err);
+      setMessage(`Alles löschen fehlgeschlagen: ${formatSupabaseError(err)}`);
+    }
+  };
+
+  const getDevicesInOverviewGroup = (group: {
+    name: string;
+    batch: string;
+  }) =>
+    activeDevices.filter(
+      (d) =>
+        (d.name || "–") === group.name && (d.batch || "–") === group.batch
+    );
+
+  const getMaxSerialNumberInDevices = (groupDevices: Device[]) => {
+    let max = 0;
+    for (const device of groupDevices) {
+      const match = (device.serial || "").match(/-(\d{3})$/);
+      if (match) {
+        max = Math.max(max, Number(match[1]) || 0);
+      }
+    }
+    return max;
+  };
+
+  const buildDevicesFromTemplate = async (
+    template: Device,
+    count: number,
+    startSerialNum: number
+  ): Promise<Device[]> => {
+    const batch = template.batch || "";
+    const productionDate =
+      template.productionDate || formatDateYYMMDD(new Date());
+    const serialPrefix = template.serial?.split("-SN-")[0] || "CUST";
+    const result: Device[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const serialRunningNumber = String(startSerialNum + i + 1).padStart(3, "0");
+      const generatedSerial = `${serialPrefix}-SN-${productionDate}-${serialRunningNumber}`;
+      const udiHash = await hashUdi(template.udiDi, generatedSerial);
+      const udiPi = buildUdiPi({
+        productionDate,
+        serial: generatedSerial,
+        batch,
+        includeBatchWithSerial: true,
+      });
+      const dhrId = generateDhrId(serialPrefix, productionDate, serialRunningNumber);
+
+      result.push({
+        ...template,
+        id: crypto.randomUUID(),
+        serial: generatedSerial,
+        udiHash,
+        udiPi,
+        dhrId,
+        createdAt: new Date().toISOString(),
+        isArchived: false,
+        archivedAt: "",
+        archiveReason: "",
+      });
+    }
+
+    return result;
+  };
+
+  const handleStartOverviewGroupEdit = (group: {
+    key: string;
+    name: string;
+    quantity: number;
+  }) => {
+    setEditingOverviewGroupKey(group.key);
+    setOverviewEditDraft({
+      productName: group.name,
+      quantity: group.quantity,
+    });
+  };
+
+  const handleCancelOverviewGroupEdit = () => {
+    setEditingOverviewGroupKey(null);
+    setOverviewEditDraft(null);
+  };
+
+  const handleSaveOverviewGroupEdit = async (group: {
+    key: string;
+    name: string;
+    batch: string;
+    quantity: number;
+    udiDi: string;
+    deviceIds: string[];
+  }) => {
+    if (!overviewEditDraft) return;
+
+    const trimmedName = overviewEditDraft.productName.trim();
+    const newQuantity = Math.max(1, Math.floor(overviewEditDraft.quantity));
+
+    if (!trimmedName) {
+      setMessage("Bitte einen Produktnamen eingeben.");
+      return;
+    }
+
+    const groupDevices = getDevicesInOverviewGroup(group);
+    if (groupDevices.length === 0) {
+      setMessage("Gerätegruppe wurde nicht gefunden.");
+      return;
+    }
+
+    const template = groupDevices[0];
+    const quantityDiff = newQuantity - groupDevices.length;
+    const nameChanged = trimmedName !== group.name;
+
+    if (!nameChanged && quantityDiff === 0) {
+      handleCancelOverviewGroupEdit();
+      setMessage("Keine Änderungen vorgenommen.");
+      return;
+    }
+
+    try {
+      if (nameChanged) {
+        const { error: renameError } = await supabase
+          .from("devices")
+          .update({ name: trimmedName })
+          .in(
+            "id",
+            groupDevices.map((d) => d.id)
+          );
+
+        if (renameError) throw renameError;
+
+        setDevices((prev) =>
+          prev.map((d) =>
+            groupDevices.some((gd) => gd.id === d.id)
+              ? { ...d, name: trimmedName }
+              : d
+          )
+        );
+      }
+
+      if (quantityDiff > 0) {
+        const maxSerial = getMaxSerialNumberInDevices(groupDevices);
+        const devicesToAdd = await buildDevicesFromTemplate(
+          nameChanged ? { ...template, name: trimmedName } : template,
+          quantityDiff,
+          maxSerial
+        );
+
+        const insertPayload = devicesToAdd.map((d) => ({
+          id: d.id,
+          ...mapDeviceToDb(d),
+          ...(user?.id ? { user_id: user.id } : {}),
+          ...(createdByLabel && createdByLabel !== "—"
+            ? { created_by: createdByLabel }
+            : {}),
+        }));
+
+        const { error: insertError } = await supabase
+          .from("devices")
+          .insert(insertPayload);
+
+        if (insertError) throw insertError;
+
+        setDevices((prev) => [...devicesToAdd, ...prev]);
+      } else if (quantityDiff < 0) {
+        const removeCount = Math.abs(quantityDiff);
+        const devicesToRemove = [...groupDevices]
+          .sort((a, b) => {
+            const aNum = Number((a.serial || "").match(/-(\d{3})$/)?.[1] || 0);
+            const bNum = Number((b.serial || "").match(/-(\d{3})$/)?.[1] || 0);
+            return bNum - aNum;
+          })
+          .slice(0, removeCount);
+        const removeIds = devicesToRemove.map((d) => d.id);
+
+        const reduceConfirm = await requestActionDialog({
+          title: "Anzahl reduzieren",
+          text: `Anzahl von ${groupDevices.length} auf ${newQuantity} reduzieren?\n\n${removeCount} Gerät(e) werden in den Papierkorb verschoben.`,
+          confirmLabel: "Anzahl reduzieren",
+          requirePin: true,
+          tone: "amber",
+        });
+        if (!reduceConfirm.confirmed || !reduceConfirm.pin) return;
+
+        await moveDeviceGroupsToTrash(
+          [
+            {
+              key: group.key,
+              name: trimmedName,
+              batch: group.batch,
+              quantity: removeCount,
+              udiDi: group.udiDi,
+              deviceIds: removeIds,
+            },
+          ],
+          reduceConfirm.pin
+        );
+      }
+
+      const changes: string[] = [];
+      if (nameChanged) {
+        changes.push(`Produktname von "${group.name}" auf "${trimmedName}" geändert`);
+      }
+      if (quantityDiff > 0) {
+        changes.push(`Anzahl von ${groupDevices.length} auf ${newQuantity} erhöht (+${quantityDiff})`);
+      } else if (quantityDiff < 0) {
+        changes.push(`Anzahl von ${groupDevices.length} auf ${newQuantity} reduziert (${quantityDiff})`);
+      }
+
+      await addAuditEntry(
+        null,
+        "device_group_edited",
+        `${createdByLabel} hat Gerätegruppe bearbeitet: ${trimmedName} (Charge: ${group.batch}, UDI-DI: ${group.udiDi}). ${changes.join(". ")}.`
+      );
+
+      handleCancelOverviewGroupEdit();
+      setMessage(`Gerätegruppe aktualisiert: ${trimmedName} (${newQuantity} Gerät(e)).`);
+    } catch (err: unknown) {
+      console.error("Fehler beim Bearbeiten der Gerätegruppe:", err);
+      setMessage("Gerätegruppe konnte nicht aktualisiert werden.");
+    }
+  };
+
+  type OverviewDeleteGroup = {
+    key: string;
+    name: string;
+    batch: string;
+    quantity: number;
+    udiDi: string;
+    deviceIds: string[];
+    deletedAt?: string;
+  };
+
+  type DeviceTrashApiResponse = {
+    ok?: boolean;
+    mode?: "soft" | "hard" | "restore" | "none";
+    count?: number;
+    deletedAt?: string;
+    deviceIds?: string[];
+    error?: string;
+  };
+
+  const callDeviceTrashApi = async (
+    action: "soft_delete" | "restore" | "permanent_delete" | "purge_expired",
+    deviceIds: string[],
+    pin?: string
+  ): Promise<DeviceTrashApiResponse> => {
+    const response = await authFetch("/api/devices/trash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, deviceIds, pin }),
+    });
+    const payload = (await response.json()) as DeviceTrashApiResponse;
+    if (!response.ok) {
+      throw new Error(payload.error || "Löschen über API fehlgeschlagen.");
+    }
+    return payload;
+  };
+
+  const purgeExpiredTrashDevices = async (deviceList: Device[]) => {
+    const expiredIds = deviceList
+      .filter((device) => device.deletedAt && isTrashExpired(device.deletedAt))
+      .map((device) => device.id);
+
+    if (expiredIds.length === 0) return deviceList;
+
+    try {
+      const result = await callDeviceTrashApi("purge_expired", []);
+      const removedIds = result.deviceIds ?? expiredIds;
+      if (removedIds.length > 0) {
+        await addAuditEntry(
+          null,
+          "device_group_purged",
+          `${createdByLabel} hat ${removedIds.length} abgelaufene Papierkorb-Gerät(e) endgültig entfernt (nach ${TRASH_RETENTION_DAYS} Tagen).`
+        );
+      }
+      return deviceList.filter((device) => !removedIds.includes(device.id));
+    } catch (err) {
+      console.error("Papierkorb-Bereinigung fehlgeschlagen:", err);
+      return deviceList;
+    }
+  };
+
+  const moveDeviceGroupsToTrash = async (
+    groups: OverviewDeleteGroup[],
+    pin: string
+  ): Promise<"soft" | "hard" | false> => {
+    const allDeviceIds = groups.flatMap((group) => group.deviceIds);
+    if (allDeviceIds.length === 0) {
+      setMessage("Keine Geräte zum Löschen gefunden.");
+      return false;
+    }
+
+    const result = await callDeviceTrashApi("soft_delete", allDeviceIds, pin);
+    const deletedAt = result.deletedAt || new Date().toISOString();
+
+    if (result.mode === "hard") {
+      setDevices((prev) => prev.filter((device) => !allDeviceIds.includes(device.id)));
+      setDocs((prev) => prev.filter((doc) => !allDeviceIds.includes(doc.deviceId)));
+      setSelectedOverviewGroupKeys((prev) =>
+        prev.filter((key) => !groups.some((group) => group.key === key))
+      );
+      for (const group of groups) {
+        await addAuditEntry(
+          null,
+          "device_group_deleted",
+          `${createdByLabel} hat Gerätegruppe endgültig gelöscht (Papierkorb-Spalte fehlt): ${group.name} (Charge: ${group.batch}, ${group.quantity} Gerät(e)).`
+        );
+      }
+      return "hard";
+    }
+
+    setDevices((prev) =>
+      prev.map((device) =>
+        allDeviceIds.includes(device.id) ? { ...device, deletedAt } : device
+      )
+    );
+    setDocs((prev) =>
+      prev.map((doc) =>
+        allDeviceIds.includes(doc.deviceId) ? { ...doc, deletedAt } : doc
+      )
+    );
+
+    if (selectedDeviceId && allDeviceIds.includes(selectedDeviceId)) {
+      setSelectedDeviceId(null);
+      setLastCreatedDeviceId(null);
+      setEditRowId(null);
+      setEditDraft(null);
+      setIsGroupPinned(false);
+    }
+
+    setSelectedOverviewGroupKeys((prev) =>
+      prev.filter((key) => !groups.some((group) => group.key === key))
+    );
+
+    for (const group of groups) {
+      await addAuditEntry(
+        null,
+        "device_group_trashed",
+        `${createdByLabel} hat Gerätegruppe in den Papierkorb verschoben: ${group.name} (Charge: ${group.batch}, ${group.quantity} Gerät(e), UDI-DI: ${group.udiDi}). Wiederherstellung innerhalb von ${TRASH_RETENTION_DAYS} Tagen möglich.`
+      );
+    }
+
+    return "soft";
+  };
+
+  const restoreDeviceGroupsFromTrash = async (groups: OverviewDeleteGroup[]) => {
+    const allDeviceIds = groups.flatMap((group) => group.deviceIds);
+    if (allDeviceIds.length === 0) return false;
+
+    await callDeviceTrashApi("restore", allDeviceIds);
+
+    setDevices((prev) =>
+      prev.map((device) =>
+        allDeviceIds.includes(device.id) ? { ...device, deletedAt: "" } : device
+      )
+    );
+    setDocs((prev) =>
+      prev.map((doc) =>
+        allDeviceIds.includes(doc.deviceId) ? { ...doc, deletedAt: "" } : doc
+      )
+    );
+
+    setSelectedTrashGroupKeys((prev) =>
+      prev.filter((key) => !groups.some((group) => group.key === key))
+    );
+
+    for (const group of groups) {
+      await addAuditEntry(
+        null,
+        "device_group_restored",
+        `${createdByLabel} hat Gerätegruppe aus dem Papierkorb wiederhergestellt: ${group.name} (Charge: ${group.batch}, ${group.quantity} Gerät(e)).`
+      );
+    }
+
+    return true;
+  };
+
+  const permanentlyDeleteDeviceGroups = async (
+    groups: OverviewDeleteGroup[],
+    pin: string
+  ) => {
+    const allDeviceIds = groups.flatMap((group) => group.deviceIds);
+    if (allDeviceIds.length === 0) return false;
+
+    await callDeviceTrashApi("permanent_delete", allDeviceIds, pin);
+
+    setDevices((prev) => prev.filter((device) => !allDeviceIds.includes(device.id)));
+    setDocs((prev) => prev.filter((doc) => !allDeviceIds.includes(doc.deviceId)));
+    setSelectedTrashGroupKeys((prev) =>
+      prev.filter((key) => !groups.some((group) => group.key === key))
+    );
+
+    for (const group of groups) {
+      await addAuditEntry(
+        null,
+        "device_group_deleted",
+        `${createdByLabel} hat Gerätegruppe endgültig gelöscht: ${group.name} (Charge: ${group.batch}, ${group.quantity} Gerät(e), UDI-DI: ${group.udiDi}).`
+      );
+    }
+
+    return true;
+  };
+
+  const handleDeleteDeviceGroup = async (group: OverviewDeleteGroup) => {
+    const moveConfirm = await requestActionDialog({
+      title: "In Papierkorb verschieben",
+      text: `Produkt „${group.name}" (Charge: ${group.batch})\n\n${group.quantity} Gerät(e) können ${TRASH_RETENTION_DAYS} Tage wiederhergestellt werden.`,
+      confirmLabel: "In Papierkorb verschieben",
+      requirePin: true,
+      tone: "amber",
+    });
+    if (!moveConfirm.confirmed || !moveConfirm.pin) return;
+    const pin = moveConfirm.pin;
+
+    try {
+      const result = await moveDeviceGroupsToTrash([group], pin);
+      if (!result) return;
+
+      setMessage(null);
+      if (result === "soft") {
+        showDeleteSuccessNotice(
+          `${group.name} / Charge ${group.batch} (${group.quantity} Gerät(e)) — ${TRASH_RETENTION_DAYS} Tage wiederherstellbar.`,
+          "In Papierkorb verschoben"
+        );
+        return;
+      }
+
+      showDeleteSuccessNotice(
+        `${group.name} / Charge ${group.batch} (${group.quantity} Gerät(e)) wurde entfernt.`,
+        "Erfolgreich gelöscht"
+      );
+    } catch (err: unknown) {
+      console.error("Fehler beim Verschieben in den Papierkorb:", err);
+      const detail = err instanceof Error ? err.message : "Unbekannter Fehler";
+      setMessage(`Löschen fehlgeschlagen: ${detail}`);
+      alert(`Löschen fehlgeschlagen: ${detail}`);
+    }
+  };
+
+  const toggleOverviewGroupSelection = (groupKey: string) => {
+    setSelectedOverviewGroupKeys((prev) =>
+      prev.includes(groupKey)
+        ? prev.filter((key) => key !== groupKey)
+        : [...prev, groupKey]
+    );
+  };
+
+  const handleDeleteSelectedOverviewGroups = async () => {
+    const selectedGroups = groupedDevicesForOverview.filter((group) =>
+      selectedOverviewGroupKeys.includes(group.key)
+    );
+    if (selectedGroups.length === 0) {
+      setMessage("Bitte mindestens eine Produktgruppe auswählen.");
+      return;
+    }
+
+    const totalDevices = selectedGroups.reduce((sum, group) => sum + group.quantity, 0);
+    const moveConfirm = await requestActionDialog({
+      title: "In Papierkorb verschieben",
+      text:
+        selectedGroups.length === 1
+          ? `Produkt „${selectedGroups[0].name}" (Charge: ${selectedGroups[0].batch})\n\n${totalDevices} Gerät(e) können ${TRASH_RETENTION_DAYS} Tage wiederhergestellt werden.`
+          : `${selectedGroups.length} Produktgruppe(n) in den Papierkorb verschieben?\n\n${totalDevices} Gerät(e) können ${TRASH_RETENTION_DAYS} Tage wiederhergestellt werden.`,
+      confirmLabel: "In Papierkorb verschieben",
+      requirePin: true,
+      tone: "amber",
+    });
+    if (!moveConfirm.confirmed || !moveConfirm.pin) return;
+    const pin = moveConfirm.pin;
+
+    try {
+      const result = await moveDeviceGroupsToTrash(selectedGroups, pin);
+      if (!result) return;
+
+      setMessage(null);
+      if (result === "soft") {
+        showDeleteSuccessNotice(
+          selectedGroups.length === 1
+            ? `${selectedGroups[0].name} / Charge ${selectedGroups[0].batch} (${selectedGroups[0].quantity} Gerät(e)) — ${TRASH_RETENTION_DAYS} Tage wiederherstellbar.`
+            : `${selectedGroups.length} Produktgruppen (${totalDevices} Gerät(e)) — ${TRASH_RETENTION_DAYS} Tage wiederherstellbar.`,
+          "In Papierkorb verschoben"
+        );
+        return;
+      }
+
+      showDeleteSuccessNotice(
+        selectedGroups.length === 1
+          ? `${selectedGroups[0].name} / Charge ${selectedGroups[0].batch} wurde entfernt.`
+          : `${selectedGroups.length} Produktgruppen (${totalDevices} Gerät(e)) wurden entfernt.`,
+        "Erfolgreich gelöscht"
+      );
+    } catch (err: unknown) {
+      console.error("Fehler beim Mehrfach-Löschen:", err);
+      const detail = err instanceof Error ? err.message : "Unbekannter Fehler";
+      setMessage(`Löschen fehlgeschlagen: ${detail}`);
+      alert(`Löschen fehlgeschlagen: ${detail}`);
+    }
+  };
+
+  const handleDeleteAllOverviewGroups = async () => {
+    if (groupedDevicesForOverview.length === 0) {
+      setMessage("Keine Geräte in der Übersicht.");
+      return;
+    }
+
+    const totalDevices = groupedDevicesForOverview.reduce(
+      (sum, group) => sum + group.quantity,
+      0
+    );
+    const moveConfirm = await requestActionDialog({
+      title: "Alles löschen",
+      text: `Alle ${groupedDevicesForOverview.length} Produktgruppe(n) in den Papierkorb verschieben?\n\n${totalDevices} Gerät(e) können ${TRASH_RETENTION_DAYS} Tage wiederhergestellt werden.`,
+      confirmLabel: "Alles löschen",
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!moveConfirm.confirmed || !moveConfirm.pin) return;
+    const pin = moveConfirm.pin;
+
+    try {
+      const result = await moveDeviceGroupsToTrash(groupedDevicesForOverview, pin);
+      if (!result) return;
+
+      setSelectedOverviewGroupKeys([]);
+      setMessage(null);
+      if (result === "soft") {
+        showDeleteSuccessNotice(
+          `${groupedDevicesForOverview.length} Produktgruppen (${totalDevices} Gerät(e)) — ${TRASH_RETENTION_DAYS} Tage im Papierkorb wiederherstellbar.`,
+          "Alles in Papierkorb verschoben"
+        );
+        return;
+      }
+
+      showDeleteSuccessNotice(
+        `${totalDevices} Gerät(e) aus der Übersicht entfernt.`,
+        "Alles gelöscht"
+      );
+    } catch (err: unknown) {
+      console.error("Fehler beim Löschen aller Gerätegruppen:", err);
+      const detail = err instanceof Error ? err.message : "Unbekannter Fehler";
+      setMessage(`Alles löschen fehlgeschlagen: ${detail}`);
+    }
+  };
+
+  const handleRestoreTrashGroup = async (group: OverviewDeleteGroup) => {
+    try {
+      const restored = await restoreDeviceGroupsFromTrash([group]);
+      if (!restored) return;
+      setMessage(`${group.name} / Charge ${group.batch} wurde wiederhergestellt.`);
+    } catch (err: unknown) {
+      console.error("Wiederherstellung fehlgeschlagen:", err);
+      setMessage("Gerätegruppe konnte nicht wiederhergestellt werden.");
+    }
+  };
+
+  const handlePermanentDeleteTrashGroup = async (group: OverviewDeleteGroup) => {
+    const deleteConfirm = await requestActionDialog({
+      title: "Endgültig löschen",
+      text: `„${group.name}" (Charge: ${group.batch}) endgültig löschen?\n\nDiese Aktion kann nicht rückgängig gemacht werden.`,
+      confirmLabel: "Endgültig löschen",
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!deleteConfirm.confirmed || !deleteConfirm.pin) return;
+    const pin = deleteConfirm.pin;
+
+    try {
+      const deleted = await permanentlyDeleteDeviceGroups([group], pin);
+      if (!deleted) return;
+      setMessage(null);
+      showDeleteSuccessNotice(
+        `${group.name} / Charge ${group.batch} wurde endgültig gelöscht.`
+      );
+    } catch (err: unknown) {
+      console.error("Endgültiges Löschen fehlgeschlagen:", err);
+      setMessage("Gerätegruppe konnte nicht endgültig gelöscht werden.");
+    }
+  };
+
+  const toggleTrashGroupSelection = (groupKey: string) => {
+    setSelectedTrashGroupKeys((prev) =>
+      prev.includes(groupKey)
+        ? prev.filter((key) => key !== groupKey)
+        : [...prev, groupKey]
+    );
+  };
+
+  const handleRestoreSelectedTrashGroups = async () => {
+    const selectedGroups = groupedTrashedDevicesForOverview.filter((group) =>
+      selectedTrashGroupKeys.includes(group.key)
+    );
+    if (selectedGroups.length === 0) {
+      setMessage("Bitte mindestens eine Papierkorb-Gruppe auswählen.");
+      return;
+    }
+
+    const totalDevices = selectedGroups.reduce((sum, group) => sum + group.quantity, 0);
+    const restoreConfirm = await requestActionDialog({
+      title: "Wiederherstellen",
+      text: `${selectedGroups.length} Produktgruppe(n) wiederherstellen?\n\n${totalDevices} Gerät(e) werden zurück in die Übersicht verschoben.`,
+      confirmLabel: "Wiederherstellen",
+      tone: "emerald",
+    });
+    if (!restoreConfirm.confirmed) return;
+
+    try {
+      const restored = await restoreDeviceGroupsFromTrash(selectedGroups);
+      if (!restored) return;
+      setMessage(
+        selectedGroups.length === 1
+          ? `${selectedGroups[0].name} / Charge ${selectedGroups[0].batch} wurde wiederhergestellt.`
+          : `${selectedGroups.length} Produktgruppen (${totalDevices} Gerät(e)) wurden wiederhergestellt.`
+      );
+    } catch (err: unknown) {
+      console.error("Mehrfach-Wiederherstellung fehlgeschlagen:", err);
+      setMessage("Ausgewählte Gruppen konnten nicht wiederhergestellt werden.");
+    }
+  };
+
+  const handlePermanentDeleteSelectedTrashGroups = async () => {
+    const selectedGroups = groupedTrashedDevicesForOverview.filter((group) =>
+      selectedTrashGroupKeys.includes(group.key)
+    );
+    if (selectedGroups.length === 0) {
+      setMessage("Bitte mindestens eine Papierkorb-Gruppe auswählen.");
+      return;
+    }
+
+    const totalDevices = selectedGroups.reduce((sum, group) => sum + group.quantity, 0);
+    const deleteConfirm = await requestActionDialog({
+      title: "Endgültig löschen",
+      text: `${selectedGroups.length} Produktgruppe(n) endgültig löschen?\n\n${totalDevices} Gerät(e) werden unwiderruflich entfernt.`,
+      confirmLabel: "Endgültig löschen",
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!deleteConfirm.confirmed || !deleteConfirm.pin) return;
+    const pin = deleteConfirm.pin;
+
+    try {
+      const deleted = await permanentlyDeleteDeviceGroups(selectedGroups, pin);
+      if (!deleted) return;
+      setMessage(null);
+      showDeleteSuccessNotice(
+        selectedGroups.length === 1
+          ? `${selectedGroups[0].name} / Charge ${selectedGroups[0].batch} wurde endgültig gelöscht.`
+          : `${selectedGroups.length} Produktgruppen (${totalDevices} Gerät(e)) wurden endgültig gelöscht.`
+      );
+    } catch (err: unknown) {
+      console.error("Mehrfach-Löschen aus Papierkorb fehlgeschlagen:", err);
+      setMessage("Ausgewählte Gruppen konnten nicht endgültig gelöscht werden.");
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    if (groupedTrashedDevicesForOverview.length === 0) {
+      setMessage("Der Papierkorb ist bereits leer.");
+      return;
+    }
+
+    const totalDevices = trashedDevices.length;
+    const emptyConfirm = await requestActionDialog({
+      title: "Papierkorb leeren",
+      text: `Papierkorb endgültig leeren?\n\n${groupedTrashedDevicesForOverview.length} Produktgruppe(n) und ${totalDevices} Gerät(e) werden unwiderruflich gelöscht.`,
+      confirmLabel: "Papierkorb leeren",
+      requirePin: true,
+      tone: "rose",
+    });
+    if (!emptyConfirm.confirmed || !emptyConfirm.pin) return;
+    const pin = emptyConfirm.pin;
+
+    try {
+      const deleted = await permanentlyDeleteDeviceGroups(
+        groupedTrashedDevicesForOverview,
+        pin
+      );
+      if (!deleted) return;
+      setSelectedTrashGroupKeys([]);
+      setMessage(null);
+      showDeleteSuccessNotice(
+        `Papierkorb geleert — ${totalDevices} Gerät(e) endgültig entfernt.`,
+        "Papierkorb geleert"
+      );
+    } catch (err: unknown) {
+      console.error("Papierkorb leeren fehlgeschlagen:", err);
+      setMessage("Papierkorb konnte nicht geleert werden.");
+    }
+  };
+
+  const handleSelectDevice = (
+    id: string,
+    returnPanel?: "overview" | "hub"
+  ) => {
+    if (window.location.hash === "#medsafe-ai") {
+      window.history.pushState(null, "", window.location.pathname + "#udi");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     }
     setIsAiAssistantVisible(false);
-    setIsUdiSectionVisible(false);
+    setIsUdiSectionVisible(true);
+    if (returnPanel) {
+      setDeviceDetailReturnPanel(returnPanel);
+    }
     setSelectedDeviceId(id);
     if (id !== lastCreatedDeviceId) {
       setLastCreatedDeviceId(null);
     }
     setMessage(null);
-  };
-
-  const handleCloseSelectedDeviceModal = () => {
-    setSelectedDeviceId(null);
-    setLastCreatedDeviceId(null);
-    setEditRowId(null);
-    setEditDraft(null);
-    setIsGroupPinned(false);
-    setUdiPiSearch("");
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2356,7 +3629,7 @@ export default function MedSafePage() {
       }
       formData.append("deviceId", selectedDeviceId); // ⬅️ WICHTIG: Gerät mitsenden
 
-      const res = await fetch("/api/upload", {
+      const res = await authFetch("/api/upload", {
         method: "POST",
         body: formData,
       });
@@ -2536,30 +3809,23 @@ export default function MedSafePage() {
   };
 
 
-  const handleToggleArchiveDevice = (deviceId: string) => {
+  const handleToggleArchiveDevice = async (deviceId: string) => {
     const device = devices.find((d) => d.id === deviceId);
     if (!device) {
       setMessage("Gerät wurde nicht gefunden.");
       return;
     }
 
-    const pin = window.prompt(
-      `Admin-PIN eingeben, um das Gerät "${device.name}" ${
-        device.isArchived ? "aus dem Archiv zu holen" : "zu archivieren"
-      }:`
-    );
-    if (pin === null) return;
-    if (pin !== ADMIN_PIN) {
-      setMessage("Admin-PIN falsch. Aktion abgebrochen.");
-      return;
-    }
-
-    const ok = window.confirm(
-      `Gerät "${device.name}" wirklich ${
-        device.isArchived ? "reaktivieren (aus Archiv holen)" : "archivieren (Stilllegung)?"
-      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.`
-    );
-    if (!ok) return;
+    const archiveConfirm = await requestActionDialog({
+      title: device.isArchived ? "Aus Archiv holen" : "Archivieren",
+      text: `Gerät „${device.name}" wirklich ${
+        device.isArchived ? "reaktivieren (aus Archiv holen)?" : "archivieren (Stilllegung)?"
+      }\n\nDas Gerät bleibt in der Historie/Audit-Log und im Export erhalten.`,
+      confirmLabel: device.isArchived ? "Aus Archiv holen" : "Archivieren",
+      requirePin: true,
+      tone: "amber",
+    });
+    if (!archiveConfirm.confirmed || !archiveConfirm.pin) return;
 
     let archiveReason: string | undefined;
     let archivedAt: string | undefined;
@@ -2625,6 +3891,17 @@ export default function MedSafePage() {
       if (!deviceBefore) return prev;
 
       const mergedUpdates: Partial<Device> = { ...updates };
+
+      if (mergedUpdates.status === "released") {
+        const candidate = { ...deviceBefore, ...mergedUpdates };
+        const validation = validateReleaseReadiness(candidate);
+        if (!validation.ok) {
+          window.alert(
+            `Freigabe nicht möglich. Bitte ergänzen: ${validation.missing.join(", ")}.`
+          );
+          return prev;
+        }
+      }
 
       if (
         !deviceBefore.nonconformityId &&
@@ -2843,17 +4120,20 @@ export default function MedSafePage() {
   const activeAiInsight = aiInsightServer ?? aiInsight;
   const activeIntendedUseDraft = intendedUseDraftText || aiIntendedUseServer || "";
 
-  const recentDevicesForUdiTable = useMemo(
-    () =>
-      [...devices]
-        .sort(
-          (a, b) =>
-            new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-        )
-        .slice(0, 25),
+  const activeDevices = useMemo(
+    () => devices.filter((device) => isActiveDevice(device)),
     [devices]
   );
-  const groupedDevicesForOverview = useMemo(() => {
+  const trashedDevices = useMemo(
+    () => devices.filter((device) => device.deletedAt && !isTrashExpired(device.deletedAt)),
+    [devices]
+  );
+  const activeDocs = useMemo(
+    () => docs.filter((doc) => !doc.deletedAt && activeDevices.some((d) => d.id === doc.deviceId)),
+    [docs, activeDevices]
+  );
+
+  const buildOverviewGroups = (sourceDevices: Device[]) => {
     const groups = new Map<
       string,
       {
@@ -2865,10 +4145,13 @@ export default function MedSafePage() {
         status: DeviceStatus | "mixed";
         representativeId: string;
         createdAt: string;
+        createdBy: string;
+        deviceIds: string[];
+        deletedAt?: string;
       }
     >();
 
-    for (const device of recentDevicesForUdiTable) {
+    for (const device of sourceDevices) {
       const key = `${device.name || "–"}::${device.batch || "–"}`;
       const existing = groups.get(key);
 
@@ -2882,11 +4165,15 @@ export default function MedSafePage() {
           status: device.status,
           representativeId: device.id,
           createdAt: device.createdAt,
+          createdBy: device.createdBy || createdByLabel,
+          deviceIds: [device.id],
+          deletedAt: device.deletedAt,
         });
         continue;
       }
 
       existing.quantity += 1;
+      existing.deviceIds.push(device.id);
       if (existing.status !== device.status) {
         existing.status = "mixed";
       }
@@ -2895,6 +4182,10 @@ export default function MedSafePage() {
       ) {
         existing.createdAt = device.createdAt;
         existing.representativeId = device.id;
+        existing.createdBy = device.createdBy || createdByLabel;
+      }
+      if (device.deletedAt && (!existing.deletedAt || device.deletedAt > existing.deletedAt)) {
+        existing.deletedAt = device.deletedAt;
       }
     }
 
@@ -2902,7 +4193,16 @@ export default function MedSafePage() {
       (a, b) =>
         new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
-  }, [recentDevicesForUdiTable]);
+  };
+
+  const groupedDevicesForOverview = useMemo(
+    () => buildOverviewGroups(activeDevices),
+    [activeDevices, createdByLabel]
+  );
+  const groupedTrashedDevicesForOverview = useMemo(
+    () => buildOverviewGroups(trashedDevices),
+    [trashedDevices, createdByLabel]
+  );
 
   const selectedDeviceDocs = selectedDevice
     ? docs.filter((d) => {
@@ -2965,9 +4265,10 @@ export default function MedSafePage() {
     : [];
 
 
-  const totalDevices = devices.length;
-  const totalDocs = docs.filter((d) => hasStoredDocumentFile(d)).length;
-  const totalArchived = devices.filter((d) => d.isArchived).length;
+  const totalDevices = activeDevices.length;
+  const totalDocs = activeDocs.filter((d) => hasStoredDocumentFile(d)).length;
+  const totalArchived = activeDevices.filter((d) => d.isArchived).length;
+  const totalTrashed = trashedDevices.length;
   const selectedDeviceIdentityCard = selectedDevice ? (
     <div className="space-y-4">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -2997,11 +4298,24 @@ export default function MedSafePage() {
               {selectedDevice.name || "Kein Gerät ausgewählt"}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-300">
-              <span>{selectedDevice.manufacturerName || "Hersteller nicht gesetzt"}</span>
+              <span>
+                Produktfamilie:{" "}
+                {formatProductFamily(
+                  selectedDevice.productFamily ||
+                    selectedDevice.name ||
+                    ""
+                ) || "–"}
+              </span>
               <span className="text-slate-500">•</span>
-              <span>{selectedDevice.genericDeviceGroup || inferDeviceType(selectedDevice.name || "")}</span>
+              <span>
+                Modell:{" "}
+                {buildProductModelLabel(
+                  selectedDevice.productFamily || selectedDevice.name || "",
+                  selectedDevice.name || ""
+                ) || "–"}
+              </span>
               <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-slate-100">
-                Charge: {selectedGroupDeviceCount} Geräte
+                {formatBatchChipLabel(selectedDevice.batch, selectedGroupDeviceCount)}
               </span>
             </div>
           </div>
@@ -3012,60 +4326,149 @@ export default function MedSafePage() {
           )}
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Basic UDI-DI</div>
-            <div className="mt-2 break-all text-sm font-medium text-slate-100">
-              {selectedDevice.basicUdiDi || "–"}
-            </div>
+        <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-950/25 px-4 py-4">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/80">
+            Hersteller
           </div>
-          <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-sky-100/80">UDI-DI</div>
+          <div className="mt-2 text-base font-semibold text-slate-50">
+            {selectedDevice.manufacturerName?.trim() || "– (Pflicht für Freigabe)"}
+          </div>
+          <div className="mt-3 border-t border-sky-500/15 pt-3">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">SRN</div>
+            <div className="mt-1 break-all text-sm font-medium text-sky-100">
+              {selectedDevice.manufacturerSrn?.trim()
+                ? formatManufacturerSrn(selectedDevice.manufacturerSrn)
+                : selectedDevice.manufacturerName?.trim()
+                  ? formatManufacturerSrn(generateManufacturerSrn(selectedDevice.manufacturerName))
+                  : "–"}
+            </div>
+            <p className="mt-1 text-[10px] text-slate-500">
+              EUDAMED Single Registration Number (Format DE-MF-0000123456)
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-950/20 px-4 py-3 text-xs text-amber-100/90">
+          Basic UDI-DI ist nicht die Label-UDI. Die Label-UDI besteht aus UDI-DI / GTIN + UDI-PI /
+          Produktionskennung.
+        </div>
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-4">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+            Basic UDI-DI (EUDAMED / technische Dokumentation)
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">
+            Nicht für Produktlabel oder Barcode — nur für EUDAMED, Zertifikate und EU-Konformitätserklärung.
+          </p>
+          <div className="mt-2 break-all text-sm font-medium text-slate-100">
+            {selectedDevice.basicUdiDi || "–"}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-950/20 px-4 py-4">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/80">
+            UDI für Label
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">
+            UDI-DI / GTIN (Produktmodell) + UDI-PI / Produktionskennung (Seriennummer, Charge, Datum).
+          </p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-sky-100/80">
+                  UDI-DI / GTIN
+                </div>
+                {selectedDevice.udiDi && (
+                  <button
+                    className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-[10px] text-sky-100 hover:bg-sky-400/15"
+                    onClick={() => copyToClipboard(selectedDevice.udiDi || "")}
+                  >
+                    Kopieren
+                  </button>
+                )}
+              </div>
+              <div className="mt-2 break-all text-sm font-medium text-slate-50">
+                {selectedDevice.udiDi || "–"}
+              </div>
               {selectedDevice.udiDi && (
-                <button
-                  className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-[10px] text-sky-100 hover:bg-sky-400/15"
-                  onClick={() => copyToClipboard(selectedDevice.udiDi || "")}
-                >
-                  Kopieren
-                </button>
+                <div className="mt-2">
+                  <GtinValidationBadge gtin={selectedDevice.udiDi} />
+                </div>
               )}
             </div>
-            <div className="mt-2 break-all text-sm font-medium text-slate-50">
-              {selectedDevice.udiDi || "–"}
+            <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                  UDI-PI / Produktionskennung
+                </div>
+                {selectedDevice.udiPi && (
+                  <button
+                    className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] text-slate-200 hover:bg-white/10"
+                    onClick={() =>
+                      copyToClipboard(formatGs1HumanReadable(selectedDevice.udiPi || ""))
+                    }
+                  >
+                    Kopieren
+                  </button>
+                )}
+              </div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-sm font-medium text-slate-100">
+                {selectedDevice.udiPi
+                  ? formatGs1HumanReadable(selectedDevice.udiPi)
+                  : "–"}
+              </pre>
             </div>
           </div>
-          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
+          <div className="mt-3 rounded-lg border border-emerald-400/20 bg-emerald-900/20 px-3 py-3">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">UDI-PI</div>
-              {selectedDevice.udiPi && (
+              <div className="text-[11px] uppercase tracking-[0.16em] text-emerald-100/90">
+                Label-UDI (Barcode)
+              </div>
+              {selectedDevice.udiDi && selectedDevice.udiPi && (
                 <button
-                  className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] text-slate-200 hover:bg-white/10"
-                  onClick={() => copyToClipboard(selectedDevice.udiPi || "")}
+                  className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] text-emerald-100 hover:bg-emerald-400/15"
+                  onClick={() =>
+                    copyToClipboard(buildLabelUdi(selectedDevice.udiDi, selectedDevice.udiPi || ""))
+                  }
                 >
                   Kopieren
                 </button>
               )}
             </div>
-            <div className="mt-2 break-all text-sm font-medium text-slate-100">
-              {selectedDevice.udiPi || "–"}
-            </div>
+            <pre className="mt-2 whitespace-pre-wrap break-all text-sm font-medium text-slate-50">
+              {buildLabelUdi(selectedDevice.udiDi, selectedDevice.udiPi || "") || "–"}
+            </pre>
           </div>
-          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">UDI-Hash</div>
-              {selectedDevice.udiHash && (
-                <button
-                  className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] text-slate-200 hover:bg-white/10"
-                  onClick={() => copyToClipboard(selectedDevice.udiHash || "")}
-                >
-                  Kopieren
-                </button>
-              )}
+          <UdiDataMatrixPanel
+            udiDi={selectedDevice.udiDi}
+            productionDate={selectedDevice.productionDate}
+            serial={selectedDevice.serial}
+            batch={selectedDevice.batch}
+            productName={selectedDevice.name}
+          />
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-700/80 bg-slate-950/60 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                UDI-Prüfhash intern
+              </div>
+              <p className="mt-0.5 text-[10px] text-slate-500">
+                Nur für interne Integritätsprüfung — kein MDR-Label-Identifier.
+              </p>
             </div>
-            <div className="mt-2 break-all text-xs font-medium text-slate-100">
-              {selectedDevice.udiHash || "–"}
-            </div>
+            {selectedDevice.udiHash && (
+              <button
+                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] text-slate-200 hover:bg-white/10"
+                onClick={() => copyToClipboard(selectedDevice.udiHash || "")}
+              >
+                Kopieren
+              </button>
+            )}
+          </div>
+          <div className="mt-2 break-all text-xs font-medium text-slate-400">
+            {selectedDevice.udiHash || "–"}
           </div>
         </div>
       </div>
@@ -3085,7 +4488,14 @@ export default function MedSafePage() {
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
             <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Produktionsdatum</div>
-            <div className="mt-1 text-sm text-slate-100">{selectedDevice.productionDate || "–"}</div>
+            <div className="mt-1 text-sm text-slate-100">
+              {formatProductionDateDisplay(selectedDevice.productionDate)}
+            </div>
+            {formatProductionDateInternal(selectedDevice.productionDate) && (
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                GS1 (11): {formatProductionDateInternal(selectedDevice.productionDate)}
+              </div>
+            )}
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-3">
             <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Angelegt am</div>
@@ -3117,7 +4527,7 @@ export default function MedSafePage() {
               <div className="w-full md:w-1/2">
                 <input
                   className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                  placeholder="Suche nach UDI-PI"
+                  placeholder="Suche nach UDI-PI / Produktionskennung"
                   value={udiPiSearch}
                   onChange={(e) => {
                     const nextValue = e.target.value;
@@ -3149,7 +4559,7 @@ export default function MedSafePage() {
                       Seriennummer
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
-                      UDI-PI
+                      UDI-PI / Produktionskennung
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-950 py-1 pr-2 text-left">
                       Status
@@ -3209,7 +4619,9 @@ export default function MedSafePage() {
                           }
                         >
                           <td className="py-1 pr-2 break-all">{d.serial}</td>
-                          <td className="py-1 pr-2 break-all">{d.udiPi}</td>
+                          <td className="py-1 pr-2 break-all whitespace-pre-wrap">
+                            {d.udiPi ? formatGs1HumanReadable(d.udiPi) : "–"}
+                          </td>
                           <td className="py-1 pr-2">{statusLabel}</td>
                           <td className="py-1 pr-2 break-all">
                             {d.blockComment
@@ -3418,20 +4830,189 @@ export default function MedSafePage() {
     setMessage("Geräte als CSV exportiert.");
   }
 
+  const DEVICE_OVERVIEW_AUDIT_ACTIONS = [
+    "devices_bulk_created",
+    "device_archived",
+    "device_unarchived",
+    "device_meta_changed",
+    "device_group_deleted",
+    "device_group_trashed",
+    "device_group_restored",
+    "device_group_purged",
+    "device_group_edited",
+    "document_uploaded",
+  ] as const;
+
+  const productRegistryAuditEntries = audit
+    .filter((entry) => entry.action.startsWith("product_udi_registry_"))
+    .slice(0, 8);
+
+  const deviceOverviewAuditEntries = audit
+    .filter((entry) =>
+      DEVICE_OVERVIEW_AUDIT_ACTIONS.some(
+        (action) => entry.action === action || entry.action.startsWith(`${action}_`)
+      )
+    )
+    .slice(0, 8);
+
+  const getProductRegistryAuditActor = (entry: AuditEntry) => {
+    const marker = " hat Produkt-Zuordnung";
+    const markerIndex = entry.message.indexOf(marker);
+    if (markerIndex > 0) {
+      return entry.message.slice(0, markerIndex);
+    }
+    return createdByLabel;
+  };
+
+  const getDeviceOverviewAuditActor = (entry: AuditEntry) => {
+    if (entry.action === "device_group_deleted") {
+      const marker = " hat Gerätegruppe gelöscht";
+      const markerIndex = entry.message.indexOf(marker);
+      if (markerIndex > 0) {
+        return entry.message.slice(0, markerIndex);
+      }
+    }
+    if (entry.action.startsWith("devices_bulk_created") || entry.message.includes("angelegt")) {
+      const marker = " hat ";
+      const markerIndex = entry.message.indexOf(marker);
+      if (markerIndex > 0) {
+        return entry.message.slice(0, markerIndex);
+      }
+    }
+    return createdByLabel;
+  };
+
+  const handleDownloadDeviceOverviewAuditDocument = () => {
+    const entries = audit.filter((entry) =>
+      DEVICE_OVERVIEW_AUDIT_ACTIONS.some(
+        (action) => entry.action === action || entry.action.startsWith(`${action}_`)
+      )
+    );
+    if (entries.length === 0) {
+      setMessage("Keine Geräte-Aktivitäten für ein Audit-Dokument vorhanden.");
+      return;
+    }
+
+    const lines = [
+      "MedSafe-UDI Geräteübersicht Audit",
+      `Exportiert am: ${new Date().toLocaleString("de-DE")}`,
+      `Exportiert von: ${createdByLabel}`,
+      "",
+      "Aktivitäten",
+      "-----------",
+      ...entries.map((entry, index) =>
+        [
+          `${index + 1}. ${new Date(entry.timestamp).toLocaleString("de-DE")}`,
+          `Benutzer: ${getDeviceOverviewAuditActor(entry)}`,
+          `Aktion: ${entry.action}`,
+          `Gerät-ID: ${entry.deviceId || "–"}`,
+          `Details: ${entry.message}`,
+        ].join("\n")
+      ),
+      "",
+    ];
+
+    const blob = new Blob([lines.join("\n\n")], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `geraeteuebersicht-audit-${formatDateYYMMDD(new Date())}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadProductRegistryAuditDocument = () => {
+    const entries = audit.filter((entry) => entry.action.startsWith("product_udi_registry_"));
+    if (entries.length === 0) {
+      setMessage("Keine Produktstammdaten-Aktivitäten für ein Audit-Dokument vorhanden.");
+      return;
+    }
+
+    const lines = [
+      "MedSafe-UDI Produktstammdaten Audit",
+      `Exportiert am: ${new Date().toLocaleString("de-DE")}`,
+      `Exportiert von: ${createdByLabel}`,
+      "",
+      "Aktivitäten",
+      "-----------",
+      ...entries.map((entry, index) =>
+        [
+          `${index + 1}. ${new Date(entry.timestamp).toLocaleString("de-DE")}`,
+          `Benutzer: ${getProductRegistryAuditActor(entry)}`,
+          `Aktion: ${entry.action}`,
+          `Details: ${entry.message}`,
+        ].join("\n")
+      ),
+      "",
+    ];
+
+    const blob = new Blob([lines.join("\n\n")], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `produktstammdaten-audit-${formatDateYYMMDD(new Date())}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const productRegistrySection = (
     <section className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-3 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-100">
-            Registrierte Produkte
-          </h2>
-          <div className="text-sm text-slate-400">
-            Gespeicherte Produktnamen mit Präfix und GTIN / UDI-DI.
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-100">
+              Registrierte Produkte
+            </h2>
+            <div className="text-sm text-slate-400">
+              Gespeicherte Produktnamen mit Präfix und GTIN / UDI-DI.
+            </div>
+          </div>
+          <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-300">
+            {productUdiRegistry.length} gespeichert
           </div>
         </div>
-        <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-300">
-          {productUdiRegistry.length} gespeichert
-        </div>
+        {productUdiRegistry.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {selectedRegistryEntryIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleDeleteSelectedProductRegistry();
+                }}
+                className="text-xs md:text-sm rounded-lg border border-rose-500/50 bg-rose-900/20 px-3 py-2 text-rose-100 hover:border-rose-400 hover:bg-rose-800/30 transition"
+              >
+                {selectedRegistryEntryIds.length} löschen
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                void handleDeleteAllProductRegistry();
+              }}
+              className="inline-flex items-center gap-1.5 text-xs md:text-sm rounded-lg border border-rose-500/60 bg-rose-950/30 px-3 py-2 font-medium text-rose-100 hover:border-rose-400 hover:bg-rose-900/40 transition"
+              title="Alle Produkt-Zuordnungen löschen"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-3.5 w-3.5"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              Alles löschen
+            </button>
+          </div>
+        )}
       </div>
 
       {productUdiRegistry.length === 0 ? (
@@ -3443,23 +5024,65 @@ export default function MedSafePage() {
           <table className="w-full border-collapse text-[11px]">
             <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
               <tr className="border-b border-slate-700">
-                <th className="py-2 pr-2 pl-3 text-left">Produkt</th>
+                <th className="py-2 pl-3 pr-2 text-left">
+                  <input
+                    type="checkbox"
+                    checked={
+                      productUdiRegistry.length > 0 &&
+                      productUdiRegistry.every((entry) =>
+                        selectedRegistryEntryIds.includes(entry.id)
+                      )
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedRegistryEntryIds(
+                          productUdiRegistry.map((entry) => entry.id)
+                        );
+                        return;
+                      }
+                      setSelectedRegistryEntryIds([]);
+                    }}
+                    className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/30"
+                    title="Alle auswählen"
+                  />
+                </th>
+                <th className="py-2 pr-2 text-left">Produkt</th>
                 <th className="py-2 pr-2 text-left">Präfix</th>
                 <th className="py-2 pr-2 text-left">GTIN / UDI-DI</th>
                 <th className="py-2 pr-2 text-left">Hersteller</th>
+                <th className="py-2 pr-2 text-left">SRN</th>
                 <th className="py-2 pr-3 text-left">Aktion</th>
               </tr>
             </thead>
             <tbody>
-              {productUdiRegistry.map((entry) => (
+              {productUdiRegistry.map((entry) => {
+                const isChecked = selectedRegistryEntryIds.includes(entry.id);
+                return (
                 <tr
                   key={entry.id}
-                  className="border-b border-slate-800 last:border-b-0"
+                  className={
+                    "border-b border-slate-800 last:border-b-0 " +
+                    (isChecked ? "bg-rose-950/15" : "")
+                  }
                 >
-                  <td className="py-2 pr-2 pl-3 text-slate-100">{entry.productName}</td>
+                  <td className="py-2 pl-3 pr-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleRegistryEntrySelection(entry.id)}
+                      className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/30"
+                      title="Zum Löschen auswählen"
+                    />
+                  </td>
+                  <td className="py-2 pr-2 text-slate-100">{entry.productName}</td>
                   <td className="py-2 pr-2 text-slate-300">{entry.customerPrefix}</td>
                   <td className="py-2 pr-2 break-all text-sky-100">{entry.udiDi}</td>
                   <td className="py-2 pr-2 text-slate-300">{entry.manufacturerName || "–"}</td>
+                  <td className="py-2 pr-2 break-all text-slate-400">
+                    {entry.manufacturerSrn
+                      ? formatManufacturerSrn(entry.manufacturerSrn)
+                      : "–"}
+                  </td>
                   <td className="py-2 pr-3">
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -3469,6 +5092,12 @@ export default function MedSafePage() {
                           setRegisteredUdiDi(entry.udiDi);
                           setMatchedRegistryEntryId(entry.id);
                           setNewManufacturerName(entry.manufacturerName || "");
+                          setNewManufacturerSrn(
+                            entry.manufacturerSrn ||
+                              (entry.manufacturerName
+                                ? generateManufacturerSrn(entry.manufacturerName)
+                                : "")
+                          );
                           setIsCreateDevicePanelOpen(true);
                         }}
                         className="rounded-md border border-sky-500/50 bg-sky-900/20 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-800/40"
@@ -3476,19 +5105,60 @@ export default function MedSafePage() {
                         Laden
                       </button>
                       <button
-                        onClick={() => handleDeleteProductRegistry(entry.id)}
+                        type="button"
+                        onClick={() => {
+                          void handleDeleteProductRegistry(entry.id);
+                        }}
                         className="rounded-md border border-rose-500/50 bg-rose-900/20 px-2 py-1 text-[11px] text-rose-100 hover:bg-rose-800/40"
                       >
-                        Delete
+                        Löschen
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
+
+      <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+            Audit Produktstammdaten
+          </div>
+          <button
+            type="button"
+            onClick={handleDownloadProductRegistryAuditDocument}
+            className="self-start rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-[11px] text-sky-100 hover:bg-sky-500/15 sm:self-auto"
+          >
+            Audit-Dokument erstellen
+          </button>
+        </div>
+        {productRegistryAuditEntries.length === 0 ? (
+          <div className="text-xs text-slate-400">
+            Noch keine Produktstammdaten-Aktivitäten.
+          </div>
+        ) : (
+          <ul className="max-h-36 space-y-2 overflow-y-auto text-xs">
+            {productRegistryAuditEntries.map((entry) => (
+              <li
+                key={entry.id}
+                className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2"
+              >
+                <div className="text-[11px] text-slate-400">
+                  {new Date(entry.timestamp).toLocaleString("de-DE")}
+                </div>
+                <div className="mt-1 text-[11px] text-emerald-200">
+                  Benutzer: {getProductRegistryAuditActor(entry)}
+                </div>
+                <div className="mt-1 text-slate-100">{entry.message}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
   const overviewSection = (
@@ -3515,6 +5185,17 @@ export default function MedSafePage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {selectedOverviewGroupKeys.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleDeleteSelectedOverviewGroups();
+                }}
+                className="text-xs md:text-sm rounded-lg border border-rose-500/50 bg-rose-900/20 px-3 py-2 text-rose-100 hover:border-rose-400 hover:bg-rose-800/30 transition"
+              >
+                {selectedOverviewGroupKeys.length} entfernen
+              </button>
+            )}
             <button
               onClick={loadAllFromSupabase}
               className="
@@ -3537,6 +5218,43 @@ export default function MedSafePage() {
             >
               Export CSV
             </button>
+            <button
+              type="button"
+              onClick={() => setIsTrashPanelVisible((prev) => !prev)}
+              className={
+                "text-xs md:text-sm rounded-lg border px-3 py-2 transition " +
+                (isTrashPanelVisible
+                  ? "border-amber-400/50 bg-amber-900/20 text-amber-100"
+                  : "border-slate-700 bg-slate-900 text-slate-200 hover:border-amber-400/40")
+              }
+            >
+              Papierkorb ({totalTrashed})
+            </button>
+            {groupedDevicesForOverview.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleDeleteAllOverviewGroups();
+                }}
+                className="inline-flex items-center gap-1.5 text-xs md:text-sm rounded-lg border border-rose-500/60 bg-rose-950/30 px-3 py-2 font-medium text-rose-100 hover:border-rose-400 hover:bg-rose-900/40 transition"
+                title="Alle Produktgruppen in den Papierkorb verschieben"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                Alles löschen
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -3547,16 +5265,42 @@ export default function MedSafePage() {
           <table className="w-full border-collapse text-[11px]">
             <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
               <tr className="border-b border-slate-700">
+                <th className="py-2 pl-3 pr-2 text-left">
+                  <input
+                    type="checkbox"
+                    checked={
+                      groupedDevicesForOverview.length > 0 &&
+                      groupedDevicesForOverview.every((group) =>
+                        selectedOverviewGroupKeys.includes(group.key)
+                      )
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedOverviewGroupKeys(
+                          groupedDevicesForOverview.map((group) => group.key)
+                        );
+                        return;
+                      }
+                      setSelectedOverviewGroupKeys([]);
+                    }}
+                    className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/30"
+                    title="Alle auswählen"
+                  />
+                </th>
                 <th className="py-2 pr-2 text-left">#</th>
                 <th className="py-2 pr-2 text-left">Produkt</th>
                 <th className="py-2 pr-2 text-left">Anzahl</th>
-                <th className="py-2 pr-2 text-left">UDI-DI</th>
+                <th className="py-2 pr-2 text-left">UDI-DI / GTIN</th>
                 <th className="py-2 pr-2 text-left">Charge</th>
+                <th className="py-2 pr-2 text-left">Erstellt</th>
                 <th className="py-2 pr-2 text-left">Status</th>
+                <th className="py-2 pr-3 text-left">Aktion</th>
               </tr>
             </thead>
             <tbody>
               {groupedDevicesForOverview.map((group, index) => {
+                const isEditing = editingOverviewGroupKey === group.key;
+                const isChecked = selectedOverviewGroupKeys.includes(group.key);
                 const isSelectedGroup =
                   !!selectedDevice &&
                   selectedDevice.name === group.name &&
@@ -3565,25 +5309,169 @@ export default function MedSafePage() {
                   group.status === "mixed"
                     ? "Gemischter Status"
                     : DEVICE_STATUS_LABELS[group.status];
+                const createdAt = group.createdAt ? new Date(group.createdAt) : null;
+                const createdDate =
+                  createdAt && !Number.isNaN(createdAt.getTime())
+                    ? createdAt.toLocaleDateString("de-DE")
+                    : "–";
+                const createdTime =
+                  createdAt && !Number.isNaN(createdAt.getTime())
+                    ? createdAt.toLocaleTimeString("de-DE", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "–";
 
                 return (
                   <tr
                     key={group.key}
                     className={
-                      "border-b border-slate-800 last:border-b-0 cursor-pointer hover:bg-slate-800/40 " +
-                      (isSelectedGroup ? "bg-emerald-900/30" : "")
+                      "border-b border-slate-800 last:border-b-0 " +
+                      (isEditing
+                        ? "bg-sky-950/30"
+                        : "cursor-pointer hover:bg-slate-800/40 ") +
+                      (isChecked && !isEditing ? "bg-rose-950/20" : "") +
+                      (isSelectedGroup && !isEditing && !isChecked ? "bg-emerald-900/30" : "")
                     }
                     onClick={() => {
-                      setIsOverviewPanelOpen(false);
-                      handleSelectDevice(group.representativeId);
+                      if (isEditing) return;
+                      handleSelectDevice(group.representativeId, "overview");
                     }}
                   >
+                    <td className="py-2 pl-3 pr-2" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        disabled={isEditing}
+                        onChange={() => toggleOverviewGroupSelection(group.key)}
+                        className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/30 disabled:opacity-40"
+                        title="Zum Entfernen auswählen"
+                      />
+                    </td>
                     <td className="py-2 pr-2 text-slate-400">{index + 1}</td>
-                    <td className="py-2 pr-2">{group.name}</td>
-                    <td className="py-2 pr-2">{group.quantity}</td>
+                    <td className="py-2 pr-2">
+                      {isEditing ? (
+                        <input
+                          value={overviewEditDraft?.productName ?? ""}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            setOverviewEditDraft((prev) =>
+                              prev
+                                ? { ...prev, productName: e.target.value }
+                                : prev
+                            )
+                          }
+                          className="w-full min-w-[120px] rounded-md border border-sky-500/40 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 outline-none focus:border-sky-400"
+                        />
+                      ) : (
+                        group.name
+                      )}
+                    </td>
+                    <td className="py-2 pr-2">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          min={1}
+                          value={overviewEditDraft?.quantity ?? 1}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            setOverviewEditDraft((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    quantity: Math.max(
+                                      1,
+                                      Math.floor(Number(e.target.value) || 1)
+                                    ),
+                                  }
+                                : prev
+                            )
+                          }
+                          className="w-16 rounded-md border border-sky-500/40 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 outline-none focus:border-sky-400"
+                        />
+                      ) : (
+                        group.quantity
+                      )}
+                    </td>
                     <td className="py-2 pr-2 break-all">{group.udiDi}</td>
                     <td className="py-2 pr-2">{group.batch}</td>
+                    <td className="py-2 pr-2">
+                      <div>{createdDate} · {createdTime}</div>
+                      <div className="mt-0.5 break-all text-[10px] text-slate-400">
+                        {group.createdBy}
+                      </div>
+                    </td>
                     <td className="py-2 pr-2">{statusLabel}</td>
+                    <td className="py-2 pr-3">
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              title="Speichern"
+                              onClick={() => {
+                                void handleSaveOverviewGroupEdit(group);
+                              }}
+                              className="rounded-md border border-emerald-500/50 bg-emerald-900/20 px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-800/40"
+                            >
+                              Speichern
+                            </button>
+                            <button
+                              type="button"
+                              title="Abbrechen"
+                              onClick={handleCancelOverviewGroupEdit}
+                              className="rounded-md border border-slate-600 bg-slate-800/60 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-700/60"
+                            >
+                              Abbrechen
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              title="Bearbeiten"
+                              onClick={() => handleStartOverviewGroupEdit(group)}
+                              className="rounded-md border border-sky-500/50 bg-sky-900/20 p-1.5 text-sky-100 hover:bg-sky-800/40"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              >
+                                <path d="m2.695 14.763-1.262 3.154a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.885L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.42a4 4 0 0 0-.885 1.343Z" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              title="Löschen"
+                              onClick={() => {
+                                void handleDeleteDeviceGroup(group);
+                              }}
+                              className="rounded-md border border-rose-500/50 bg-rose-900/20 p-1.5 text-rose-100 hover:bg-rose-800/40"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -3591,6 +5479,257 @@ export default function MedSafePage() {
           </table>
         </div>
       )}
+
+      {isTrashPanelVisible && (
+        <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-950/10 p-4 space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-amber-100">Papierkorb</h2>
+              <p className="text-xs text-slate-400">
+                Gelöschte Produkte werden {TRASH_RETENTION_DAYS} Tage aufbewahrt und können
+                wiederhergestellt werden.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-full border border-amber-500/30 bg-amber-900/20 px-3 py-1 text-[11px] text-amber-100">
+                {totalTrashed} Gerät(e) · {groupedTrashedDevicesForOverview.length} Gruppe(n)
+              </div>
+              {selectedTrashGroupKeys.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleRestoreSelectedTrashGroups();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-900/20 px-3 py-2 text-[11px] text-emerald-100 hover:border-emerald-400 hover:bg-emerald-800/30 transition"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="h-3.5 w-3.5"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.989a.75.75 0 0 0-.75.75v4.242a.75.75 0 0 0 1.5 0v-2.43l.31.31a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm-11.024 2.79a7 7 0 0 1 9.201-2.466l.312.311H7.813a.75.75 0 0 0 0 1.5h4.243a.75.75 0 0 0 .75-.75V4.356a.75.75 0 0 0-1.5 0v2.43l-.31-.31A5.5 5.5 0 0 1 3.378 8.99a.75.75 0 0 0-1.452.385Z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    {selectedTrashGroupKeys.length} wiederherstellen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handlePermanentDeleteSelectedTrashGroups();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-900/20 px-3 py-2 text-[11px] text-rose-100 hover:border-rose-400 hover:bg-rose-800/30 transition"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="h-3.5 w-3.5"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    {selectedTrashGroupKeys.length} endgültig löschen
+                  </button>
+                </>
+              )}
+              {groupedTrashedDevicesForOverview.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleEmptyTrash();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/60 bg-rose-950/30 px-3 py-2 text-[11px] font-medium text-rose-100 hover:border-rose-400 hover:bg-rose-900/40 transition"
+                  title="Papierkorb komplett leeren"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-3.5 w-3.5"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  Papierkorb leeren
+                </button>
+              )}
+            </div>
+          </div>
+
+          {groupedTrashedDevicesForOverview.length === 0 ? (
+            <div className="text-sm text-slate-400">Der Papierkorb ist leer.</div>
+          ) : (
+            <div className="max-h-[280px] overflow-auto rounded-xl border border-amber-500/20 bg-slate-900/40">
+              <table className="w-full border-collapse text-[11px]">
+                <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+                  <tr className="border-b border-slate-700">
+                    <th className="py-2 pl-3 pr-2 text-left">
+                      <input
+                        type="checkbox"
+                        checked={
+                          groupedTrashedDevicesForOverview.length > 0 &&
+                          groupedTrashedDevicesForOverview.every((group) =>
+                            selectedTrashGroupKeys.includes(group.key)
+                          )
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedTrashGroupKeys(
+                              groupedTrashedDevicesForOverview.map((group) => group.key)
+                            );
+                            return;
+                          }
+                          setSelectedTrashGroupKeys([]);
+                        }}
+                        className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500/30"
+                        title="Alle auswählen"
+                      />
+                    </th>
+                    <th className="py-2 pr-2 text-left">Produkt</th>
+                    <th className="py-2 pr-2 text-left">Charge</th>
+                    <th className="py-2 pr-2 text-left">Anzahl</th>
+                    <th className="py-2 pr-2 text-left">Verbleibend</th>
+                    <th className="py-2 pr-3 text-left">Aktion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupedTrashedDevicesForOverview.map((group) => {
+                    const isChecked = selectedTrashGroupKeys.includes(group.key);
+
+                    return (
+                      <tr
+                        key={`trash-${group.key}`}
+                        className={
+                          "border-b border-slate-800 last:border-b-0 " +
+                          (isChecked ? "bg-rose-950/20" : "")
+                        }
+                      >
+                        <td className="py-2 pl-3 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleTrashGroupSelection(group.key)}
+                            className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500/30"
+                            title="Zum Löschen oder Wiederherstellen auswählen"
+                          />
+                        </td>
+                        <td className="py-2 pr-2 text-slate-100">{group.name}</td>
+                        <td className="py-2 pr-2 text-slate-300">{group.batch}</td>
+                        <td className="py-2 pr-2 text-slate-300">{group.quantity}</td>
+                        <td className="py-2 pr-2 text-amber-200">
+                          {getTrashDaysRemaining(group.deletedAt)} Tage
+                        </td>
+                        <td className="py-2 pr-3">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              title="Wiederherstellen"
+                              onClick={() => {
+                                void handleRestoreTrashGroup(group);
+                              }}
+                              className="rounded-md border border-emerald-500/50 bg-emerald-900/20 p-1.5 text-emerald-100 hover:bg-emerald-800/40"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H4.989a.75.75 0 0 0-.75.75v4.242a.75.75 0 0 0 1.5 0v-2.43l.31.31a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm-11.024 2.79a7 7 0 0 1 9.201-2.466l.312.311H7.813a.75.75 0 0 0 0 1.5h4.243a.75.75 0 0 0 .75-.75V4.356a.75.75 0 0 0-1.5 0v2.43l-.31-.31A5.5 5.5 0 0 1 3.378 8.99a.75.75 0 0 0-1.452.385Z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              title="Endgültig löschen"
+                              onClick={() => {
+                                void handlePermanentDeleteTrashGroup(group);
+                              }}
+                              className="rounded-md border border-rose-500/50 bg-rose-900/20 p-1.5 text-rose-100 hover:bg-rose-800/40"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.519.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+            Audit Geräteübersicht
+          </div>
+          <button
+            type="button"
+            onClick={handleDownloadDeviceOverviewAuditDocument}
+            className="self-start rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-[11px] text-sky-100 hover:bg-sky-500/15 sm:self-auto"
+          >
+            Audit-Dokument erstellen
+          </button>
+        </div>
+        {deviceOverviewAuditEntries.length === 0 ? (
+          <div className="text-xs text-slate-400">
+            Noch keine Geräte-Aktivitäten protokolliert.
+          </div>
+        ) : (
+          <ul className="max-h-36 space-y-2 overflow-y-auto text-xs">
+            {deviceOverviewAuditEntries.map((entry) => (
+              <li
+                key={entry.id}
+                className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2"
+              >
+                <div className="text-[11px] text-slate-400">
+                  {new Date(entry.timestamp).toLocaleString("de-DE")}
+                </div>
+                <div className="mt-1 text-[11px] text-emerald-200">
+                  Benutzer: {getDeviceOverviewAuditActor(entry)}
+                </div>
+                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-sky-300/80">
+                  {entry.action}
+                </div>
+                <div className="mt-1 text-slate-100">{entry.message}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
   const deviceDocumentsSection = (
@@ -3792,16 +5931,17 @@ export default function MedSafePage() {
                   <div className="text-xs text-slate-300 break-all">
                     CID: {doc.cid}
                   </div>
-                  <a
-                    href={`/api/docs/open?cid=${encodeURIComponent(doc.cid)}&url=${encodeURIComponent(
-                      doc.url
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openAuthenticatedDocument(doc.cid, doc.url).catch((err) => {
+                        alert(err instanceof Error ? err.message : "Dokument konnte nicht geöffnet werden.");
+                      });
+                    }}
                     className="text-xs text-emerald-400 underline mt-1 inline-block"
                   >
                     Öffnen
-                  </a>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -4154,17 +6294,21 @@ if (!user) {
 
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">UDI-DI</div>
-              <div className="mt-2 break-all text-sm font-medium text-slate-100">TH-DI-000124</div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">UDI-DI / GTIN</div>
+              <div className="mt-2 break-all text-sm font-medium text-slate-100">04012345678903</div>
             </div>
             <div className="rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">UDI-PI</div>
-              <div className="mt-2 break-all text-sm font-medium text-slate-100">
-                (11)260326(21)TH-SN-260326-001(10)260326
+              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                UDI-PI / Produktionskennung
               </div>
+              <pre className="mt-2 whitespace-pre-wrap break-all text-sm font-medium text-slate-100">
+                {"(11)260611\n(21)TH-SN-260611-001\n(10)260611-003"}
+              </pre>
             </div>
             <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/8 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-emerald-200/80">UDI-Hash</div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-emerald-200/80">
+                UDI-Prüfhash intern
+              </div>
               <div className="mt-2 break-all text-xs font-medium text-slate-100">
                 4fd49193ad4e7459f5b689c3fc29efa843cb493b45d112ef385601bde18a2164
               </div>
@@ -4200,9 +6344,70 @@ if (!user) {
 
 
   // ---------- EINGELOGGT: DASHBOARD ----------
+  const visibleMessage =
+    message ===
+    "1 Gerät wurde gespeichert. GTIN / UDI-DI stammt aus dem gespeicherten Produkt, UDI-PI wurde automatisch erzeugt."
+      ? ""
+      : message;
 
  return (
-  <main className="min-h-screen bg-slate-950 text-slate-100">
+  <main className="text-slate-100">
+    <MedSafeDialogCard
+      open={actionDialog.open}
+      title={actionDialog.title}
+      text={actionDialog.text}
+      confirmLabel={actionDialog.confirmLabel}
+      requirePin={actionDialog.requirePin}
+      tone={actionDialog.tone}
+      validatePin={(pin) => pin === ADMIN_PIN}
+      onConfirm={(pin) => closeActionDialog(true, pin)}
+      onCancel={() => closeActionDialog(false)}
+    />
+    {deleteSuccessNotice && (
+      <div className="fixed right-4 top-4 z-[161] max-w-sm rounded-2xl border border-emerald-300/40 bg-slate-950/95 px-4 py-3 text-slate-100 shadow-[0_0_34px_rgba(16,185,129,0.32)] backdrop-blur-xl">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-sky-300/50 bg-slate-900 shadow-[0_0_18px_rgba(56,189,248,0.28)]">
+            <img
+              src="/partners/roche.png?v=20260327-2"
+              alt="MedSafe Logo"
+              className="h-6 w-auto object-contain"
+            />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-emerald-100">
+              {deleteSuccessNotice.title}
+            </div>
+            <div className="mt-0.5 text-xs text-slate-300">{deleteSuccessNotice.text}</div>
+          </div>
+        </div>
+      </div>
+    )}
+    {saveSuccessNotice && (
+      <div
+        className={
+          "fixed right-4 z-[160] max-w-sm rounded-2xl border border-emerald-300/40 bg-slate-950/95 px-4 py-3 text-slate-100 shadow-[0_0_34px_rgba(16,185,129,0.32)] backdrop-blur-xl " +
+          (deleteSuccessNotice ? "top-24" : "top-4")
+        }
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-sky-300/50 bg-slate-900 shadow-[0_0_18px_rgba(56,189,248,0.28)]">
+            <img
+              src="/partners/roche.png?v=20260327-2"
+              alt="MedSafe Logo"
+              className="h-6 w-auto object-contain"
+            />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-emerald-100">
+              Erfolgreich gespeichert
+            </div>
+            <div className="mt-0.5 text-xs text-slate-300">
+              {saveSuccessNotice}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="mx-auto w-full min-w-0 space-y-6 px-0 py-6 sm:space-y-8 sm:py-10">
         {isLoading && (
           <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
@@ -4210,9 +6415,9 @@ if (!user) {
           </div>
         )}
 
-        {message && !isLoading && (
+        {visibleMessage && !isLoading && (
           <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
-            {message}
+            {visibleMessage}
           </div>
         )}
 
@@ -4234,53 +6439,49 @@ if (!user) {
               </div>
             )}
             {isUdiSectionVisible ? (
-              <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <button
+                  onClick={() => setIsCreateDevicePanelOpen(true)}
+                  className="min-h-[132px] rounded-2xl border border-emerald-400/50 bg-gradient-to-br from-emerald-950/70 via-slate-950 to-slate-900 px-5 py-4 text-left shadow-[0_0_28px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/80 hover:shadow-[0_0_38px_rgba(16,185,129,0.3)]"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/80">
+                      1. Neues Gerät
+                    </div>
+                  </div>
+                  <div className="mt-3 text-lg font-semibold leading-tight text-slate-50">
+                    Neues Gerät
+                  </div>
+                  <div className="mt-2 text-sm leading-relaxed text-slate-300">
+                    Produkt auswählen, Menge festlegen und UDI erzeugen.
+                  </div>
+                </button>
                 <button
                   onClick={() => setIsOverviewPanelOpen(true)}
-                  className="h-[104px] w-full max-w-[320px] rounded-full border border-cyan-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(6,182,212,0.18)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+                  className="min-h-[132px] rounded-2xl border border-cyan-400/35 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/40 px-5 py-4 text-left shadow-[0_0_24px_rgba(6,182,212,0.14)] transition hover:border-cyan-300/70 hover:shadow-[0_0_34px_rgba(6,182,212,0.25)]"
                 >
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
-                    Übersicht
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
+                    2. UDI-Geräte
                   </div>
-                  <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                    MedSafe-UDI – Geräteübersicht
+                  <div className="mt-3 text-lg font-semibold leading-tight text-slate-50">
+                    UDI-Geräte
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-300 leading-tight">
+                  <div className="mt-2 text-sm leading-relaxed text-slate-300">
                     {totalDevices} Geräte, {totalDocs} Dokumente, {totalArchived} archiviert.
                   </div>
                 </button>
-                <div className="hidden sm:flex items-center px-1 text-cyan-300/80">
-                  <span className="text-xl">→</span>
-                </div>
                 <button
                   onClick={() => setIsRegistryPanelOpen(true)}
-                  className="h-[104px] w-full max-w-[320px] rounded-full border border-sky-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(14,165,233,0.18)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
+                  className="min-h-[132px] rounded-2xl border border-sky-400/35 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950/40 px-5 py-4 text-left shadow-[0_0_24px_rgba(14,165,233,0.14)] transition hover:border-sky-300/70 hover:shadow-[0_0_34px_rgba(14,165,233,0.25)]"
                 >
                   <div className="text-[11px] uppercase tracking-[0.18em] text-sky-200/70">
-                    Register
+                    3. Produktstammdaten
                   </div>
-                  <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                    Registrierte Produkte
+                  <div className="mt-3 text-lg font-semibold leading-tight text-slate-50">
+                    Produktstammdaten
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                    {productUdiRegistry.length} gespeicherte Produkt-Zuordnungen mit GTIN / UDI-DI.
-                  </div>
-                </button>
-                <div className="hidden sm:flex items-center px-1 text-emerald-300/80">
-                  <span className="text-xl">→</span>
-                </div>
-                <button
-                  onClick={() => setIsCreateDevicePanelOpen(true)}
-                  className="h-[104px] w-full max-w-[320px] rounded-full border border-emerald-400/45 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/55 px-4 py-3 text-center shadow-[0_0_24px_rgba(16,185,129,0.18)] transition hover:border-emerald-300/70 hover:shadow-[0_0_34px_rgba(16,185,129,0.3)] sm:h-[116px] sm:w-[210px] sm:max-w-none sm:px-5 sm:py-4"
-                >
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
-                    Erstellen
-                  </div>
-                  <div className="mt-1 text-sm font-semibold leading-tight text-slate-50 sm:text-base">
-                    Neues Gerät anlegen
-                  </div>
-                  <div className="mt-1 text-[11px] text-slate-300 leading-tight">
-                    Produkt zuordnen, Menge festlegen und Geräte automatisch erzeugen.
+                  <div className="mt-2 text-sm leading-relaxed text-slate-300">
+                    {productUdiRegistry.length} Produkte, Hersteller und GTIN / UDI-DI pflegen.
                   </div>
                 </button>
               </div>
@@ -4461,16 +6662,106 @@ if (!user) {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      <div>
-                        <div className="mb-1 text-[11px] text-slate-400">Produktname</div>
-                        <input
-                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                          placeholder="Produktname"
-                          value={newProductName}
-                          onChange={(e) => setNewProductName(e.target.value)}
-                        />
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 md:p-5">
+                      <div className="mb-3">
+                        <h3 className="text-sm font-semibold text-slate-100">
+                          Produktlinie & Variante
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-400">
+                          Zuerst Familie, dann Modell — die GTIN / UDI-DI wird am Modell
+                          zugeordnet (jede Variante eigene GTIN).
+                        </p>
                       </div>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div>
+                          <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+                              1
+                            </span>
+                            Produktfamilie <span className="text-rose-300">*</span>
+                          </div>
+                          <input
+                            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                            placeholder="vario"
+                            value={newProductFamily}
+                            onChange={(e) => setNewProductFamily(e.target.value)}
+                          />
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            Produktlinie / EUDAMED-Familie — noch keine GTIN.
+                          </p>
+                        </div>
+                        <div>
+                          <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+                              2
+                            </span>
+                            Produktmodell / Variante <span className="text-rose-300">*</span>
+                          </div>
+                          <div className="relative">
+                            <input
+                              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 pr-28 text-sm outline-none focus:border-emerald-500"
+                              placeholder="500, 1000 oder vario"
+                              value={newProductName}
+                              onChange={(e) => setNewProductName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (
+                                  (e.key === "Enter" || e.key === "Tab") &&
+                                  productModelInlineSuggestion
+                                ) {
+                                  if (e.key === "Enter") e.preventDefault();
+                                  handleSelectProductSuggestion(productModelInlineSuggestion);
+                                }
+                              }}
+                            />
+                            {productModelInlineSuggestion && (
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleSelectProductSuggestion(productModelInlineSuggestion);
+                                }}
+                                className="absolute right-1 top-1/2 max-w-[108px] -translate-y-1/2 truncate rounded-md border border-emerald-500/30 bg-emerald-500/12 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-500/18"
+                                title={productModelInlineSuggestion.productName}
+                              >
+                                {productModelInlineSuggestion.productName}
+                              </button>
+                            )}
+                          </div>
+                          {familyRegistryVariants.length > 1 && !activeRegistryMatch && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {familyRegistryVariants.map((entry) => (
+                                <button
+                                  key={entry.id}
+                                  type="button"
+                                  onClick={() => handleSelectProductSuggestion(entry)}
+                                  className="rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] text-sky-100 hover:bg-sky-500/20"
+                                >
+                                  {entry.productName}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {activeRegistryMatch && (
+                        <div className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-100">
+                          Auswahl:{" "}
+                          <span className="font-medium">{activeRegistryMatch.productName}</span>
+                          <span className="text-emerald-200/80"> · GTIN </span>
+                          <span className="font-mono">{activeRegistryMatch.udiDi}</span>
+                        </div>
+                      )}
+                      {!activeRegistryMatch &&
+                        familyRegistryVariants.length > 1 &&
+                        normalizeLookupKey(newProductFamily) && (
+                          <div className="mt-3 rounded-lg border border-sky-500/25 bg-sky-950/30 px-3 py-2 text-xs text-sky-100">
+                            {familyRegistryVariants.length} Varianten für „{newProductFamily.trim()}
+                            “ — Schritt 2: Modell eingeben oder Chip wählen.
+                          </div>
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <div>
                         <div className="mb-1 text-[11px] text-slate-400">Anzahl</div>
                         <input
@@ -4486,13 +6777,38 @@ if (!user) {
                         />
                       </div>
                       <div>
-                        <div className="mb-1 text-[11px] text-slate-400">Hersteller</div>
+                        <div className="mb-1 text-[11px] text-slate-400">
+                          Hersteller <span className="text-rose-300">*</span>
+                        </div>
                         <input
                           className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-emerald-500"
-                          placeholder="Hersteller"
+                          placeholder="z. B. Thalheimer Kühlung GmbH"
                           value={newManufacturerName}
-                          onChange={(e) => setNewManufacturerName(e.target.value)}
+                          onChange={(e) => {
+                            const name = e.target.value;
+                            setNewManufacturerName(name);
+                            if (name.trim()) {
+                              setNewManufacturerSrn(generateManufacturerSrn(name));
+                            }
+                          }}
+                          required
                         />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-[11px] text-slate-400">
+                          SRN (EUDAMED)
+                        </div>
+                        <input
+                          className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
+                          placeholder="DE-MF-0000123456"
+                          value={newManufacturerSrn}
+                          onChange={(e) =>
+                            setNewManufacturerSrn(formatManufacturerSrn(e.target.value))
+                          }
+                        />
+                        <div className="mt-1 text-[10px] text-slate-500">
+                          Single Registration Number des Herstellers.
+                        </div>
                       </div>
                       <div>
                         <div className="mb-1 text-[11px] text-slate-400">Produktgruppe</div>
@@ -4535,10 +6851,20 @@ if (!user) {
                             Kunde speichert hier einmal Präfix, Produktname und GTIN / UDI-DI. Danach erkennt das System den Produktnamen automatisch und verwendet immer dieselbe gespeicherte Kennung.
                           </div>
                         </div>
-                        <div className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[11px] text-slate-200">
-                          {matchedRegistryEntryId
-                            ? "Gespeicherte Zuordnung erkannt"
-                            : "Noch keine Zuordnung gefunden"}
+                        <div
+                          className={
+                            matchedRegistryEntryId
+                              ? "rounded-full border border-emerald-500/35 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-100"
+                              : "rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[11px] text-slate-200"
+                          }
+                        >
+                          {activeRegistryMatch
+                            ? `Gespeicherte Zuordnung: ${activeRegistryMatch.productName} → ${activeRegistryMatch.udiDi}`
+                            : familyRegistryVariants.length > 1
+                              ? `${familyRegistryVariants.length} Varianten für „${newProductFamily.trim()}“ — Modell eingeben oder Chip wählen`
+                              : productRegistrySuggestions.length > 0
+                                ? "Modell eingeben oder Vorschlag rechts im Feld nutzen"
+                                : "Noch keine Zuordnung gefunden"}
                         </div>
                       </div>
 
@@ -4555,41 +6881,77 @@ if (!user) {
                         <div>
                           <div className="mb-1 text-[11px] text-slate-400">GTIN / UDI-DI</div>
                           <input
-                            className="w-full bg-slate-800 rounded-lg px-3 py-2 text-sm outline-none border border-slate-700 focus:border-sky-500"
-                            placeholder="z.B. 04012345678901"
+                            className={
+                              "w-full rounded-lg border px-3 py-2 text-sm outline-none " +
+                              (activeRegistryMatch
+                                ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-50"
+                                : needsManualGtinEntry
+                                  ? "border-amber-500/40 bg-slate-800 focus:border-amber-500"
+                                  : "border-slate-700 bg-slate-800 focus:border-sky-500")
+                            }
+                            placeholder={
+                              !isProductModelEntered
+                                ? "Zuerst Produktmodell eingeben"
+                                : needsManualGtinEntry
+                                  ? "Neue Variante — GTIN eingeben"
+                                  : "z. B. 04012345678903"
+                            }
                             value={registeredUdiDi}
+                            readOnly={Boolean(activeRegistryMatch)}
+                            disabled={!isProductModelEntered}
                             onChange={(e) => setRegisteredUdiDi(e.target.value)}
                           />
+                          {isProductModelEntered && (
+                            <div className="mt-1.5">
+                              <GtinValidationBadge
+                                gtin={registeredUdiDi}
+                                onCorrect={(corrected) => setRegisteredUdiDi(corrected)}
+                              />
+                            </div>
+                          )}
+                          {activeRegistryMatch && (
+                            <p className="mt-1 text-[10px] text-emerald-200/80">
+                              Aus Registry für „{activeRegistryMatch.productName}“.
+                            </p>
+                          )}
+                          {needsManualGtinEntry && (
+                            <p className="mt-1 text-[10px] text-amber-200/90">
+                              Modell „
+                              {[newProductFamily.trim(), newProductName.trim()]
+                                .filter(Boolean)
+                                .join(" ")}
+                              “ ist neu — GTIN eingeben, dann grünen Button unten.
+                            </p>
+                          )}
                         </div>
                         <div>
                           <div className="mb-1 text-[11px] text-slate-400">Status</div>
                           <div className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 break-all">
-                            {registeredUdiDi.trim()
-                              ? `Aktive GTIN / UDI-DI: ${registeredUdiDi.trim()}`
-                              : "Noch keine GTIN / UDI-DI hinterlegt"}
+                            {!isProductModelEntered
+                              ? "Schritt 2: Produktmodell eingeben — dann GTIN"
+                              : activeRegistryMatch
+                                ? `Gespeichert: ${activeRegistryMatch.productName} → ${activeRegistryMatch.udiDi}`
+                                : needsManualGtinEntry
+                                  ? "Neues Modell — GTIN noch nicht hinterlegt"
+                                  : registeredUdiDi.trim()
+                                    ? `GTIN / UDI-DI: ${registeredUdiDi.trim()}`
+                                    : "GTIN / UDI-DI eingeben"}
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={handleSaveProductRegistry}
-                          className="inline-flex items-center rounded-lg border border-slate-600 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-sm font-medium text-slate-100"
-                        >
-                          Produkt-Zuordnung speichern
-                        </button>
-                        {matchedRegistryEntryId && (
-                          <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200">
-                            Dieses Produkt nutzt beim Gerätespeichern automatisch die hinterlegte GTIN / UDI-DI.
-                          </div>
-                        )}
-                      </div>
+                      {needsManualGtinEntry && (
+                        <div className="rounded-lg border border-amber-500/25 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
+                          Neues Modell: GTIN eintragen und unten „Gerät erstellen & UDI
+                          generieren“ — Zuordnung wird automatisch mitgespeichert.
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap gap-2">
                       <button
                         onClick={handleSaveDevice}
-                        className="inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium"
+                        className="inline-flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-emerald-900/30"
                       >
                         Gerät erstellen &amp; UDI generieren
                       </button>
@@ -4632,9 +6994,9 @@ if (!user) {
 
         {isOverviewPanelOpen &&
           createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[122] bg-slate-950/88 p-2 backdrop-blur-sm sm:p-4 md:p-6">
+            <div className="pointer-events-none fixed inset-0 z-[122] bg-slate-950/88 p-0 backdrop-blur-sm">
               <div
-                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)] sm:rounded-3xl"
+                className="pointer-events-auto flex h-screen w-screen flex-col overflow-hidden border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:items-center sm:px-4 md:px-6">
@@ -4665,9 +7027,9 @@ if (!user) {
 
         {isRegistryPanelOpen &&
           createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[121] bg-slate-950/88 p-2 backdrop-blur-sm sm:p-4 md:p-6">
+            <div className="pointer-events-none fixed inset-0 z-[121] bg-slate-950/88 p-0 backdrop-blur-sm">
               <div
-                className="pointer-events-auto mx-auto flex h-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)] sm:rounded-3xl"
+                className="pointer-events-auto flex h-screen w-screen flex-col overflow-hidden border border-white/10 bg-slate-950/98 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:items-center sm:px-4 md:px-6">
@@ -4699,7 +7061,7 @@ if (!user) {
         {/* Ausgewählte Gruppe (Sticky) */}
         {selectedDevice && createPortal(
           <div
-            className="pointer-events-none fixed inset-0 z-[120] bg-slate-950/82 p-4 backdrop-blur-sm md:p-6"
+            className="pointer-events-none fixed inset-0 z-[125] bg-slate-950/82 p-4 backdrop-blur-sm md:p-6"
           >
             <div
               className="pointer-events-auto mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate-950/96 shadow-[0_0_50px_rgba(15,23,42,0.65)]"
@@ -4718,15 +7080,26 @@ if (!user) {
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={handleCloseSelectedDeviceModal}
                   className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+                  title={
+                    deviceDetailReturnPanel === "overview"
+                      ? "Zurück zur Geräteübersicht"
+                      : "Zurück"
+                  }
                 >
-                  X
+                  {deviceDetailReturnPanel === "overview" ? "← Übersicht" : "X"}
                 </button>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6">
                 <div className="mx-auto max-w-7xl space-y-4 text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
+                  {deviceDetailReturnPanel === "overview" && (
+                    <div className="text-xs text-slate-400">
+                      Schritt 3 von 3 · Detail — mit „← Übersicht“ zurück zur Geräteliste.
+                    </div>
+                  )}
                   {selectedDeviceIdentityCard}
                   {deviceDocumentsSection}
 
@@ -4819,8 +7192,8 @@ if (!user) {
                   }
                 >
                   {selectedDevice.isArchived
-                    ? "Aus Archiv holen (Admin-PIN)"
-                    : "Archivieren / Stilllegen (Admin-PIN)"}
+                    ? "Aus Archiv holen"
+                    : "Archivieren / Stilllegen"}
                 </button>
                 <button
                   onClick={handleExportDhrJson}

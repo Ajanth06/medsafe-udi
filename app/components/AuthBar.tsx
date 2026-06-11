@@ -296,9 +296,17 @@ export default function AuthBar() {
   //
   // EINGELOGGT
   //
+  const userDisplayName =
+    typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()
+      ? user.user_metadata.full_name.trim()
+      : user.email || "Angemeldeter Benutzer";
+
   return (
     <div className="flex flex-col items-end gap-2 text-xs">
       <div className="flex items-center gap-3">
+        <div className="max-w-[240px] truncate rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] text-slate-200">
+          {userDisplayName}
+        </div>
         {isAdmin && (
           <button
             onClick={() => setAdminFormOpen((prev) => !prev)}

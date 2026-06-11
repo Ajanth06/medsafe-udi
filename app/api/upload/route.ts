@@ -1,6 +1,7 @@
 // app/api/upload/route.ts
 
 import { NextResponse } from "next/server";
+import { requireAuth } from "../../../lib/apiAuth";
 import { getSupabaseAdmin } from "../../../lib/supabaseServerClient";
 
 export const runtime = "nodejs";
@@ -8,6 +9,11 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    const authResult = await requireAuth(req);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const supabaseAdmin = getSupabaseAdmin();
     const formData = await req.formData();
     const file = formData.get("file");

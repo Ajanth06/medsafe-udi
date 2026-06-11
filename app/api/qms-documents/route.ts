@@ -1,6 +1,7 @@
 // app/api/qms-documents/route.ts
 
 import { NextResponse } from "next/server";
+import { requireAuth } from "../../../lib/apiAuth";
 import { getSupabaseAdmin } from "../../../lib/supabaseServerClient";
 import crypto from "crypto";
 
@@ -9,12 +10,18 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    const authResult = await requireAuth(req);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
+    const { user } = authResult;
     const supabaseAdmin = getSupabaseAdmin();
     const formData = await req.formData();
     const file = formData.get("file");
     const documentKey = formData.get("documentKey") as string | null;
     const revision = (formData.get("revision") as string | null) || "R1";
-    const createdBy = formData.get("userId") as string | null;
+    const createdBy = (formData.get("userId") as string | null) || user.id;
 
     if (!file || !(file instanceof Blob)) {
       return NextResponse.json(
@@ -100,10 +107,12 @@ export async function POST(req: Request) {
       revision,
       file_name: originalName,
       file_path: path,
+      storage_path: path,
       sha256,
       mime_type: mimeType,
       size_bytes: sizeBytes,
       created_by: createdBy || null,
+      user_id: user.id,
       is_current: true,
     };
 
