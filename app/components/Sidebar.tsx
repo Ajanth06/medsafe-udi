@@ -79,11 +79,24 @@ export default function Sidebar() {
     setHash("#udi");
   };
 
+  const openAiAssistant = () => {
+    setIsAiPulseActive(true);
+    window.setTimeout(() => setIsAiPulseActive(false), 900);
+    closeActiveDetailView();
+    window.dispatchEvent(new CustomEvent("medsafe:open-ai"));
+    if (pathname !== "/") {
+      router.push("/#medsafe-ai");
+      return;
+    }
+    window.location.hash = "medsafe-ai";
+    setHash("#medsafe-ai");
+  };
+
   if (!user) {
     return null;
   }
 
-  if (isUdiControlActive || isDocumentsActive || isAiActive) {
+  if (isUdiControlActive || isAiActive) {
     return null;
   }
 
@@ -97,7 +110,9 @@ export default function Sidebar() {
           }}
           className={
             "flex min-h-[88px] flex-col justify-center rounded-2xl px-2 py-3 text-slate-50 transition border border-emerald-400/50 bg-emerald-500/15 shadow-[0_0_24px_rgba(16,185,129,0.16)] sm:min-h-[96px] sm:px-5 sm:py-4 sm:justify-between " +
-            (isUdiControlActive || isUdiPulseActive ? "animate-pulse" : "hover:bg-emerald-500/18")
+            (isUdiControlActive || isUdiPulseActive
+              ? "animate-pulse border-emerald-300/70 bg-emerald-500/22"
+              : "hover:bg-emerald-500/18")
           }
         >
           <div className="text-center">
@@ -156,20 +171,12 @@ export default function Sidebar() {
 
         <button
           type="button"
-          onClick={() => {
-            setIsAiPulseActive(true);
-            window.setTimeout(() => setIsAiPulseActive(false), 900);
-            closeActiveDetailView();
-            if (pathname !== "/") {
-              router.push("/#medsafe-ai");
-              return;
-            }
-            window.location.hash = "medsafe-ai";
-            setHash("#medsafe-ai");
-          }}
+          onClick={openAiAssistant}
           className={
             "flex min-h-[88px] flex-col justify-center rounded-2xl px-2 py-3 text-slate-50 transition border border-amber-400/40 bg-amber-500/12 shadow-[0_0_24px_rgba(245,158,11,0.14)] sm:min-h-[96px] sm:px-5 sm:py-4 sm:justify-between " +
-            (isAiActive || isAiPulseActive ? "animate-pulse" : "hover:bg-amber-500/16")
+            (isAiActive || isAiPulseActive
+              ? "animate-pulse border-amber-300/70 bg-amber-500/20"
+              : "hover:bg-amber-500/16")
           }
         >
           <div className="text-center">

@@ -1595,7 +1595,6 @@ export default function MedSafePage() {
   const [activeAiConversationId, setActiveAiConversationId] = useState<string>(
     () => "pending"
   );
-  const [isAiHistoryVisible, setIsAiHistoryVisible] = useState(true);
   const [isAiAssistantVisible, setIsAiAssistantVisible] = useState(false);
 
   const aiRowSuggestions = useMemo(() => {
@@ -1863,13 +1862,46 @@ export default function MedSafePage() {
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash || "";
-      setIsAiAssistantVisible(hash === "#medsafe-ai");
+      const aiActive = hash === "#medsafe-ai";
+      setIsAiAssistantVisible(aiActive);
       setIsUdiSectionVisible(hash === "#udi");
     };
+    const openAiAssistant = () => {
+      setIsAiAssistantVisible(true);
+      if (window.location.hash !== "#medsafe-ai") {
+        window.history.pushState(null, "", `${window.location.pathname}#medsafe-ai`);
+      }
+    };
+
     syncHash();
     window.addEventListener("hashchange", syncHash);
-    return () => window.removeEventListener("hashchange", syncHash);
+    window.addEventListener("medsafe:open-ai", openAiAssistant as EventListener);
+    return () => {
+      window.removeEventListener("hashchange", syncHash);
+      window.removeEventListener("medsafe:open-ai", openAiAssistant as EventListener);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isAiAssistantVisible) return;
+
+    setIsCreateDevicePanelOpen(false);
+    setIsOverviewPanelOpen(false);
+    setIsRegistryPanelOpen(false);
+    setSelectedDeviceId(null);
+    setLastCreatedDeviceId(null);
+    setEditRowId(null);
+    setEditDraft(null);
+    setIsGroupPinned(false);
+    setUdiPiSearch("");
+    setDeviceDetailReturnPanel(null);
+  }, [isAiAssistantVisible]);
+
+  const handleCloseAiAssistant = () => {
+    window.history.pushState(null, "", window.location.pathname);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    setIsAiAssistantVisible(false);
+  };
 
   const restoreUdiHubVisibility = () => {
     setIsUdiSectionVisible(true);
@@ -1908,7 +1940,8 @@ export default function MedSafePage() {
       !!selectedDeviceId ||
       isCreateDevicePanelOpen ||
       isOverviewPanelOpen ||
-      isRegistryPanelOpen;
+      isRegistryPanelOpen ||
+      isAiAssistantVisible;
 
     if (!shouldLockBodyScroll) return;
 
@@ -1923,6 +1956,7 @@ export default function MedSafePage() {
     isCreateDevicePanelOpen,
     isOverviewPanelOpen,
     isRegistryPanelOpen,
+    isAiAssistantVisible,
   ]);
 
   useEffect(() => {
@@ -2056,7 +2090,6 @@ export default function MedSafePage() {
 
         const mapped = mapAiConversationRows(conversationRows || [], messageRows);
         setAiConversations(mapped);
-        setIsAiHistoryVisible(true);
 
         if (mapped.length > 0) {
           setActiveAiConversationId((current) =>
@@ -2254,18 +2287,6 @@ export default function MedSafePage() {
         role: entry.role,
         content: entry.content,
       })),
-      selectedDevice: selectedDevice
-        ? {
-            name: selectedDevice.name,
-            riskClass: selectedDevice.riskClass,
-            status: selectedDevice.status,
-            batch: selectedDevice.batch,
-          }
-        : null,
-      appContext: {
-        totalDevices: devices.length,
-        totalDocs: docs.length,
-      },
     });
 
     const assistantEntry: ChatEntry = {
@@ -2400,7 +2421,7 @@ export default function MedSafePage() {
         updatedAt: new Date().toISOString(),
       };
 
-      let registryPayload = mapProductRegistryToDb(
+      const registryPayload = mapProductRegistryToDb(
         newRegistryEntry,
         user.id,
         createdByLabel
@@ -2845,7 +2866,7 @@ export default function MedSafePage() {
       return;
     }
 
-    let payload = mapProductRegistryToDb(entry, user.id, createdByLabel);
+    const payload = mapProductRegistryToDb(entry, user.id, createdByLabel);
 
     if (editingRegistryId) {
       const updatePayload = { ...payload };
@@ -6676,157 +6697,64 @@ export default function MedSafePage() {
     setActiveAiConversationId("pending");
   };
   const aiSection = (
-    <section
-      id="medsafe-ai"
-      className="rounded-2xl p-4 md:p-6 space-y-4 scroll-mt-24"
-    >
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <h2 className="text-lg font-semibold text-amber-200">MedSafe AI</h2>
-        <div className="text-xs text-slate-300 md:max-w-[540px] md:text-right">
-          Regulatorischer Assistent für MDR, ISO 13485, ISO 14971, UDI und technische Dokumentation
-        </div>
-      </div>
-
-      <div
-        className={
-          "grid gap-4 " +
-          (isAiHistoryVisible ? "lg:grid-cols-[240px_minmax(0,1fr)]" : "grid-cols-1")
-        }
-      >
-        {isAiHistoryVisible && (
-          <aside className="rounded-xl border border-amber-500/25 bg-slate-950 p-3 shadow-[0_0_24px_rgba(245,158,11,0.08)]">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
-                Chat-Verläufe
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAiHistoryVisible(false)}
-                className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-900"
-              >
-                Ausblenden
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleCreateAiConversation}
-              className="mt-3 w-full rounded-md border border-amber-400/45 bg-amber-500/16 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-500/22"
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-amber-500/20 bg-slate-950 px-3 py-3 space-y-2.5 text-sm">
+        {aiChatHistory.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-amber-500/20 bg-slate-950/80 px-4 py-5 text-slate-300">
+            Stelle hier MDR-bezogene Fragen — z. B. zu ISO 13485, ISO 14971, UDI,
+            technischer Dokumentation oder Compliance.
+          </div>
+        ) : (
+          aiChatHistory.map((entry) => (
+            <div
+              key={entry.id}
+              className={
+                "space-y-1 rounded-lg border px-3 py-2 " +
+                (entry.role === "user"
+                  ? "border-amber-500/25 bg-amber-500/10"
+                  : "border-slate-800 bg-slate-950")
+              }
             >
-              Neue Unterhaltung
-            </button>
-
-            <div className="mt-3 space-y-2">
-              {aiConversations.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  className={
-                    "rounded-lg border px-3 py-2 transition " +
-                    (conversation.id === activeAiConversationId
-                      ? "border-amber-400/40 bg-amber-500/12"
-                      : "border-slate-800 bg-slate-950 hover:bg-slate-900")
-                  }
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setActiveAiConversationId(conversation.id)}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <div className="truncate text-sm font-medium text-slate-100">
-                        {conversation.title}
-                      </div>
-                      <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-400">
-                        {conversation.messages.find((entry) => entry.role === "user")?.content ||
-                          "Noch keine Nachrichten"}
-                      </div>
-                      <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                        {conversation.messages.length
-                          ? new Date(conversation.updatedAt).toLocaleString("de-DE")
-                          : "Leer"}
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteAiConversation(conversation.id)}
-                      className="shrink-0 rounded-md border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400 hover:border-amber-400/30 hover:text-amber-200"
-                    >
-                      Löschen
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </aside>
-        )}
-
-        <div className="rounded-xl border border-amber-500/25 bg-slate-950 px-2.5 py-2.5 shadow-[0_0_24px_rgba(245,158,11,0.08)]">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
-              Aktive Unterhaltung
-            </div>
-            {!isAiHistoryVisible && (
-              <button
-                type="button"
-                onClick={() => setIsAiHistoryVisible(true)}
-                className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-900"
+              <div
+                className={
+                  "text-xs font-medium " +
+                  (entry.role === "user" ? "text-amber-300" : "text-slate-200")
+                }
               >
-                Verlauf anzeigen
-              </button>
-            )}
-          </div>
-
-          <div className="mt-3 max-h-[420px] overflow-y-auto rounded-md border border-slate-900 bg-slate-950 px-2.5 py-2 space-y-2.5 text-xs">
-            {aiChatHistory.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-amber-500/20 bg-slate-950 px-3 py-4 text-slate-300">
-                Stelle eine Frage wie: &quot;Welche UDI- oder Dokumentlücken hat dieses Gerät?&quot;
+                {entry.role === "user" ? "Frage" : "Antwort"}
               </div>
-            ) : (
-              aiChatHistory.map((entry) => (
-                <div
-                  key={entry.id}
-                  className={
-                    "space-y-1 rounded-lg border px-3 py-2 " +
-                    (entry.role === "user"
-                      ? "border-amber-500/25 bg-amber-500/10"
-                      : "max-w-full border-slate-800 bg-slate-950")
-                  }
-                >
-                  <div
-                    className={
-                      "font-medium " +
-                      (entry.role === "user" ? "text-amber-300" : "text-slate-200")
-                    }
-                  >
-                    {entry.role === "user" ? "Frage" : "Antwort"}
-                  </div>
-                  <div className="whitespace-pre-wrap text-slate-100">{entry.content}</div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="mt-3 rounded-md border border-slate-900 bg-slate-950 p-1.5">
-            <div className="mb-1.5 text-[11px] text-white">Frage an MedSafe AI</div>
-            <div className="flex gap-2">
-              <textarea
-                className="w-full min-h-[68px] bg-transparent px-2.5 py-1.5 text-sm text-white outline-none border-0 focus:outline-none focus:ring-0"
-                placeholder="Frage zu MDR, ISO 13485, ISO 14971, UDI oder Dokumentation eingeben ..."
-                value={aiCopilotInput}
-                onChange={(e) => setAiCopilotInput(e.target.value)}
-              />
-              <button
-                onClick={handleSendCopilotMessage}
-                disabled={aiBusyTask === "copilot-chat"}
-                className="self-end rounded-md border border-amber-400/45 bg-amber-500/16 px-3.5 py-1.5 text-sm font-medium text-amber-100 shadow-[0_0_16px_rgba(245,158,11,0.14)] hover:bg-amber-500/22 disabled:opacity-60"
-              >
-                {aiBusyTask === "copilot-chat" ? "Sende…" : "Senden"}
-              </button>
+              <div className="whitespace-pre-wrap text-slate-100">{entry.content}</div>
             </div>
-          </div>
+          ))
+        )}
+      </div>
+
+      <div className="rounded-xl border border-amber-500/20 bg-slate-950 p-3">
+        <div className="mb-2 text-xs text-amber-100/90">Frage zu MDR / ISO / UDI</div>
+        <div className="flex gap-2">
+          <textarea
+            className="min-h-[72px] w-full rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-white outline-none focus:border-amber-400/40"
+            placeholder="z. B. Welche Pflichtdokumente brauche ich für Klasse IIa?"
+            value={aiCopilotInput}
+            onChange={(e) => setAiCopilotInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void handleSendCopilotMessage();
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => void handleSendCopilotMessage()}
+            disabled={aiBusyTask === "copilot-chat"}
+            className="self-end rounded-lg border border-amber-400/45 bg-amber-500/16 px-4 py-2 text-sm font-medium text-amber-100 hover:bg-amber-500/22 disabled:opacity-60"
+          >
+            {aiBusyTask === "copilot-chat" ? "Sende…" : "Senden"}
+          </button>
         </div>
       </div>
-    </section>
+    </div>
   );
   const recallSignals = selectedDevice
     ? (() => {
@@ -7083,13 +7011,13 @@ if (!user) {
       </div>
     )}
     <div className="mx-auto w-full min-w-0 space-y-6 px-0 py-6 sm:space-y-8 sm:py-10">
-        {isLoading && (
+        {!isAiAssistantVisible && isLoading && (
           <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
             Daten werden aus Supabase geladen …
           </div>
         )}
 
-        {visibleMessage && !isLoading && (
+        {!isAiAssistantVisible && visibleMessage && !isLoading && (
           <div className="rounded-md bg-slate-800 border border-slate-700 px-4 py-2 text-sm">
             {visibleMessage}
           </div>
@@ -7277,28 +7205,44 @@ if (!user) {
         </section>
         )}
 
-        {isAiAssistantVisible && (
-          <section className="rounded-2xl border border-amber-400/20 bg-slate-950/96 p-3 shadow-[0_0_32px_rgba(120,53,15,0.18)] sm:p-4 md:p-6">
-            <div className="mb-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  window.history.pushState(null, "", window.location.pathname);
-                  window.dispatchEvent(new HashChangeEvent("hashchange"));
-                  setIsAiAssistantVisible(false);
-                }}
-                className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-100 hover:bg-amber-500/15"
+        {isAiAssistantVisible &&
+          createPortal(
+            <div
+              id="medsafe-ai"
+              className="pointer-events-none fixed inset-0 z-[124] bg-slate-950/88 p-3 backdrop-blur-sm sm:p-6"
+            >
+              <div
+                className="pointer-events-auto mx-auto flex h-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-amber-400/30 bg-slate-950 shadow-[0_0_50px_rgba(120,53,15,0.24)] sm:rounded-3xl"
+                onClick={(e) => e.stopPropagation()}
               >
-                X
-              </button>
-            </div>
-            <div className="text-slate-100 [&_.text-slate-500]:text-slate-300 [&_.text-slate-400]:text-slate-200 [&_.text-slate-300]:text-slate-200">
-              {aiSection}
-            </div>
-          </section>
-        )}
+                <div className="flex items-start justify-between gap-3 border-b border-amber-400/15 px-4 py-4 sm:items-center sm:px-6">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-amber-200/80">
+                      MedSafe AI
+                    </div>
+                    <div className="mt-1 text-lg font-semibold text-slate-100">
+                      MDR Fragen & Hinweise
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCloseAiAssistant}
+                    className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-100 hover:bg-amber-500/15"
+                    aria-label="Fenster schließen"
+                  >
+                    X
+                  </button>
+                </div>
 
-        {isCreateDevicePanelOpen &&
+                <div className="flex min-h-0 flex-1 flex-col px-4 py-4 sm:px-6 sm:py-5">
+                  {aiSection}
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {isCreateDevicePanelOpen && !isAiAssistantVisible &&
           createPortal(
             <div className="pointer-events-none fixed inset-0 z-[123] bg-slate-950/88 p-2 backdrop-blur-sm sm:p-4 md:p-6">
               <div
@@ -7667,7 +7611,7 @@ if (!user) {
             document.body
           )}
 
-        {isOverviewPanelOpen &&
+        {isOverviewPanelOpen && !isAiAssistantVisible &&
           createPortal(
             <div className="pointer-events-none fixed inset-0 z-[122] bg-slate-950/88 p-0 backdrop-blur-sm">
               <div
@@ -7700,7 +7644,7 @@ if (!user) {
             document.body
           )}
 
-        {isRegistryPanelOpen &&
+        {isRegistryPanelOpen && !isAiAssistantVisible &&
           createPortal(
             <div className="pointer-events-none fixed inset-0 z-[121] bg-slate-950/88 p-0 backdrop-blur-sm">
               <div
@@ -7739,7 +7683,7 @@ if (!user) {
           )}
 
         {/* Ausgewählte Gruppe (Sticky) */}
-        {selectedDevice && createPortal(
+        {selectedDevice && !isAiAssistantVisible && createPortal(
           <div
             className="pointer-events-none fixed inset-0 z-[125] bg-slate-950/82 p-4 backdrop-blur-sm md:p-6"
           >
